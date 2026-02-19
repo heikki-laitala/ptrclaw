@@ -29,7 +29,7 @@ TEST_CASE("json_escape: escapes control characters as unicode", "[util]") {
 }
 
 TEST_CASE("json_escape: empty string", "[util]") {
-    REQUIRE(json_escape("") == "");
+    REQUIRE(json_escape("").empty());
 }
 
 // ── json_unescape ────────────────────────────────────────────────
@@ -67,7 +67,7 @@ TEST_CASE("json_unescape: roundtrip with json_escape", "[util]") {
 }
 
 TEST_CASE("json_unescape: empty string", "[util]") {
-    REQUIRE(json_unescape("") == "");
+    REQUIRE(json_unescape("").empty());
 }
 
 // ── trim ─────────────────────────────────────────────────────────
@@ -81,11 +81,11 @@ TEST_CASE("trim: removes tabs and mixed whitespace", "[util]") {
 }
 
 TEST_CASE("trim: empty string returns empty", "[util]") {
-    REQUIRE(trim("") == "");
+    REQUIRE(trim("").empty());
 }
 
 TEST_CASE("trim: all whitespace returns empty", "[util]") {
-    REQUIRE(trim("   \t\n  ") == "");
+    REQUIRE(trim("   \t\n  ").empty());
 }
 
 TEST_CASE("trim: no whitespace unchanged", "[util]") {
@@ -163,5 +163,5 @@ TEST_CASE("expand_home: tilde is expanded", "[util]") {
 }
 
 TEST_CASE("expand_home: empty string unchanged", "[util]") {
-    REQUIRE(expand_home("") == "");
+    REQUIRE(expand_home("").empty());
 }

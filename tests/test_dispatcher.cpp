@@ -27,7 +27,7 @@ TEST_CASE("repair_json: trailing comma removed", "[dispatcher]") {
 TEST_CASE("repair_json: trailing comma with whitespace", "[dispatcher]") {
     std::string input = "{\"a\":1, }";
     std::string result = repair_json(input);
-    REQUIRE(result.find(",") == std::string::npos);
+    REQUIRE(result.find(',') == std::string::npos);
 }
 
 TEST_CASE("repair_json: missing brace and trailing comma combined", "[dispatcher]") {
@@ -118,14 +118,14 @@ TEST_CASE("format_tool_result_message: success message", "[dispatcher]") {
     auto msg = format_tool_result_message("call_123", "read_file", true, "file contents");
     REQUIRE(msg.role == Role::Tool);
     REQUIRE(msg.content == "file contents");
-    REQUIRE(msg.name.value() == "read_file");
-    REQUIRE(msg.tool_call_id.value() == "call_123");
+    REQUIRE(msg.name == "read_file");
+    REQUIRE(msg.tool_call_id == "call_123");
 }
 
 TEST_CASE("format_tool_result_message: error message", "[dispatcher]") {
     auto msg = format_tool_result_message("call_456", "shell", false, "command failed");
     REQUIRE(msg.role == Role::Tool);
     REQUIRE(msg.content == "Error: command failed");
-    REQUIRE(msg.name.value() == "shell");
-    REQUIRE(msg.tool_call_id.value() == "call_456");
+    REQUIRE(msg.name == "shell");
+    REQUIRE(msg.tool_call_id == "call_456");
 }

@@ -15,16 +15,13 @@ Checks: >
   performance-*,
   -performance-enum-size,
   -bugprone-easily-swappable-parameters,
+  -clang-analyzer-optin.core.EnumCastOutOfRange,
   readability-container-size-empty,
   readability-duplicate-include,
   readability-misleading-indentation,
   readability-redundant-smartptr-get,
   readability-string-compare,
 
-HeaderFilterRegex: 'src/.*\.hpp$'
-
-ExtraArgsBefore:
-  - '-isysroot'
-  - '/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk'
+HeaderFilterRegex: '^(?!.*subprojects).*src/.*\.hpp$'
 
 WarningsAsErrors: ''
