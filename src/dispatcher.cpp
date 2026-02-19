@@ -21,6 +21,7 @@ std::vector<ToolCall> parse_xml_tool_calls(const std::string& text) {
 
         std::string content = trim(text.substr(content_start, end - content_start));
         std::string repaired = repair_json(content);
+        pos = end + close_tag.size();
 
         try {
             nlohmann::json j = nlohmann::json::parse(repaired);
@@ -42,11 +43,9 @@ std::vector<ToolCall> parse_xml_tool_calls(const std::string& text) {
             if (!call.name.empty()) {
                 calls.push_back(std::move(call));
             }
-        } catch (const std::exception&) {
-            // Skip malformed tool calls
+        } catch (const std::exception&) { // NOLINT(bugprone-empty-catch)
+            // Malformed tool call JSON — skip and try remaining calls
         }
-
-        pos = end + close_tag.size();
     }
 
     return calls;

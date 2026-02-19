@@ -30,7 +30,7 @@ static void print_usage() {
               << "  OLLAMA_BASE_URL      Base URL for Ollama (default: http://localhost:11434)\n";
 }
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) try {
     // Parse arguments
     std::string message;
     std::string provider_name;
@@ -85,7 +85,7 @@ int main(int argc, char* argv[]) {
     // Single message mode
     if (!message.empty()) {
         std::string response = agent.process(message);
-        std::cout << response << std::endl;
+        std::cout << response << '\n';
         ptrclaw::http_cleanup();
         return 0;
     }
@@ -146,4 +146,7 @@ int main(int argc, char* argv[]) {
 
     ptrclaw::http_cleanup();
     return 0;
+} catch (const std::exception& e) {
+    std::cerr << "Fatal error: " << e.what() << '\n';
+    return 1;
 }

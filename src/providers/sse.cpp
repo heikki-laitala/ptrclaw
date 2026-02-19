@@ -2,7 +2,7 @@
 
 namespace ptrclaw {
 
-void SSEParser::feed(const std::string& chunk, SSECallback callback) {
+void SSEParser::feed(const std::string& chunk, const SSECallback& callback) {
     buffer_ += chunk;
 
     std::string current_event;

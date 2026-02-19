@@ -56,8 +56,8 @@ ChatResponse OpenRouterProvider::chat(const std::vector<ChatMessage>& messages,
                     }
                     m["tool_calls"] = tool_calls;
                 }
-            } catch (...) {
-                // Not tool calls JSON, ignore
+            } catch (const std::exception&) { // NOLINT(bugprone-empty-catch)
+                // name field isn't tool calls JSON — treat as plain assistant message
             }
         }
 

@@ -5,9 +5,9 @@ project('ptrclaw', 'cpp',
 curl_dep = dependency('libcurl')
 inc = include_directories('include', 'src')
 
-sources = files(
+lib_sources = files(
   'src/agent.cpp', 'src/config.cpp', 'src/dispatcher.cpp',
-  'src/http.cpp', 'src/main.cpp', 'src/prompt.cpp',
+  'src/http.cpp', 'src/prompt.cpp',
   'src/provider.cpp', 'src/session.cpp', 'src/tool.cpp',
   'src/util.cpp',
   'src/providers/anthropic.cpp', 'src/providers/compatible.cpp',
@@ -18,7 +18,33 @@ sources = files(
   'src/tools/file_write.cpp', 'src/tools/shell.cpp',
 )
 
-executable('ptrclaw', sources,
+ptrclaw_lib = static_library('ptrclaw_lib', lib_sources,
   include_directories: inc,
-  dependencies: [curl_dep],
+  dependencies: [curl_dep])
+
+ptrclaw_dep = declare_dependency(
+  link_with: ptrclaw_lib,
+  include_directories: inc)
+
+executable('ptrclaw', 'src/main.cpp',
+  dependencies: [ptrclaw_dep],
   install: true)
+
+# Unit tests
+catch2_proj = subproject('catch2')
+catch2_dep = catch2_proj.get_variable('catch2_with_main_dep')
+
+test_sources = files(
+  'tests/test_util.cpp',
+  'tests/test_dispatcher.cpp',
+  'tests/test_sse.cpp',
+  'tests/test_config.cpp',
+  'tests/test_tools.cpp',
+  'tests/test_agent.cpp',
+  'tests/test_reliable.cpp',
+)
+
+test_exe = executable('ptrclaw_tests', test_sources,
+  dependencies: [ptrclaw_dep, catch2_dep])
+
+test('unit_tests', test_exe)

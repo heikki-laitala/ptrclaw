@@ -41,8 +41,8 @@ Config Config::load() {
                 if (a.contains("token_limit") && a["token_limit"].is_number_unsigned())
                     cfg.agent.token_limit = a["token_limit"].get<uint32_t>();
             }
-        } catch (...) {
-            // If parsing fails, continue with defaults
+        } catch (...) { // NOLINT(bugprone-empty-catch)
+            // Config file is malformed — continue with defaults
         }
     }
 

@@ -9,6 +9,9 @@ builddir/
 *~
 .DS_Store
 
+# Meson subproject downloads
+subprojects/Catch2-*/
+
 # Compiled
 *.o
 *.a

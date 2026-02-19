@@ -83,8 +83,8 @@ ChatResponse AnthropicProvider::chat(const std::vector<ChatMessage>& messages,
                         content_blocks.push_back(tool_use);
                     }
                 }
-            } catch (...) {
-                // Not tool calls JSON, ignore
+            } catch (const std::exception&) { // NOLINT(bugprone-empty-catch)
+                // name field isn't tool calls JSON — treat as plain assistant message
             }
             m["content"] = content_blocks;
         } else {

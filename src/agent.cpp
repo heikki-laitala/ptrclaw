@@ -93,7 +93,7 @@ std::string Agent::process(const std::string& user_message) {
         // Execute tool calls
         std::string xml_results;
         for (const auto& call : response.tool_calls) {
-            std::cerr << "[tool] " << call.name << std::endl;
+            std::cerr << "[tool] " << call.name << '\n';
 
             ToolResult result = dispatch_tool(call, tools_);
 
@@ -155,7 +155,7 @@ const std::string& Agent::provider_name() const {
 
 void Agent::compact_history() {
     uint32_t tokens = estimated_tokens();
-    uint32_t threshold = static_cast<uint32_t>(config_.agent.token_limit * 0.75);
+    auto threshold = static_cast<uint32_t>(config_.agent.token_limit * 0.75);
 
     bool should_compact = history_.size() > config_.agent.max_history_messages ||
                           tokens > threshold;
@@ -207,7 +207,7 @@ void Agent::compact_history() {
     }
 
     history_ = std::move(compacted);
-    std::cerr << "[compact] History compacted to " << history_.size() << " messages" << std::endl;
+    std::cerr << "[compact] History compacted to " << history_.size() << " messages\n";
 }
 
 } // namespace ptrclaw

@@ -16,7 +16,7 @@ using SSECallback = std::function<bool(const SSEEvent& event)>;
 class SSEParser {
 public:
     // Feed raw data chunk, triggers callback for complete events
-    void feed(const std::string& chunk, SSECallback callback);
+    void feed(const std::string& chunk, const SSECallback& callback);
 
     // Reset parser state
     void reset();

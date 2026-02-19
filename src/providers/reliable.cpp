@@ -25,7 +25,7 @@ ChatResponse ReliableProvider::chat(const std::vector<ChatMessage>& messages,
                 last_error = e.what();
                 std::cerr << "[reliable] Provider " << providers_[i]->provider_name()
                           << " attempt " << (retry + 1) << "/" << max_retries_
-                          << " failed: " << last_error << std::endl;
+                          << " failed: " << last_error << '\n';
             }
         }
     }
@@ -45,7 +45,7 @@ std::string ReliableProvider::chat_simple(const std::string& system_prompt,
                 last_error = e.what();
                 std::cerr << "[reliable] Provider " << providers_[i]->provider_name()
                           << " attempt " << (retry + 1) << "/" << max_retries_
-                          << " failed: " << last_error << std::endl;
+                          << " failed: " << last_error << '\n';
             }
         }
     }
