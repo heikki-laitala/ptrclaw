@@ -23,3 +23,21 @@ jobs:
 
       - name: Lint
         run: make lint
+
+      - name: Coverage
+        run: |
+          make coverage
+          gcovr -x --root . builddir-cov --filter src/ > coverage.xml
+
+      - name: Coverage report
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: coverage.xml
+          format: markdown
+          output: both
+
+      - name: Add coverage to PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: code-coverage-results.md

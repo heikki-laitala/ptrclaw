@@ -124,9 +124,25 @@ TEST_CASE("FileWriteTool: rejects path traversal", "[tools]") {
     REQUIRE_FALSE(result.success);
 }
 
+TEST_CASE("FileWriteTool: invalid JSON args", "[tools]") {
+    FileWriteTool tool;
+    auto result = tool.execute("not json");
+    REQUIRE_FALSE(result.success);
+    REQUIRE(result.output.find("parse") != std::string::npos);
+}
+
+TEST_CASE("FileWriteTool: missing path parameter", "[tools]") {
+    FileWriteTool tool;
+    auto result = tool.execute(R"({"content":"x"})");
+    REQUIRE_FALSE(result.success);
+    REQUIRE(result.output.find("path") != std::string::npos);
+}
+
 TEST_CASE("FileWriteTool: tool_name is file_write", "[tools]") {
     FileWriteTool tool;
     REQUIRE(tool.tool_name() == "file_write");
+    REQUIRE_FALSE(tool.description().empty());
+    REQUIRE(tool.parameters_json().find("path") != std::string::npos);
 }
 
 // ═══ FileEditTool ════════════════════════════════════════════════
@@ -186,9 +202,32 @@ TEST_CASE("FileEditTool: rejects path traversal", "[tools]") {
     REQUIRE_FALSE(result.success);
 }
 
+TEST_CASE("FileEditTool: invalid JSON args", "[tools]") {
+    FileEditTool tool;
+    auto result = tool.execute("not json");
+    REQUIRE_FALSE(result.success);
+    REQUIRE(result.output.find("parse") != std::string::npos);
+}
+
+TEST_CASE("FileEditTool: missing new_text parameter", "[tools]") {
+    FileEditTool tool;
+    auto result = tool.execute(R"({"path":"/tmp/x","old_text":"a"})");
+    REQUIRE_FALSE(result.success);
+    REQUIRE(result.output.find("new_text") != std::string::npos);
+}
+
+TEST_CASE("FileEditTool: nonexistent file", "[tools]") {
+    FileEditTool tool;
+    auto result = tool.execute(R"({"path":"/tmp/ptrclaw_no_such_file.txt","old_text":"a","new_text":"b"})");
+    REQUIRE_FALSE(result.success);
+    REQUIRE(result.output.find("Failed to open") != std::string::npos);
+}
+
 TEST_CASE("FileEditTool: tool_name is file_edit", "[tools]") {
     FileEditTool tool;
     REQUIRE(tool.tool_name() == "file_edit");
+    REQUIRE_FALSE(tool.description().empty());
+    REQUIRE(tool.parameters_json().find("old_text") != std::string::npos);
 }
 
 // ═══ ShellTool ═══════════════════════════════════════════════════
@@ -231,6 +270,8 @@ TEST_CASE("ShellTool: captures stderr via redirect", "[tools]") {
 TEST_CASE("ShellTool: tool_name is shell", "[tools]") {
     ShellTool tool;
     REQUIRE(tool.tool_name() == "shell");
+    REQUIRE_FALSE(tool.description().empty());
+    REQUIRE(tool.parameters_json().find("command") != std::string::npos);
 }
 
 // ═══ Tool spec ═══════════════════════════════════════════════════

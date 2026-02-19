@@ -42,6 +42,9 @@ test_sources = files(
   'tests/test_tools.cpp',
   'tests/test_agent.cpp',
   'tests/test_reliable.cpp',
+  'tests/test_prompt.cpp',
+  'tests/test_provider.cpp',
+  'tests/test_session.cpp',
 )
 
 test_exe = executable('ptrclaw_tests', test_sources,

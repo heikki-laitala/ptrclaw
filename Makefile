@@ -11,15 +11,17 @@ else
   CLANG_TIDY_EXTRA :=
 endif
 
-.PHONY: deps setup build run test lint clean
+COVDIR := builddir-cov
+
+.PHONY: deps setup build run test coverage coverage-summary lint clean
 
 deps:
 ifeq ($(shell uname),Darwin)
 	@command -v brew >/dev/null || { echo "Error: Homebrew is required. Install from https://brew.sh"; exit 1; }
-	brew install meson llvm
+	brew install meson llvm gcovr
 else
 	sudo apt-get update
-	sudo apt-get install -y g++ meson ninja-build libcurl4-openssl-dev clang-tidy
+	sudo apt-get install -y g++ meson ninja-build libcurl4-openssl-dev clang-tidy gcovr
 endif
 
 setup:
@@ -34,8 +36,18 @@ run: build
 test: build
 	meson test -C $(BUILDDIR)
 
+coverage:
+	@if [ ! -d $(COVDIR) ]; then meson setup $(COVDIR) --native-file $(NATIVE_FILE) -Db_coverage=true -Dcatch2:tests=false; fi
+	meson test -C $(COVDIR)
+	gcovr --root . $(COVDIR) --filter src/ --html-details $(COVDIR)/coverage.html
+	@echo "Coverage report: $(COVDIR)/coverage.html"
+
+coverage-summary:
+	@if [ ! -d $(COVDIR) ]; then echo "Run 'make coverage' first"; exit 1; fi
+	gcovr --root . $(COVDIR) --filter src/
+
 lint: build
 	run-clang-tidy -quiet -p $(BUILDDIR) $(CLANG_TIDY_EXTRA) -source-filter='^(?!.*subprojects).*\.cpp$$' 2>&1 | grep -v 'warnings generated'
 
 clean:
-	rm -rf $(BUILDDIR)
+	rm -rf $(BUILDDIR) $(COVDIR)

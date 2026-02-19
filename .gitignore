@@ -1,6 +1,7 @@
 # Build
 build/
 builddir/
+builddir-cov/
 
 # IDE
 .vscode/
