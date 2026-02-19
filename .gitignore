@@ -1,0 +1,16 @@
+# Build
+build/
+builddir/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Compiled
+*.o
+*.a
+*.so
+*.dylib
