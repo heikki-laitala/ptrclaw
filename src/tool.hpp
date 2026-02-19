@@ -1,10 +1,15 @@
 #pragma once
-#include "provider.hpp"
 #include <string>
 #include <memory>
 #include <vector>
 
 namespace ptrclaw {
+
+struct ToolSpec {
+    std::string name;
+    std::string description;
+    std::string parameters_json; // JSON schema for parameters
+};
 
 struct ToolResult {
     bool success;

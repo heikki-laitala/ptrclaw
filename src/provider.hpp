@@ -1,4 +1,5 @@
 #pragma once
+#include "tool.hpp"
 #include <string>
 #include <vector>
 #include <optional>
@@ -8,6 +9,16 @@
 namespace ptrclaw {
 
 enum class Role { System, User, Assistant, Tool };
+
+inline const char* role_to_string(Role role) {
+    switch (role) {
+        case Role::System: return "system";
+        case Role::User: return "user";
+        case Role::Assistant: return "assistant";
+        case Role::Tool: return "tool";
+    }
+    return "user";
+}
 
 struct ChatMessage {
     Role role;
@@ -35,12 +46,6 @@ struct ChatResponse {
     std::string model;
 
     bool has_tool_calls() const { return !tool_calls.empty(); }
-};
-
-struct ToolSpec {
-    std::string name;
-    std::string description;
-    std::string parameters_json; // JSON schema for parameters
 };
 
 // Abstract base class for LLM providers

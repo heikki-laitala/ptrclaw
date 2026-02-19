@@ -7,16 +7,6 @@ using json = nlohmann::json;
 
 namespace ptrclaw {
 
-static std::string role_to_string(Role role) {
-    switch (role) {
-        case Role::System: return "system";
-        case Role::User: return "user";
-        case Role::Assistant: return "assistant";
-        case Role::Tool: return "tool";
-    }
-    return "user";
-}
-
 OpenRouterProvider::OpenRouterProvider(const std::string& api_key, HttpClient& http)
     : api_key_(api_key), http_(http) {}
 

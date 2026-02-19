@@ -32,7 +32,7 @@ public:
 
     // Switch provider
     void set_provider(std::unique_ptr<Provider> provider);
-    const std::string& provider_name() const;
+    std::string provider_name() const;
 
 private:
     void compact_history();

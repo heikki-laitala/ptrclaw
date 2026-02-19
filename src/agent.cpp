@@ -35,6 +35,7 @@ std::string Agent::process(const std::string& user_message) {
     // Build tool specs
     std::vector<ToolSpec> tool_specs;
     if (provider_->supports_native_tools()) {
+        tool_specs.reserve(tools_.size());
         for (const auto& tool : tools_) {
             tool_specs.push_back(tool->spec());
         }
@@ -147,10 +148,8 @@ void Agent::set_provider(std::unique_ptr<Provider> provider) {
     }
 }
 
-const std::string& Agent::provider_name() const {
-    static std::string name;
-    name = provider_->provider_name();
-    return name;
+std::string Agent::provider_name() const {
+    return provider_->provider_name();
 }
 
 void Agent::compact_history() {
@@ -192,6 +191,7 @@ void Agent::compact_history() {
 
     // Build compacted history
     std::vector<ChatMessage> compacted;
+    compacted.reserve(12);
 
     // Keep system prompt
     if (!history_.empty() && history_[0].role == Role::System) {

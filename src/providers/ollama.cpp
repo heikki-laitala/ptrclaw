@@ -7,16 +7,6 @@ using json = nlohmann::json;
 
 namespace ptrclaw {
 
-static std::string role_to_string(Role role) {
-    switch (role) {
-        case Role::System: return "system";
-        case Role::User: return "user";
-        case Role::Assistant: return "assistant";
-        case Role::Tool: return "user"; // Ollama doesn't support tool role
-    }
-    return "user";
-}
-
 OllamaProvider::OllamaProvider(HttpClient& http, const std::string& base_url)
     : http_(http), base_url_(base_url) {}
 
@@ -31,7 +21,7 @@ ChatResponse OllamaProvider::chat(const std::vector<ChatMessage>& messages,
     json msgs = json::array();
     for (const auto& msg : messages) {
         json m;
-        m["role"] = role_to_string(msg.role);
+        m["role"] = (msg.role == Role::Tool) ? "user" : role_to_string(msg.role);
         m["content"] = msg.content;
         msgs.push_back(m);
     }
