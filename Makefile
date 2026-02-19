@@ -11,9 +11,10 @@ else
   CLANG_TIDY_EXTRA :=
 endif
 
+STATICDIR := builddir-static
 COVDIR := builddir-cov
 
-.PHONY: deps setup build run test coverage coverage-summary lint clean
+.PHONY: deps setup build build-static run test coverage coverage-summary lint clean
 
 deps:
 ifeq ($(shell uname),Darwin)
@@ -21,7 +22,7 @@ ifeq ($(shell uname),Darwin)
 	brew install meson llvm gcovr
 else
 	sudo apt-get update
-	sudo apt-get install -y g++ meson ninja-build libcurl4-openssl-dev clang-tidy gcovr
+	sudo apt-get install -y g++ meson ninja-build libssl-dev clang-tidy gcovr
 endif
 
 setup:
@@ -29,6 +30,10 @@ setup:
 
 build: setup
 	meson compile -C $(BUILDDIR)
+
+build-static:
+	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) --native-file $(NATIVE_FILE) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false; fi
+	meson compile -C $(STATICDIR)
 
 run: build
 	./$(BUILDDIR)/ptrclaw
@@ -50,4 +55,4 @@ lint: build
 	run-clang-tidy -quiet -p $(BUILDDIR) $(CLANG_TIDY_EXTRA) -source-filter='^(?!.*subprojects).*\.cpp$$' 2>&1 | grep -v 'warnings generated'
 
 clean:
-	rm -rf $(BUILDDIR) $(COVDIR)
+	rm -rf $(BUILDDIR) $(STATICDIR) $(COVDIR)

@@ -2,6 +2,7 @@
 build/
 builddir/
 builddir-cov/
+builddir-static/
 
 # IDE
 .vscode/
@@ -12,6 +13,7 @@ builddir-cov/
 
 # Meson subproject downloads
 subprojects/Catch2-*/
+subprojects/cpp-httplib-*/
 
 # Compiled
 *.o
