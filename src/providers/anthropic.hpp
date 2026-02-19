@@ -1,12 +1,13 @@
 #pragma once
 #include "../provider.hpp"
+#include "../http.hpp"
 #include <string>
 
 namespace ptrclaw {
 
 class AnthropicProvider : public Provider {
 public:
-    explicit AnthropicProvider(const std::string& api_key);
+    AnthropicProvider(const std::string& api_key, HttpClient& http);
 
     ChatResponse chat(const std::vector<ChatMessage>& messages,
                       const std::vector<ToolSpec>& tools,
@@ -24,6 +25,7 @@ public:
 
 private:
     std::string api_key_;
+    HttpClient& http_;
     static constexpr const char* BASE_URL = "https://api.anthropic.com/v1/messages";
     static constexpr const char* API_VERSION = "2023-06-01";
 };

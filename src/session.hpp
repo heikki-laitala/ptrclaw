@@ -1,6 +1,7 @@
 #pragma once
 #include "agent.hpp"
 #include "config.hpp"
+#include "http.hpp"
 #include <string>
 #include <memory>
 #include <unordered_map>
@@ -17,7 +18,7 @@ struct Session {
 
 class SessionManager {
 public:
-    explicit SessionManager(const Config& config);
+    SessionManager(const Config& config, HttpClient& http);
 
     // Get or create a session
     Agent& get_session(const std::string& session_id);
@@ -33,6 +34,7 @@ public:
 
 private:
     Config config_;
+    HttpClient& http_;
     std::unordered_map<std::string, Session> sessions_;
     mutable std::mutex mutex_;
 };

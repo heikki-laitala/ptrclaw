@@ -66,6 +66,13 @@ static curl_slist* build_headers(const std::vector<Header>& headers) {
     return list;
 }
 
+HttpResponse CurlHttpClient::post(const std::string& url,
+                                   const std::string& body,
+                                   const std::vector<Header>& headers,
+                                   long timeout_seconds) {
+    return http_post(url, body, headers, timeout_seconds);
+}
+
 HttpResponse http_post(const std::string& url,
                        const std::string& body,
                        const std::vector<Header>& headers,

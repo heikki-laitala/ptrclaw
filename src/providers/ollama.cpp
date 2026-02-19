@@ -17,8 +17,8 @@ static std::string role_to_string(Role role) {
     return "user";
 }
 
-OllamaProvider::OllamaProvider(const std::string& base_url)
-    : base_url_(base_url) {}
+OllamaProvider::OllamaProvider(HttpClient& http, const std::string& base_url)
+    : http_(http), base_url_(base_url) {}
 
 ChatResponse OllamaProvider::chat(const std::vector<ChatMessage>& messages,
                                    const std::vector<ToolSpec>& /* tools */,
@@ -42,7 +42,7 @@ ChatResponse OllamaProvider::chat(const std::vector<ChatMessage>& messages,
         {"Content-Type", "application/json"}
     };
 
-    auto response = http_post(url, request.dump(), headers);
+    auto response = http_.post(url, request.dump(), headers);
 
     if (response.status_code < 200 || response.status_code >= 300) {
         throw std::runtime_error("Ollama API error (HTTP " +

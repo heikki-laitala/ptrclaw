@@ -19,6 +19,25 @@ struct HttpResponse {
     std::string body;
 };
 
+// Abstract HTTP client interface (injectable for testing)
+class HttpClient {
+public:
+    virtual ~HttpClient() = default;
+    virtual HttpResponse post(const std::string& url,
+                              const std::string& body,
+                              const std::vector<Header>& headers,
+                              long timeout_seconds = 120) = 0;
+};
+
+// Concrete implementation using libcurl
+class CurlHttpClient : public HttpClient {
+public:
+    HttpResponse post(const std::string& url,
+                      const std::string& body,
+                      const std::vector<Header>& headers,
+                      long timeout_seconds = 120) override;
+};
+
 // HTTP POST with JSON body
 HttpResponse http_post(const std::string& url,
                        const std::string& body,

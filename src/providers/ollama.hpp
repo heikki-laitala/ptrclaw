@@ -1,12 +1,13 @@
 #pragma once
 #include "../provider.hpp"
+#include "../http.hpp"
 #include <string>
 
 namespace ptrclaw {
 
 class OllamaProvider : public Provider {
 public:
-    explicit OllamaProvider(const std::string& base_url = "http://localhost:11434");
+    OllamaProvider(HttpClient& http, const std::string& base_url = "http://localhost:11434");
 
     ChatResponse chat(const std::vector<ChatMessage>& messages,
                       const std::vector<ToolSpec>& tools,
@@ -22,6 +23,7 @@ public:
     std::string provider_name() const override { return "ollama"; }
 
 private:
+    HttpClient& http_;
     std::string base_url_;
 };
 

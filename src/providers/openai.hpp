@@ -1,13 +1,14 @@
 #pragma once
 #include "../provider.hpp"
+#include "../http.hpp"
 #include <string>
 
 namespace ptrclaw {
 
 class OpenAIProvider : public Provider {
 public:
-    explicit OpenAIProvider(const std::string& api_key,
-                            const std::string& base_url = "https://api.openai.com/v1");
+    OpenAIProvider(const std::string& api_key, HttpClient& http,
+                   const std::string& base_url = "https://api.openai.com/v1");
 
     ChatResponse chat(const std::vector<ChatMessage>& messages,
                       const std::vector<ToolSpec>& tools,
@@ -25,6 +26,7 @@ public:
 
 protected:
     std::string api_key_;
+    HttpClient& http_;
     std::string base_url_;
 };
 

@@ -65,12 +65,14 @@ int main(int argc, char* argv[]) try {
         config.default_model = model_name;
     }
 
-    // Create provider
+    // Create HTTP client and provider
+    ptrclaw::CurlHttpClient http_client;
     std::unique_ptr<ptrclaw::Provider> provider;
     try {
         provider = ptrclaw::create_provider(
             config.default_provider,
             config.api_key_for(config.default_provider),
+            http_client,
             config.ollama_base_url);
     } catch (const std::exception& e) {
         std::cerr << "Error creating provider: " << e.what() << "\n";

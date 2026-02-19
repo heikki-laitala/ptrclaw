@@ -17,8 +17,8 @@ static std::string role_to_string(Role role) {
     return "user";
 }
 
-OpenRouterProvider::OpenRouterProvider(const std::string& api_key)
-    : api_key_(api_key) {}
+OpenRouterProvider::OpenRouterProvider(const std::string& api_key, HttpClient& http)
+    : api_key_(api_key), http_(http) {}
 
 ChatResponse OpenRouterProvider::chat(const std::vector<ChatMessage>& messages,
                                        const std::vector<ToolSpec>& tools,
@@ -90,7 +90,7 @@ ChatResponse OpenRouterProvider::chat(const std::vector<ChatMessage>& messages,
         {"X-Title", "PtrClaw"}
     };
 
-    auto response = http_post(url, request.dump(), headers);
+    auto response = http_.post(url, request.dump(), headers);
 
     if (response.status_code < 200 || response.status_code >= 300) {
         throw std::runtime_error("OpenRouter API error (HTTP " +
@@ -160,7 +160,7 @@ std::string OpenRouterProvider::chat_simple(const std::string& system_prompt,
         {"X-Title", "PtrClaw"}
     };
 
-    auto response = http_post(url, request.dump(), headers);
+    auto response = http_.post(url, request.dump(), headers);
 
     if (response.status_code < 200 || response.status_code >= 300) {
         throw std::runtime_error("OpenRouter API error (HTTP " +

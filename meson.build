@@ -44,6 +44,7 @@ test_sources = files(
   'tests/test_reliable.cpp',
   'tests/test_prompt.cpp',
   'tests/test_provider.cpp',
+  'tests/test_providers.cpp',
   'tests/test_session.cpp',
 )
 

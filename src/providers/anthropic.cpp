@@ -17,8 +17,8 @@ static std::string role_to_string(Role role) {
     return "user";
 }
 
-AnthropicProvider::AnthropicProvider(const std::string& api_key)
-    : api_key_(api_key) {}
+AnthropicProvider::AnthropicProvider(const std::string& api_key, HttpClient& http)
+    : api_key_(api_key), http_(http) {}
 
 ChatResponse AnthropicProvider::chat(const std::vector<ChatMessage>& messages,
                                       const std::vector<ToolSpec>& tools,
@@ -115,7 +115,7 @@ ChatResponse AnthropicProvider::chat(const std::vector<ChatMessage>& messages,
         {"content-type", "application/json"}
     };
 
-    auto response = http_post(BASE_URL, request.dump(), headers);
+    auto response = http_.post(BASE_URL, request.dump(), headers);
 
     if (response.status_code < 200 || response.status_code >= 300) {
         throw std::runtime_error("Anthropic API error (HTTP " +
@@ -179,7 +179,7 @@ std::string AnthropicProvider::chat_simple(const std::string& system_prompt,
         {"content-type", "application/json"}
     };
 
-    auto response = http_post(BASE_URL, request.dump(), headers);
+    auto response = http_.post(BASE_URL, request.dump(), headers);
 
     if (response.status_code < 200 || response.status_code >= 300) {
         throw std::runtime_error("Anthropic API error (HTTP " +

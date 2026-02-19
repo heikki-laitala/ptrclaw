@@ -4,8 +4,8 @@
 
 namespace ptrclaw {
 
-SessionManager::SessionManager(const Config& config)
-    : config_(config)
+SessionManager::SessionManager(const Config& config, HttpClient& http)
+    : config_(config), http_(http)
 {}
 
 Agent& SessionManager::get_session(const std::string& session_id) {
@@ -21,6 +21,7 @@ Agent& SessionManager::get_session(const std::string& session_id) {
     auto provider = create_provider(
         config_.default_provider,
         config_.api_key_for(config_.default_provider),
+        http_,
         config_.ollama_base_url);
 
     auto tools = create_builtin_tools();

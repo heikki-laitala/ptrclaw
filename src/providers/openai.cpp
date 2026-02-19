@@ -17,8 +17,8 @@ static std::string role_to_string(Role role) {
     return "user";
 }
 
-OpenAIProvider::OpenAIProvider(const std::string& api_key, const std::string& base_url)
-    : api_key_(api_key), base_url_(base_url) {}
+OpenAIProvider::OpenAIProvider(const std::string& api_key, HttpClient& http, const std::string& base_url)
+    : api_key_(api_key), http_(http), base_url_(base_url) {}
 
 ChatResponse OpenAIProvider::chat(const std::vector<ChatMessage>& messages,
                                    const std::vector<ToolSpec>& tools,
@@ -91,7 +91,7 @@ ChatResponse OpenAIProvider::chat(const std::vector<ChatMessage>& messages,
         {"Content-Type", "application/json"}
     };
 
-    auto response = http_post(url, request.dump(), headers);
+    auto response = http_.post(url, request.dump(), headers);
 
     if (response.status_code < 200 || response.status_code >= 300) {
         throw std::runtime_error("OpenAI API error (HTTP " +
@@ -160,7 +160,7 @@ std::string OpenAIProvider::chat_simple(const std::string& system_prompt,
         {"Content-Type", "application/json"}
     };
 
-    auto response = http_post(url, request.dump(), headers);
+    auto response = http_.post(url, request.dump(), headers);
 
     if (response.status_code < 200 || response.status_code >= 300) {
         throw std::runtime_error("OpenAI API error (HTTP " +

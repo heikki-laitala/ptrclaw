@@ -63,9 +63,12 @@ public:
     virtual std::string provider_name() const = 0;
 };
 
+class HttpClient; // forward declaration
+
 // Factory: create provider by name
 std::unique_ptr<Provider> create_provider(const std::string& name,
                                           const std::string& api_key,
+                                          HttpClient& http,
                                           const std::string& base_url = "");
 
 } // namespace ptrclaw
