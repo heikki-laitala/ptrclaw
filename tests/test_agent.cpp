@@ -29,7 +29,7 @@ public:
             throw std::runtime_error("provider error");
         }
         if (!responses.empty()) {
-            size_t idx = static_cast<size_t>(chat_call_count - 1);
+            auto idx = static_cast<size_t>(chat_call_count - 1);
             if (idx < responses.size()) return responses[idx];
             return responses.back();
         }

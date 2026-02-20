@@ -3,6 +3,7 @@ build/
 builddir/
 builddir-cov/
 builddir-static/
+.cache/
 
 # IDE
 .vscode/
