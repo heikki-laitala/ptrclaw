@@ -28,20 +28,17 @@ public:
     virtual bool health_check() = 0;
     virtual void send_message(const std::string& target, const std::string& message) = 0;
 
+    // Channel lifecycle: called once before the poll loop starts
+    virtual void initialize() {}
+
+    // Return true if this channel uses polling (vs. webhooks)
+    virtual bool supports_polling() const { return false; }
+
+    // Poll for new messages; default returns empty (webhook channels)
+    virtual std::vector<ChannelMessage> poll_updates() { return {}; }
+
     // Split a message into chunks respecting max_len, preferring newline/space boundaries
     static std::vector<std::string> split_message(const std::string& text, size_t max_len);
-};
-
-// Registry of active channels
-class ChannelRegistry {
-public:
-    void register_channel(std::unique_ptr<Channel> ch);
-    Channel* find_by_name(const std::string& name) const;
-    std::vector<std::string> channel_names() const;
-    size_t size() const { return channels_.size(); }
-
-private:
-    std::vector<std::unique_ptr<Channel>> channels_;
 };
 
 } // namespace ptrclaw

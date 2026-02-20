@@ -27,6 +27,11 @@ TelegramChannel::TelegramChannel(const TelegramConfig& config, HttpClient& http)
     : config_(config), http_(http)
 {}
 
+void TelegramChannel::initialize() {
+    set_my_commands();
+    drop_pending_updates();
+}
+
 std::string TelegramChannel::api_url(const std::string& method) const {
     return "https://api.telegram.org/bot" + config_.bot_token + "/" + method;
 }
