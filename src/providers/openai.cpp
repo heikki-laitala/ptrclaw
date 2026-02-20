@@ -80,6 +80,13 @@ json OpenAIProvider::build_request(const std::vector<ChatMessage>& messages,
     return request;
 }
 
+std::vector<Header> OpenAIProvider::build_headers() const {
+    return {
+        {"Authorization", "Bearer " + api_key_},
+        {"Content-Type", "application/json"}
+    };
+}
+
 ChatResponse OpenAIProvider::chat(const std::vector<ChatMessage>& messages,
                                    const std::vector<ToolSpec>& tools,
                                    const std::string& model,
@@ -87,15 +94,12 @@ ChatResponse OpenAIProvider::chat(const std::vector<ChatMessage>& messages,
     json request = build_request(messages, tools, model, temperature);
 
     std::string url = base_url_ + "/chat/completions";
-    std::vector<Header> headers = {
-        {"Authorization", "Bearer " + api_key_},
-        {"Content-Type", "application/json"}
-    };
+    auto headers = build_headers();
 
     auto response = http_.post(url, request.dump(), headers);
 
     if (response.status_code < 200 || response.status_code >= 300) {
-        throw std::runtime_error("OpenAI API error (HTTP " +
+        throw std::runtime_error(provider_name() + " API error (HTTP " +
             std::to_string(response.status_code) + "): " + response.body);
     }
 
@@ -150,10 +154,7 @@ ChatResponse OpenAIProvider::chat_stream(const std::vector<ChatMessage>& message
     request["stream_options"] = {{"include_usage", true}};
 
     std::string url = base_url_ + "/chat/completions";
-    std::vector<Header> headers = {
-        {"Authorization", "Bearer " + api_key_},
-        {"Content-Type", "application/json"}
-    };
+    auto headers = build_headers();
 
     ChatResponse result;
     result.model = model;
@@ -237,7 +238,7 @@ ChatResponse OpenAIProvider::chat_stream(const std::vector<ChatMessage>& message
 
     if (http_response.status_code != 0 &&
         (http_response.status_code < 200 || http_response.status_code >= 300)) {
-        throw std::runtime_error("OpenAI API error (HTTP " +
+        throw std::runtime_error(provider_name() + " API error (HTTP " +
             std::to_string(http_response.status_code) + ")");
     }
 
@@ -268,15 +269,12 @@ std::string OpenAIProvider::chat_simple(const std::string& system_prompt,
     request["messages"] = msgs;
 
     std::string url = base_url_ + "/chat/completions";
-    std::vector<Header> headers = {
-        {"Authorization", "Bearer " + api_key_},
-        {"Content-Type", "application/json"}
-    };
+    auto headers = build_headers();
 
     auto response = http_.post(url, request.dump(), headers);
 
     if (response.status_code < 200 || response.status_code >= 300) {
-        throw std::runtime_error("OpenAI API error (HTTP " +
+        throw std::runtime_error(provider_name() + " API error (HTTP " +
             std::to_string(response.status_code) + "): " + response.body);
     }
 

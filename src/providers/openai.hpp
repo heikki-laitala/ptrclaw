@@ -36,6 +36,8 @@ protected:
                                  const std::vector<ToolSpec>& tools,
                                  const std::string& model,
                                  double temperature) const;
+    virtual std::vector<Header> build_headers() const;
+
     std::string api_key_;
     HttpClient& http_;
     std::string base_url_;
