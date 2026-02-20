@@ -1,4 +1,5 @@
 #include "agent.hpp"
+#include "event.hpp"
 #include "event_bus.hpp"
 #include "dispatcher.hpp"
 #include "prompt.hpp"
@@ -59,8 +60,19 @@ std::string Agent::process(const std::string& user_message) {
         }
 
         ChatResponse response;
+        std::vector<std::string> buffered_chunks;
         try {
-            response = provider_->chat(history_, tool_specs, model_, config_.default_temperature);
+            if (provider_->supports_streaming()) {
+                response = provider_->chat_stream(
+                    history_, tool_specs, model_, config_.default_temperature,
+                    [&buffered_chunks](const std::string& delta) -> bool {
+                        buffered_chunks.push_back(delta);
+                        return true;
+                    });
+            } else {
+                response = provider_->chat(history_, tool_specs, model_,
+                                           config_.default_temperature);
+            }
         } catch (const std::exception& e) {
             return std::string("Error calling provider: ") + e.what();
         }
@@ -73,6 +85,25 @@ std::string Agent::process(const std::string& user_message) {
             ev.has_tool_calls = response.has_tool_calls();
             ev.usage = response.usage;
             event_bus_->publish(ev);
+        }
+
+        // Replay buffered chunks if this is the final answer (no tool calls)
+        if (event_bus_ && !buffered_chunks.empty() && !response.has_tool_calls()) {
+            StreamStartEvent start_ev;
+            start_ev.session_id = session_id_;
+            start_ev.model = model_;
+            event_bus_->publish(start_ev);
+
+            for (const auto& chunk : buffered_chunks) {
+                StreamChunkEvent chunk_ev;
+                chunk_ev.session_id = session_id_;
+                chunk_ev.delta = chunk;
+                event_bus_->publish(chunk_ev);
+            }
+
+            StreamEndEvent end_ev;
+            end_ev.session_id = session_id_;
+            event_bus_->publish(end_ev);
         }
 
         // Append assistant message (encode tool_calls in name field for round-tripping)

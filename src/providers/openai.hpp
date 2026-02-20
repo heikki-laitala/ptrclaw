@@ -1,6 +1,7 @@
 #pragma once
 #include "../provider.hpp"
 #include "../http.hpp"
+#include <nlohmann/json.hpp>
 #include <string>
 
 namespace ptrclaw {
@@ -15,6 +16,12 @@ public:
                       const std::string& model,
                       double temperature) override;
 
+    ChatResponse chat_stream(const std::vector<ChatMessage>& messages,
+                             const std::vector<ToolSpec>& tools,
+                             const std::string& model,
+                             double temperature,
+                             const TextDeltaCallback& on_delta) override;
+
     std::string chat_simple(const std::string& system_prompt,
                             const std::string& message,
                             const std::string& model,
@@ -25,6 +32,10 @@ public:
     std::string provider_name() const override { return "openai"; }
 
 protected:
+    nlohmann::json build_request(const std::vector<ChatMessage>& messages,
+                                 const std::vector<ToolSpec>& tools,
+                                 const std::string& model,
+                                 double temperature) const;
     std::string api_key_;
     HttpClient& http_;
     std::string base_url_;

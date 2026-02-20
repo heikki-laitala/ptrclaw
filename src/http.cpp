@@ -161,4 +161,63 @@ HttpResponse http_stream_post(const std::string& url,
     return response;
 }
 
+struct RawStreamContext {
+    RawChunkCallback* callback;
+    bool aborted = false;
+};
+
+static size_t raw_stream_write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    size_t total = size * nmemb;
+    auto* ctx = static_cast<RawStreamContext*>(userdata);
+    if (ctx->aborted) return 0;
+
+    if (!(*ctx->callback)(ptr, total)) {
+        ctx->aborted = true;
+        return 0;
+    }
+
+    return total;
+}
+
+HttpResponse HttpClient::stream_post_raw(const std::string& url,
+                                          const std::string& body,
+                                          const std::vector<Header>& headers,
+                                          RawChunkCallback callback,
+                                          long timeout_seconds) {
+    return http_stream_post_raw(url, body, headers, std::move(callback), timeout_seconds);
+}
+
+HttpResponse http_stream_post_raw(const std::string& url,
+                                   const std::string& body,
+                                   const std::vector<Header>& headers,
+                                   RawChunkCallback callback,
+                                   long timeout_seconds) {
+    HttpResponse response;
+    CURL* curl = curl_easy_init();
+    if (!curl) return response;
+
+    RawStreamContext ctx;
+    ctx.callback = &callback;
+
+    curl_slist* hlist = build_headers(headers);
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hlist);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, raw_stream_write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_seconds);
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res == CURLE_OK) {
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.status_code);
+    }
+
+    curl_slist_free_all(hlist);
+    curl_easy_cleanup(curl);
+    return response;
+}
+
 } // namespace ptrclaw

@@ -24,6 +24,9 @@ namespace event_tags {
     constexpr const char* ToolCallResult   = "ToolCallResult";
     constexpr const char* SessionCreated   = "SessionCreated";
     constexpr const char* SessionEvicted   = "SessionEvicted";
+    constexpr const char* StreamStart      = "StreamStart";
+    constexpr const char* StreamChunk      = "StreamChunk";
+    constexpr const char* StreamEnd        = "StreamEnd";
 } // namespace event_tags
 
 // ── Event structs ───────────────────────────────────────────────
@@ -95,6 +98,29 @@ struct SessionEvictedEvent : Event {
     std::string session_id;
 
     SessionEvictedEvent() { type_tag = TAG; }
+};
+
+struct StreamStartEvent : Event {
+    static constexpr const char* TAG = event_tags::StreamStart;
+    std::string session_id;
+    std::string model;
+
+    StreamStartEvent() { type_tag = TAG; }
+};
+
+struct StreamChunkEvent : Event {
+    static constexpr const char* TAG = event_tags::StreamChunk;
+    std::string session_id;
+    std::string delta;
+
+    StreamChunkEvent() { type_tag = TAG; }
+};
+
+struct StreamEndEvent : Event {
+    static constexpr const char* TAG = event_tags::StreamEnd;
+    std::string session_id;
+
+    StreamEndEvent() { type_tag = TAG; }
 };
 
 } // namespace ptrclaw
