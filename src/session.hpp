@@ -37,6 +37,9 @@ public:
     // Optional event bus — propagated to new agents
     void set_event_bus(EventBus* bus) { event_bus_ = bus; }
 
+    // Subscribe to MessageReceivedEvent on the event bus
+    void subscribe_events();
+
 private:
     Config config_;
     HttpClient& http_;

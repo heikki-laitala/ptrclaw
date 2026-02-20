@@ -100,49 +100,16 @@ static int run_channel(const std::string& channel_name,
             }
         });
 
-    // MessageReceived → process via agent, emit MessageReady
+    // MessageReceived → channel-only concerns (typing + stream state)
     ptrclaw::subscribe<ptrclaw::MessageReceivedEvent>(bus,
-        [&sessions, &bus, &stream_states, &channel](const ptrclaw::MessageReceivedEvent& ev) {
-            auto& agent = sessions.get_session(ev.session_id);
+        [&channel, &stream_states](const ptrclaw::MessageReceivedEvent& ev) {
+            // Skip slash commands — instant replies, no typing or stream state
+            if (!ev.message.content.empty() && ev.message.content[0] == '/') return;
+
             std::string chat_id = ev.message.reply_target.value_or("");
-
-            // Handle /start command
-            if (ev.message.content == "/start") {
-                ptrclaw::MessageReadyEvent reply;
-                reply.session_id = ev.session_id;
-                reply.reply_target = chat_id;
-                std::string greeting = "Hello";
-                if (ev.message.first_name) greeting += " " + *ev.message.first_name;
-                greeting += "! I'm PtrClaw, an AI assistant. How can I help you?";
-                reply.content = greeting;
-                bus.publish(reply);
-                return;
-            }
-
-            // Handle /new command
-            if (ev.message.content == "/new") {
-                agent.clear_history();
-                ptrclaw::MessageReadyEvent reply;
-                reply.session_id = ev.session_id;
-                reply.reply_target = chat_id;
-                reply.content = "Conversation cleared. What would you like to discuss?";
-                bus.publish(reply);
-                return;
-            }
-
-            // Show typing indicator immediately
             channel->send_typing_indicator(chat_id);
-
-            // Register stream state before processing
             stream_states[ev.session_id] = {chat_id, 0, {},
                                              std::chrono::steady_clock::now(), false};
-
-            std::string response = agent.process(ev.message.content);
-            ptrclaw::MessageReadyEvent reply;
-            reply.session_id = ev.session_id;
-            reply.reply_target = chat_id;
-            reply.content = response;
-            bus.publish(reply);
         });
 
     // Refresh typing indicator on each tool call
@@ -195,6 +162,10 @@ static int run_channel(const std::string& channel_name,
                 it->second.delivered = true;
             });
     }
+
+    // SessionManager subscribes last — runs after channel handler sets up
+    // typing + stream state
+    sessions.subscribe_events();
 
     uint32_t poll_count = 0;
     std::cerr << "[" << channel_name << "] Bot started. Polling for messages...\n";
