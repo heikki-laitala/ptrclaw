@@ -21,6 +21,8 @@ Nullclaw is a fully autonomous AI assistant infrastructure written in Zig — 67
 
 ## Quick start
 
+> Dev workflow: pull latest `main`, create a feature branch, push, and open a PR.
+
 ```sh
 git clone <repo-url> && cd ptrclaw
 make deps    # install meson, llvm, libcurl
