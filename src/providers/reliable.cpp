@@ -32,6 +32,27 @@ ChatResponse ReliableProvider::chat(const std::vector<ChatMessage>& messages,
     throw std::runtime_error("All providers failed. Last error: " + last_error);
 }
 
+ChatResponse ReliableProvider::chat_stream(const std::vector<ChatMessage>& messages,
+                                            const std::vector<ToolSpec>& tools,
+                                            const std::string& model,
+                                            double temperature,
+                                            const TextDeltaCallback& on_delta) {
+    std::string last_error;
+    for (size_t i = 0; i < providers_.size(); ++i) {
+        for (uint32_t retry = 0; retry < max_retries_; ++retry) {
+            try {
+                return providers_[i]->chat_stream(messages, tools, model, temperature, on_delta);
+            } catch (const std::exception& e) {
+                last_error = e.what();
+                std::cerr << "[reliable] Provider " << providers_[i]->provider_name()
+                          << " stream attempt " << (retry + 1) << "/" << max_retries_
+                          << " failed: " << last_error << '\n';
+            }
+        }
+    }
+    throw std::runtime_error("All providers failed. Last error: " + last_error);
+}
+
 std::string ReliableProvider::chat_simple(const std::string& system_prompt,
                                            const std::string& message,
                                            const std::string& model,

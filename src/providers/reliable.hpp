@@ -17,6 +17,12 @@ public:
                       const std::string& model,
                       double temperature) override;
 
+    ChatResponse chat_stream(const std::vector<ChatMessage>& messages,
+                             const std::vector<ToolSpec>& tools,
+                             const std::string& model,
+                             double temperature,
+                             const TextDeltaCallback& on_delta) override;
+
     std::string chat_simple(const std::string& system_prompt,
                             const std::string& message,
                             const std::string& model,

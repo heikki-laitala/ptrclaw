@@ -1,4 +1,5 @@
 #include "anthropic.hpp"
+#include "sse.hpp"
 #include "../http.hpp"
 #include "../plugin.hpp"
 #include <nlohmann/json.hpp>
@@ -16,10 +17,10 @@ namespace ptrclaw {
 AnthropicProvider::AnthropicProvider(const std::string& api_key, HttpClient& http)
     : api_key_(api_key), http_(http) {}
 
-ChatResponse AnthropicProvider::chat(const std::vector<ChatMessage>& messages,
-                                      const std::vector<ToolSpec>& tools,
-                                      const std::string& model,
-                                      double temperature) {
+json AnthropicProvider::build_request(const std::vector<ChatMessage>& messages,
+                                       const std::vector<ToolSpec>& tools,
+                                       const std::string& model,
+                                       double temperature) const {
     json request;
     request["model"] = model;
     request["max_tokens"] = 4096;
@@ -104,7 +105,15 @@ ChatResponse AnthropicProvider::chat(const std::vector<ChatMessage>& messages,
         request["tools"] = tools_arr;
     }
 
-    // Make HTTP request
+    return request;
+}
+
+ChatResponse AnthropicProvider::chat(const std::vector<ChatMessage>& messages,
+                                      const std::vector<ToolSpec>& tools,
+                                      const std::string& model,
+                                      double temperature) {
+    json request = build_request(messages, tools, model, temperature);
+
     std::vector<Header> headers = {
         {"x-api-key", api_key_},
         {"anthropic-version", API_VERSION},
@@ -148,6 +157,138 @@ ChatResponse AnthropicProvider::chat(const std::vector<ChatMessage>& messages,
         result.usage.completion_tokens = usage.value("output_tokens", 0u);
         result.usage.total_tokens = result.usage.prompt_tokens + result.usage.completion_tokens;
     }
+
+    return result;
+}
+
+ChatResponse AnthropicProvider::chat_stream(const std::vector<ChatMessage>& messages,
+                                             const std::vector<ToolSpec>& tools,
+                                             const std::string& model,
+                                             double temperature,
+                                             const TextDeltaCallback& on_delta) {
+    json request = build_request(messages, tools, model, temperature);
+    request["stream"] = true;
+
+    std::vector<Header> headers = {
+        {"x-api-key", api_key_},
+        {"anthropic-version", API_VERSION},
+        {"content-type", "application/json"}
+    };
+
+    ChatResponse result;
+    result.model = model;
+    std::string accumulated_text;
+
+    // Track tool use blocks: index → {id, name, arguments_json}
+    struct ToolBlock {
+        std::string id;
+        std::string name;
+        std::string arguments;
+    };
+    std::vector<ToolBlock> tool_blocks;
+    int current_block_index = -1;
+    bool in_tool_block = false;
+
+    SSEParser parser;
+    bool stream_error = false;
+    std::string error_body;
+
+    auto http_response = http_.stream_post_raw(
+        BASE_URL, request.dump(), headers,
+        [&](const char* data, size_t len) -> bool {
+            std::string chunk(data, len);
+            parser.feed(chunk, [&](const SSEEvent& sse) -> bool {
+                if (sse.event == "error") {
+                    stream_error = true;
+                    error_body = sse.data;
+                    return false;
+                }
+
+                if (sse.data.empty() || sse.data == "[DONE]") return true;
+
+                json payload;
+                try {
+                    payload = json::parse(sse.data);
+                } catch (...) {
+                    return true; // skip unparseable chunks
+                }
+
+                if (sse.event == "message_start") {
+                    if (payload.contains("message")) {
+                        const auto& msg = payload["message"];
+                        result.model = msg.value("model", model);
+                        if (msg.contains("usage")) {
+                            result.usage.prompt_tokens = msg["usage"].value("input_tokens", 0u);
+                        }
+                    }
+                } else if (sse.event == "content_block_start") {
+                    current_block_index++;
+                    if (payload.contains("content_block")) {
+                        const auto& block = payload["content_block"];
+                        std::string type = block.value("type", "");
+                        if (type == "tool_use") {
+                            in_tool_block = true;
+                            ToolBlock tb;
+                            tb.id = block.value("id", "");
+                            tb.name = block.value("name", "");
+                            tool_blocks.push_back(std::move(tb));
+                        } else {
+                            in_tool_block = false;
+                        }
+                    }
+                } else if (sse.event == "content_block_delta") {
+                    if (payload.contains("delta")) {
+                        const auto& delta = payload["delta"];
+                        std::string delta_type = delta.value("type", "");
+                        if (delta_type == "text_delta") {
+                            std::string text = delta.value("text", "");
+                            if (!text.empty()) {
+                                accumulated_text += text;
+                                if (on_delta) {
+                                    on_delta(text);
+                                }
+                            }
+                        } else if (delta_type == "input_json_delta" && !tool_blocks.empty()) {
+                            tool_blocks.back().arguments += delta.value("partial_json", "");
+                        }
+                    }
+                } else if (sse.event == "content_block_stop") {
+                    in_tool_block = false;
+                } else if (sse.event == "message_delta") {
+                    if (payload.contains("usage")) {
+                        result.usage.completion_tokens = payload["usage"].value("output_tokens", 0u);
+                    }
+                }
+
+                return true;
+            });
+            return !stream_error;
+        });
+
+    if (stream_error) {
+        throw std::runtime_error("Anthropic streaming error: " + error_body);
+    }
+
+    if (http_response.status_code != 0 &&
+        (http_response.status_code < 200 || http_response.status_code >= 300)) {
+        throw std::runtime_error("Anthropic API error (HTTP " +
+            std::to_string(http_response.status_code) + ")");
+    }
+
+    // Assemble result
+    if (!accumulated_text.empty()) {
+        result.content = accumulated_text;
+    }
+
+    for (auto& tb : tool_blocks) {
+        ToolCall tc;
+        tc.id = std::move(tb.id);
+        tc.name = std::move(tb.name);
+        tc.arguments = std::move(tb.arguments);
+        result.tool_calls.push_back(std::move(tc));
+    }
+
+    result.usage.total_tokens = result.usage.prompt_tokens + result.usage.completion_tokens;
 
     return result;
 }

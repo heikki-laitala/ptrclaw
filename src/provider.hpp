@@ -4,6 +4,7 @@
 #include <vector>
 #include <optional>
 #include <memory>
+#include <functional>
 #include <cstdint>
 
 namespace ptrclaw {
@@ -48,6 +49,9 @@ struct ChatResponse {
     bool has_tool_calls() const { return !tool_calls.empty(); }
 };
 
+// Callback for streaming text deltas. Return false to abort.
+using TextDeltaCallback = std::function<bool(const std::string& delta)>;
+
 // Abstract base class for LLM providers
 class Provider {
 public:
@@ -62,6 +66,15 @@ public:
                                     const std::string& message,
                                     const std::string& model,
                                     double temperature) = 0;
+
+    virtual ChatResponse chat_stream(const std::vector<ChatMessage>& messages,
+                                      const std::vector<ToolSpec>& tools,
+                                      const std::string& model,
+                                      double temperature,
+                                      const TextDeltaCallback& on_delta) {
+        (void)on_delta;
+        return chat(messages, tools, model, temperature);
+    }
 
     virtual bool supports_native_tools() const = 0;
     virtual bool supports_streaming() const { return false; }

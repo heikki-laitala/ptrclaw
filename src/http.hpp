@@ -19,6 +19,10 @@ struct HttpResponse {
     std::string body;
 };
 
+// Raw-chunk streaming callback: receives raw bytes from the response.
+// Return false to abort the stream.
+using RawChunkCallback = std::function<bool(const char* data, size_t len)>;
+
 // Abstract HTTP client interface (injectable for testing)
 class HttpClient {
 public:
@@ -27,6 +31,12 @@ public:
                               const std::string& body,
                               const std::vector<Header>& headers,
                               long timeout_seconds = 120) = 0;
+
+    virtual HttpResponse stream_post_raw(const std::string& url,
+                                         const std::string& body,
+                                         const std::vector<Header>& headers,
+                                         RawChunkCallback callback,
+                                         long timeout_seconds = 300);
 };
 
 // Concrete implementation using libcurl
@@ -59,5 +69,12 @@ HttpResponse http_stream_post(const std::string& url,
                               const std::vector<Header>& headers,
                               StreamCallback callback,
                               long timeout_seconds = 300);
+
+// HTTP POST with raw-chunk streaming (no SSE parsing — caller parses)
+HttpResponse http_stream_post_raw(const std::string& url,
+                                  const std::string& body,
+                                  const std::vector<Header>& headers,
+                                  RawChunkCallback callback,
+                                  long timeout_seconds = 300);
 
 } // namespace ptrclaw
