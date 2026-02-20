@@ -6,16 +6,13 @@
 #include "channel.hpp"
 #include "plugin.hpp"
 #include "event_bus.hpp"
-#include "event.hpp"
 #include "session.hpp"
+#include "stream_relay.hpp"
 #include <iostream>
 #include <string>
 #include <cstring>
-#include <thread>
 #include <atomic>
 #include <csignal>
-#include <chrono>
-#include <unordered_map>
 
 static std::atomic<bool> g_shutdown{false};
 
@@ -76,92 +73,9 @@ static int run_channel(const std::string& channel_name,
     ptrclaw::SessionManager sessions(config, http_client);
     sessions.set_event_bus(&bus);
 
-    // Streaming display state
-    struct StreamState {
-        std::string chat_id;
-        int64_t message_id = 0;
-        std::string accumulated;
-        std::chrono::steady_clock::time_point last_edit;
-        bool delivered = false;
-    };
-    std::unordered_map<std::string, StreamState> stream_states;
-
-    // MessageReady → send via channel (skip if already delivered via streaming)
-    ptrclaw::subscribe<ptrclaw::MessageReadyEvent>(bus,
-        [&channel, &stream_states](const ptrclaw::MessageReadyEvent& ev) {
-            auto it = stream_states.find(ev.session_id);
-            if (it != stream_states.end()) {
-                bool delivered = it->second.delivered;
-                stream_states.erase(it);
-                if (delivered) return;
-            }
-            if (!ev.reply_target.empty()) {
-                channel->send_message(ev.reply_target, ev.content);
-            }
-        });
-
-    // MessageReceived → channel-only concerns (typing + stream state)
-    ptrclaw::subscribe<ptrclaw::MessageReceivedEvent>(bus,
-        [&channel, &stream_states](const ptrclaw::MessageReceivedEvent& ev) {
-            // Skip slash commands — instant replies, no typing or stream state
-            if (!ev.message.content.empty() && ev.message.content[0] == '/') return;
-
-            std::string chat_id = ev.message.reply_target.value_or("");
-            channel->send_typing_indicator(chat_id);
-            stream_states[ev.session_id] = {chat_id, 0, {},
-                                             std::chrono::steady_clock::now(), false};
-        });
-
-    // Refresh typing indicator on each tool call
-    ptrclaw::subscribe<ptrclaw::ToolCallRequestEvent>(bus,
-        [&channel, &stream_states](const ptrclaw::ToolCallRequestEvent& ev) {
-            auto it = stream_states.find(ev.session_id);
-            if (it != stream_states.end() && !it->second.chat_id.empty()) {
-                channel->send_typing_indicator(it->second.chat_id);
-            }
-        });
-
-    // Stream event subscribers (progressive message editing)
-    if (channel->supports_streaming_display()) {
-        ptrclaw::subscribe<ptrclaw::StreamStartEvent>(bus,
-            [&channel, &stream_states](const ptrclaw::StreamStartEvent& ev) {
-                auto it = stream_states.find(ev.session_id);
-                if (it == stream_states.end()) return;
-                int64_t msg_id = channel->send_streaming_placeholder(
-                    it->second.chat_id);
-                it->second.message_id = msg_id;
-                it->second.last_edit = std::chrono::steady_clock::now();
-            });
-
-        ptrclaw::subscribe<ptrclaw::StreamChunkEvent>(bus,
-            [&channel, &stream_states](const ptrclaw::StreamChunkEvent& ev) {
-                auto it = stream_states.find(ev.session_id);
-                if (it == stream_states.end() || it->second.message_id == 0)
-                    return;
-                it->second.accumulated += ev.delta;
-                auto now = std::chrono::steady_clock::now();
-                auto elapsed = std::chrono::duration_cast<
-                    std::chrono::milliseconds>(
-                    now - it->second.last_edit).count();
-                if (elapsed >= 1000) {
-                    channel->edit_message(it->second.chat_id,
-                                          it->second.message_id,
-                                          it->second.accumulated);
-                    it->second.last_edit = now;
-                }
-            });
-
-        ptrclaw::subscribe<ptrclaw::StreamEndEvent>(bus,
-            [&channel, &stream_states](const ptrclaw::StreamEndEvent& ev) {
-                auto it = stream_states.find(ev.session_id);
-                if (it == stream_states.end() || it->second.message_id == 0)
-                    return;
-                channel->edit_message(it->second.chat_id,
-                                      it->second.message_id,
-                                      it->second.accumulated);
-                it->second.delivered = true;
-            });
-    }
+    // Wire up channel display (typing, streaming, message delivery)
+    ptrclaw::StreamRelay relay(*channel, bus);
+    relay.subscribe_events();
 
     // SessionManager subscribes last — runs after channel handler sets up
     // typing + stream state
