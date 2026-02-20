@@ -37,6 +37,9 @@ public:
     // Poll for new messages; default returns empty (webhook channels)
     virtual std::vector<ChannelMessage> poll_updates() { return {}; }
 
+    // Typing indicator (e.g. "typing..." in Telegram)
+    virtual void send_typing_indicator(const std::string& /*target*/) {}
+
     // Streaming display: progressive message editing
     virtual bool supports_streaming_display() const { return false; }
     virtual int64_t send_streaming_placeholder(const std::string& /*target*/) { return 0; }

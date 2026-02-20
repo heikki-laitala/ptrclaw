@@ -102,14 +102,15 @@ static int run_channel(const std::string& channel_name,
 
     // MessageReceived → process via agent, emit MessageReady
     ptrclaw::subscribe<ptrclaw::MessageReceivedEvent>(bus,
-        [&sessions, &bus, &stream_states](const ptrclaw::MessageReceivedEvent& ev) {
+        [&sessions, &bus, &stream_states, &channel](const ptrclaw::MessageReceivedEvent& ev) {
             auto& agent = sessions.get_session(ev.session_id);
+            std::string chat_id = ev.message.reply_target.value_or("");
 
             // Handle /start command
             if (ev.message.content == "/start") {
                 ptrclaw::MessageReadyEvent reply;
                 reply.session_id = ev.session_id;
-                reply.reply_target = ev.message.reply_target.value_or("");
+                reply.reply_target = chat_id;
                 std::string greeting = "Hello";
                 if (ev.message.first_name) greeting += " " + *ev.message.first_name;
                 greeting += "! I'm PtrClaw, an AI assistant. How can I help you?";
@@ -123,14 +124,16 @@ static int run_channel(const std::string& channel_name,
                 agent.clear_history();
                 ptrclaw::MessageReadyEvent reply;
                 reply.session_id = ev.session_id;
-                reply.reply_target = ev.message.reply_target.value_or("");
+                reply.reply_target = chat_id;
                 reply.content = "Conversation cleared. What would you like to discuss?";
                 bus.publish(reply);
                 return;
             }
 
+            // Show typing indicator immediately
+            channel->send_typing_indicator(chat_id);
+
             // Register stream state before processing
-            std::string chat_id = ev.message.reply_target.value_or("");
             stream_states[ev.session_id] = {chat_id, 0, {},
                                              std::chrono::steady_clock::now(), false};
 
@@ -140,6 +143,15 @@ static int run_channel(const std::string& channel_name,
             reply.reply_target = chat_id;
             reply.content = response;
             bus.publish(reply);
+        });
+
+    // Refresh typing indicator on each tool call
+    ptrclaw::subscribe<ptrclaw::ToolCallRequestEvent>(bus,
+        [&channel, &stream_states](const ptrclaw::ToolCallRequestEvent& ev) {
+            auto it = stream_states.find(ev.session_id);
+            if (it != stream_states.end() && !it->second.chat_id.empty()) {
+                channel->send_typing_indicator(it->second.chat_id);
+            }
         });
 
     // Stream event subscribers (progressive message editing)
