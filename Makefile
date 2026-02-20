@@ -52,7 +52,7 @@ coverage-summary:
 	gcovr --root . $(COVDIR) --filter src/
 
 lint: build
-	run-clang-tidy -quiet -p $(BUILDDIR) $(CLANG_TIDY_EXTRA) 2>&1 | grep -v 'warnings generated' | grep -v '/subprojects/'
+	run-clang-tidy -quiet -p $(BUILDDIR) $(CLANG_TIDY_EXTRA) '^(?!.*subprojects).*(src|tests)/' 2>&1 | grep -v 'warnings generated'
 
 clean:
 	rm -rf $(BUILDDIR) $(STATICDIR) $(COVDIR)
