@@ -1,0 +1,115 @@
+# PtrClaw — Agent Instructions
+
+C++17 agentic AI assistant (port of nullclaw). Enables LLM-driven tool use via CLI, Telegram, and WhatsApp.
+
+Optimized for:
+
+- **Minimal binary size** — target: smallest possible static binary. Avoid unnecessary dependencies and abstractions.
+- **Minimal memory footprint** — prefer stack allocation, avoid gratuitous heap use.
+- **Single external dependency** — libcurl only. Everything else is header-only or subproject.
+
+## Build & Test
+
+```bash
+make build          # Build with meson/ninja (clang++, LTO)
+make test           # Run Catch2 unit tests
+make lint           # Run clang-tidy
+make coverage       # Generate coverage report
+make build-static   # Static binary for distribution
+```
+
+Dependencies: `make deps` (requires Homebrew on macOS, apt on Linux).
+
+Validation before commit:
+
+```bash
+make test && make lint   # Both must pass
+```
+
+## Architecture
+
+```text
+Agent (agentic loop)
+├── Provider (LLM API) ── Anthropic, OpenAI, OpenRouter, Ollama, Compatible, Reliable
+├── Tool (actions)     ── file_read, file_write, file_edit, shell
+├── Dispatcher         ── XML tool call parsing for non-native providers
+├── Session            ── Multi-user session management with idle eviction
+└── Channel (I/O)      ── Telegram (long-polling), WhatsApp (webhooks)
+```
+
+All source is in `namespace ptrclaw`. Interfaces are abstract base classes with virtual methods (`Provider`, `Tool`, `Channel`). Extend capabilities by implementing these interfaces and registering in the corresponding factory.
+
+Extension points:
+
+- `src/providers/` — add `<name>.hpp/cpp` implementing `Provider`, register in `provider.cpp`
+- `src/channels/` — add `<name>.hpp/cpp` implementing `Channel`
+- `src/tools/` — add `<name>.hpp/cpp` implementing `Tool`, register in `tool.cpp`
+
+## Engineering Principles
+
+### KISS
+
+Prefer straightforward control flow. Keep error paths obvious and localized.
+
+### YAGNI
+
+Do not add interfaces, config keys, or abstractions without a concrete caller. No speculative features.
+
+### DRY (Rule of Three)
+
+Duplicate small local logic when it preserves clarity. Extract shared helpers only after three repeated, stable patterns.
+
+### Secure by Default
+
+Never log secrets or tokens. Validate at system boundaries. Keep network/filesystem/shell scope narrow.
+
+## Conventions
+
+- **C++17**, compiled with clang++ (LTO enabled)
+- **Naming**: PascalCase types, snake_case functions, trailing underscore for members (`config_`)
+- **Headers**: `#pragma once`, local includes first, then system
+- **Memory**: `std::unique_ptr` for polymorphic ownership, `std::optional` for nullable values
+- **JSON**: nlohmann/json (`#include <nlohmann/json.hpp>`)
+- **Tests**: Catch2 with `TEST_CASE` / `REQUIRE`. Mock classes inherit from abstract interfaces.
+- **Git**: Conventional commits (`feat:`, `fix:`, `chore:`, `refactor:`, `test:`, `ci:`). No Co-Authored-By trailer.
+
+## Key Files
+
+| Path | Purpose |
+| ---- | ------- |
+| `src/agent.hpp` | Core agentic loop: prompt injection, tool dispatch, history compaction |
+| `src/provider.hpp` | Provider interface + ChatMessage, ChatResponse, ToolCall types |
+| `src/tool.hpp` | Tool interface + ToolSpec, ToolResult types |
+| `src/channel.hpp` | Channel interface + ChannelMessage type |
+| `src/config.hpp` | Config loader (~/.ptrclaw/config.json + env vars) |
+| `src/dispatcher.hpp` | XML tool call parsing for non-native providers |
+| `src/session.hpp` | Thread-safe multi-session management |
+| `meson.build` | Build config: static lib + executable + tests |
+| `.clang-tidy` | Linting rules (bugprone, modernize, performance, readability) |
+
+## Risk Tiers
+
+- **Low**: docs, comments, test additions, formatting
+- **Medium**: most `src/` behavior changes without security impact
+- **High**: `src/tools/` (shell execution), `src/config.hpp` (secrets), channel auth, session management
+
+When uncertain, classify as higher risk.
+
+## Lint
+
+clang-tidy is configured via `.clang-tidy`. The Makefile filters subproject warnings from output. Use `value_or()` instead of `.value()` on optionals to avoid `bugprone-unchecked-optional-access` in test code.
+
+## Platform Notes
+
+- **Linux**: Uses `clang++` with `lld` linker (required for LTO). See `meson-native-linux.ini`.
+- **macOS**: Uses system `clang++`. Lint needs extra args for stdlib/sysroot (handled by Makefile).
+- **Static builds**: `make build-static` — works on macOS; Linux needs curl transitive deps.
+
+## Anti-Patterns (Do Not)
+
+- Do not add dependencies without strong justification (binary size impact).
+- Do not modify unrelated code "while here".
+- Do not silently weaken security or access constraints.
+- Do not add speculative config/feature flags "just in case".
+- Do not commit real API keys, tokens, or credentials. Use `"test-key"` in tests.
+- Do not skip `make test && make lint` before committing.
