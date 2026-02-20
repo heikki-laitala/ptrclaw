@@ -1,7 +1,11 @@
 #include "file_edit.hpp"
+#include "../plugin.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <sstream>
+
+static ptrclaw::ToolRegistrar reg_file_edit("file_edit",
+    []() { return std::make_unique<ptrclaw::FileEditTool>(); });
 
 namespace ptrclaw {
 

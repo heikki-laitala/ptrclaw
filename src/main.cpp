@@ -4,8 +4,9 @@
 #include "agent.hpp"
 #include "http.hpp"
 #include "channel.hpp"
+#include "plugin.hpp"
+#include "event_bus.hpp"
 #include "channels/telegram.hpp"
-#include "channels/whatsapp.hpp"
 #include "session.hpp"
 #include <iostream>
 #include <string>
@@ -48,66 +49,99 @@ static void print_usage() {
               << "  WHATSAPP_VERIFY_TOKEN  WhatsApp webhook verify token\n";
 }
 
-static int run_telegram(ptrclaw::Config& config, ptrclaw::CurlHttpClient& http_client) {
-    if (!config.channels.telegram || config.channels.telegram->bot_token.empty()) {
-        std::cerr << "Error: Telegram bot_token not configured.\n"
-                  << "Set TELEGRAM_BOT_TOKEN or add channels.telegram.bot_token to config.\n";
+static int run_channel(const std::string& channel_name,
+                       ptrclaw::Config& config,
+                       ptrclaw::CurlHttpClient& http_client) {
+    // Create channel via plugin registry
+    std::unique_ptr<ptrclaw::Channel> channel;
+    try {
+        channel = ptrclaw::PluginRegistry::instance().create_channel(
+            channel_name, config, http_client);
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
         return 1;
     }
 
-    auto& tc = *config.channels.telegram;
-    ptrclaw::TelegramConfig tg_cfg;
-    tg_cfg.bot_token = tc.bot_token;
-    tg_cfg.allow_from = tc.allow_from;
-    tg_cfg.reply_in_private = tc.reply_in_private;
-    tg_cfg.proxy = tc.proxy;
-
-    ptrclaw::TelegramChannel telegram(tg_cfg, http_client);
-
-    if (!telegram.health_check()) {
-        std::cerr << "Error: Telegram bot token is invalid (health check failed).\n";
+    if (!channel->health_check()) {
+        std::cerr << "Error: " << channel_name << " health check failed.\n";
         return 1;
     }
 
-    telegram.set_my_commands();
-    telegram.drop_pending_updates();
+    // Telegram-specific setup
+    auto* telegram = dynamic_cast<ptrclaw::TelegramChannel*>(channel.get());
+    if (telegram) {
+        telegram->set_my_commands();
+        telegram->drop_pending_updates();
+    }
 
+    // Set up event bus
+    ptrclaw::EventBus bus;
     ptrclaw::SessionManager sessions(config, http_client);
-    uint32_t poll_count = 0;
+    sessions.set_event_bus(&bus);
 
-    std::cerr << "[telegram] Bot started. Polling for messages...\n";
+    // MessageReady → send via channel
+    ptrclaw::subscribe<ptrclaw::MessageReadyEvent>(bus,
+        [&channel](const ptrclaw::MessageReadyEvent& ev) {
+            if (!ev.reply_target.empty()) {
+                channel->send_message(ev.reply_target, ev.content);
+            }
+        });
 
-    while (!g_shutdown.load()) {
-        auto messages = telegram.poll_updates();
-
-        for (const auto& msg : messages) {
-            std::string session_id = msg.sender;
-            auto& agent = sessions.get_session(session_id);
+    // MessageReceived → process via agent, emit MessageReady
+    ptrclaw::subscribe<ptrclaw::MessageReceivedEvent>(bus,
+        [&sessions, &bus](const ptrclaw::MessageReceivedEvent& ev) {
+            auto& agent = sessions.get_session(ev.session_id);
 
             // Handle /start command
-            if (msg.content == "/start") {
+            if (ev.message.content == "/start") {
+                ptrclaw::MessageReadyEvent reply;
+                reply.session_id = ev.session_id;
+                reply.reply_target = ev.message.reply_target.value_or("");
                 std::string greeting = "Hello";
-                if (msg.first_name) greeting += " " + *msg.first_name;
+                if (ev.message.first_name) greeting += " " + *ev.message.first_name;
                 greeting += "! I'm PtrClaw, an AI assistant. How can I help you?";
-                if (msg.reply_target) {
-                    telegram.send_message(*msg.reply_target, greeting);
-                }
-                continue;
+                reply.content = greeting;
+                bus.publish(reply);
+                return;
             }
 
             // Handle /new command
-            if (msg.content == "/new") {
+            if (ev.message.content == "/new") {
                 agent.clear_history();
-                if (msg.reply_target) {
-                    telegram.send_message(*msg.reply_target, "Conversation cleared. What would you like to discuss?");
-                }
-                continue;
+                ptrclaw::MessageReadyEvent reply;
+                reply.session_id = ev.session_id;
+                reply.reply_target = ev.message.reply_target.value_or("");
+                reply.content = "Conversation cleared. What would you like to discuss?";
+                bus.publish(reply);
+                return;
             }
 
-            std::string response = agent.process(msg.content);
-            if (msg.reply_target) {
-                telegram.send_message(*msg.reply_target, response);
+            std::string response = agent.process(ev.message.content);
+            ptrclaw::MessageReadyEvent reply;
+            reply.session_id = ev.session_id;
+            reply.reply_target = ev.message.reply_target.value_or("");
+            reply.content = response;
+            bus.publish(reply);
+        });
+
+    uint32_t poll_count = 0;
+    std::cerr << "[" << channel_name << "] Bot started. Polling for messages...\n";
+
+    while (!g_shutdown.load()) {
+        // Currently only Telegram supports polling
+        if (telegram) {
+            auto messages = telegram->poll_updates();
+            for (auto& msg : messages) {
+                ptrclaw::MessageReceivedEvent ev;
+                ev.session_id = msg.sender;
+                ev.message = std::move(msg);
+                bus.publish(ev);
             }
+        } else {
+            // Non-polling channels (e.g. WhatsApp) need external webhook
+            std::cerr << channel_name << " channel requires an external webhook gateway.\n"
+                      << "Use the channel API programmatically with your HTTP server.\n";
+            return 1;
         }
 
         // Periodic session eviction
@@ -116,7 +150,7 @@ static int run_telegram(ptrclaw::Config& config, ptrclaw::CurlHttpClient& http_c
         }
     }
 
-    std::cerr << "[telegram] Shutting down.\n";
+    std::cerr << "[" << channel_name << "] Shutting down.\n";
     return 0;
 }
 
@@ -164,18 +198,7 @@ int main(int argc, char* argv[]) try {
         std::signal(SIGTERM, signal_handler);
 
         ptrclaw::CurlHttpClient http_client;
-        int rc = 1;
-
-        if (channel_name == "telegram") {
-            rc = run_telegram(config, http_client);
-        } else if (channel_name == "whatsapp") {
-            std::cerr << "WhatsApp channel requires an external webhook gateway.\n"
-                      << "Use the WhatsAppChannel API programmatically with your HTTP server.\n";
-            rc = 1;
-        } else {
-            std::cerr << "Unknown channel: " << channel_name << "\n"
-                      << "Available channels: telegram, whatsapp\n";
-        }
+        int rc = run_channel(channel_name, config, http_client);
 
         ptrclaw::http_cleanup();
         return rc;

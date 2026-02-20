@@ -1,6 +1,23 @@
 #include "channels/whatsapp.hpp"
+#include "plugin.hpp"
 #include "util.hpp"
 #include <nlohmann/json.hpp>
+
+static ptrclaw::ChannelRegistrar reg_whatsapp("whatsapp",
+    [](const ptrclaw::Config& config, ptrclaw::HttpClient& http)
+        -> std::unique_ptr<ptrclaw::Channel> {
+        if (!config.channels.whatsapp || config.channels.whatsapp->access_token.empty()) {
+            throw std::runtime_error("WhatsApp access_token not configured");
+        }
+        auto& wc = *config.channels.whatsapp;
+        ptrclaw::WhatsAppConfig wa_cfg;
+        wa_cfg.access_token = wc.access_token;
+        wa_cfg.phone_number_id = wc.phone_number_id;
+        wa_cfg.verify_token = wc.verify_token;
+        wa_cfg.app_secret = wc.app_secret;
+        wa_cfg.allow_from = wc.allow_from;
+        return std::make_unique<ptrclaw::WhatsAppChannel>(wa_cfg, http);
+    });
 
 namespace ptrclaw {
 

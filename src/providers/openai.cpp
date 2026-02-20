@@ -1,7 +1,13 @@
 #include "openai.hpp"
 #include "../http.hpp"
+#include "../plugin.hpp"
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+
+static ptrclaw::ProviderRegistrar reg_openai("openai",
+    [](const std::string& key, ptrclaw::HttpClient& http, const std::string&) {
+        return std::make_unique<ptrclaw::OpenAIProvider>(key, http);
+    });
 
 using json = nlohmann::json;
 

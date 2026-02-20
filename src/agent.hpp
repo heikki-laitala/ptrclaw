@@ -8,6 +8,8 @@
 
 namespace ptrclaw {
 
+class EventBus; // forward declaration
+
 class Agent {
 public:
     Agent(std::unique_ptr<Provider> provider,
@@ -34,6 +36,10 @@ public:
     void set_provider(std::unique_ptr<Provider> provider);
     std::string provider_name() const;
 
+    // Optional event bus integration (nullptr = disabled)
+    void set_event_bus(EventBus* bus) { event_bus_ = bus; }
+    void set_session_id(const std::string& id) { session_id_ = id; }
+
 private:
     void compact_history();
     void inject_system_prompt();
@@ -44,6 +50,8 @@ private:
     Config config_;
     std::string model_;
     bool system_prompt_injected_ = false;
+    EventBus* event_bus_ = nullptr;
+    std::string session_id_;
 };
 
 } // namespace ptrclaw

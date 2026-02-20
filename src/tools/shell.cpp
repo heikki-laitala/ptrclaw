@@ -1,8 +1,12 @@
 #include "shell.hpp"
+#include "../plugin.hpp"
 #include <nlohmann/json.hpp>
 #include <cstdio>
 #include <array>
 #include <sys/wait.h>
+
+static ptrclaw::ToolRegistrar reg_shell("shell",
+    []() { return std::make_unique<ptrclaw::ShellTool>(); });
 
 namespace ptrclaw {
 

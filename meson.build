@@ -7,7 +7,7 @@ inc = include_directories('include', 'src')
 
 lib_sources = files(
   'src/agent.cpp', 'src/channel.cpp', 'src/config.cpp', 'src/dispatcher.cpp',
-  'src/http.cpp', 'src/prompt.cpp',
+  'src/event_bus.cpp', 'src/http.cpp', 'src/plugin.cpp', 'src/prompt.cpp',
   'src/provider.cpp', 'src/session.cpp', 'src/tool.cpp',
   'src/util.cpp',
   'src/channels/telegram.cpp', 'src/channels/whatsapp.cpp',
@@ -24,7 +24,7 @@ ptrclaw_lib = static_library('ptrclaw_lib', lib_sources,
   dependencies: [curl_dep])
 
 ptrclaw_dep = declare_dependency(
-  link_with: ptrclaw_lib,
+  link_whole: ptrclaw_lib,
   include_directories: inc)
 
 executable('ptrclaw', 'src/main.cpp',
@@ -50,6 +50,8 @@ test_sources = files(
   'tests/test_channel.cpp',
   'tests/test_telegram.cpp',
   'tests/test_whatsapp.cpp',
+  'tests/test_event_bus.cpp',
+  'tests/test_plugin.cpp',
 )
 
 test_exe = executable('ptrclaw_tests', test_sources,

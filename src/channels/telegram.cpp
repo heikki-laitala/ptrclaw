@@ -1,9 +1,25 @@
 #include "channels/telegram.hpp"
+#include "plugin.hpp"
 #include "util.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cctype>
 #include <sstream>
+
+static ptrclaw::ChannelRegistrar reg_telegram("telegram",
+    [](const ptrclaw::Config& config, ptrclaw::HttpClient& http)
+        -> std::unique_ptr<ptrclaw::Channel> {
+        if (!config.channels.telegram || config.channels.telegram->bot_token.empty()) {
+            throw std::runtime_error("Telegram bot_token not configured");
+        }
+        auto& tc = *config.channels.telegram;
+        ptrclaw::TelegramConfig tg_cfg;
+        tg_cfg.bot_token = tc.bot_token;
+        tg_cfg.allow_from = tc.allow_from;
+        tg_cfg.reply_in_private = tc.reply_in_private;
+        tg_cfg.proxy = tc.proxy;
+        return std::make_unique<ptrclaw::TelegramChannel>(tg_cfg, http);
+    });
 
 namespace ptrclaw {
 
