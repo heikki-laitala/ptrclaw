@@ -6,7 +6,6 @@
 #include "channel.hpp"
 #include "plugin.hpp"
 #include "event_bus.hpp"
-#include "channels/telegram.hpp"
 #include "session.hpp"
 #include <iostream>
 #include <string>
@@ -67,12 +66,7 @@ static int run_channel(const std::string& channel_name,
         return 1;
     }
 
-    // Telegram-specific setup
-    auto* telegram = dynamic_cast<ptrclaw::TelegramChannel*>(channel.get());
-    if (telegram) {
-        telegram->set_my_commands();
-        telegram->drop_pending_updates();
-    }
+    channel->initialize();
 
     // Set up event bus
     ptrclaw::EventBus bus;
@@ -127,21 +121,19 @@ static int run_channel(const std::string& channel_name,
     uint32_t poll_count = 0;
     std::cerr << "[" << channel_name << "] Bot started. Polling for messages...\n";
 
+    if (!channel->supports_polling()) {
+        std::cerr << channel_name << " channel requires an external webhook gateway.\n"
+                  << "Use the channel API programmatically with your HTTP server.\n";
+        return 1;
+    }
+
     while (!g_shutdown.load()) {
-        // Currently only Telegram supports polling
-        if (telegram) {
-            auto messages = telegram->poll_updates();
-            for (auto& msg : messages) {
-                ptrclaw::MessageReceivedEvent ev;
-                ev.session_id = msg.sender;
-                ev.message = std::move(msg);
-                bus.publish(ev);
-            }
-        } else {
-            // Non-polling channels (e.g. WhatsApp) need external webhook
-            std::cerr << channel_name << " channel requires an external webhook gateway.\n"
-                      << "Use the channel API programmatically with your HTTP server.\n";
-            return 1;
+        auto messages = channel->poll_updates();
+        for (auto& msg : messages) {
+            ptrclaw::MessageReceivedEvent ev;
+            ev.session_id = msg.sender;
+            ev.message = std::move(msg);
+            bus.publish(ev);
         }
 
         // Periodic session eviction

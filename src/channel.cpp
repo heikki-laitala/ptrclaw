@@ -42,24 +42,4 @@ std::vector<std::string> Channel::split_message(const std::string& text, size_t 
     return parts;
 }
 
-void ChannelRegistry::register_channel(std::unique_ptr<Channel> ch) {
-    channels_.push_back(std::move(ch));
-}
-
-Channel* ChannelRegistry::find_by_name(const std::string& name) const {
-    for (const auto& ch : channels_) {
-        if (ch->channel_name() == name) return ch.get();
-    }
-    return nullptr;
-}
-
-std::vector<std::string> ChannelRegistry::channel_names() const {
-    std::vector<std::string> names;
-    names.reserve(channels_.size());
-    for (const auto& ch : channels_) {
-        names.push_back(ch->channel_name());
-    }
-    return names;
-}
-
 } // namespace ptrclaw

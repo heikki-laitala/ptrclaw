@@ -23,8 +23,9 @@ public:
     bool health_check() override;
     void send_message(const std::string& target, const std::string& message) override;
 
-    // Poll for new messages (long-polling via getUpdates)
-    std::vector<ChannelMessage> poll_updates();
+    void initialize() override;
+    bool supports_polling() const override { return true; }
+    std::vector<ChannelMessage> poll_updates() override;
 
     // Set bot commands in the Telegram menu
     bool set_my_commands();
