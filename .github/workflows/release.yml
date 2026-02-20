@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: macos-latest
+            target: macos-aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ meson ninja-build libssl-dev libcurl4-openssl-dev lld \
+            libnghttp2-dev libidn2-dev librtmp-dev libssh-dev libpsl-dev libgssapi-krb5-2 libkrb5-dev \
+            libldap2-dev libbrotli-dev
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install meson
+
+      - name: Build static binary
+        run: make build-static
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ptrclaw-${{ matrix.target }}
+          path: builddir-static/ptrclaw
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Rename binaries
+        run: |
+          mv ptrclaw-linux-x86_64/ptrclaw ptrclaw-linux-x86_64
+          mv ptrclaw-macos-aarch64/ptrclaw ptrclaw-macos-aarch64
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ptrclaw-linux-x86_64
+            ptrclaw-macos-aarch64
+          generate_release_notes: true
