@@ -7,7 +7,7 @@ inc = include_directories('include', 'src')
 
 lib_sources = files(
   'src/agent.cpp', 'src/channel.cpp', 'src/config.cpp', 'src/dispatcher.cpp',
-  'src/event_bus.cpp', 'src/http.cpp', 'src/plugin.cpp', 'src/prompt.cpp',
+  'src/event_bus.cpp', 'src/http.cpp', 'src/plugin.cpp', 'src/prompt.cpp', 'src/stream_relay.cpp',
   'src/provider.cpp', 'src/session.cpp', 'src/tool.cpp',
   'src/util.cpp',
   'src/channels/telegram.cpp', 'src/channels/whatsapp.cpp',
