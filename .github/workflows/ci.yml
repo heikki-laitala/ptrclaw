@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ meson ninja-build libssl-dev libcurl4-openssl-dev clang-tidy lld gcovr
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install meson llvm gcovr
+
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: builddir
+          key: meson-${{ matrix.os }}-${{ hashFiles('meson.build', 'src/**/*.cpp', 'src/**/*.hpp') }}
+          restore-keys: meson-${{ matrix.os }}-
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test
+
+      - name: Lint
+        run: make lint
+
+      - name: Coverage
+        if: runner.os == 'Linux'
+        run: |
+          meson setup builddir-cov -Db_coverage=true -Dcatch2:tests=false
+          meson test -C builddir-cov
+          gcovr -x --root . builddir-cov --filter src/ > coverage.xml
+
+      - name: Coverage report
+        if: runner.os == 'Linux'
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: coverage.xml
+          format: markdown
+          output: both
+
+      - name: Add coverage to PR
+        if: runner.os == 'Linux' && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: code-coverage-results.md
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "## ptrClaw CI — ${{ matrix.os }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f builddir/meson-logs/testlog.txt ]; then
+            PASS=$(grep -c '^OK' builddir/meson-logs/testlog.txt || true)
+            FAIL=$(grep -c '^FAIL' builddir/meson-logs/testlog.txt || true)
+            echo "| Tests passed | ${PASS:-0} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Tests failed | ${FAIL:-0} |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          BIN=builddir/ptrclaw
+          if [ -f "$BIN" ]; then
+            SIZE=$(wc -c < "$BIN" | tr -d ' ')
+            SIZE_HR=$(awk "BEGIN {printf \"%.1f MB\", $SIZE / 1048576}")
+            echo "| Binary | ${SIZE_HR} (${SIZE} bytes) |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload binary
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ptrclaw-${{ matrix.os == 'ubuntu-latest' && 'linux-x86_64' || 'macos-aarch64' }}
+          path: builddir/ptrclaw

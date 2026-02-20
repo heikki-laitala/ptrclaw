@@ -22,7 +22,7 @@ ifeq ($(shell uname),Darwin)
 	brew install meson llvm gcovr
 else
 	sudo apt-get update
-	sudo apt-get install -y g++ meson ninja-build libssl-dev clang-tidy gcovr
+	sudo apt-get install -y g++ meson ninja-build libssl-dev libcurl4-openssl-dev clang-tidy lld gcovr
 endif
 
 setup:
@@ -52,7 +52,7 @@ coverage-summary:
 	gcovr --root . $(COVDIR) --filter src/
 
 lint: build
-	run-clang-tidy -quiet -p $(BUILDDIR) $(CLANG_TIDY_EXTRA) -source-filter='^(?!.*subprojects).*\.cpp$$' 2>&1 | grep -v 'warnings generated'
+	run-clang-tidy -quiet -p $(BUILDDIR) $(CLANG_TIDY_EXTRA) 2>&1 | grep -v 'warnings generated' | grep -v '/subprojects/'
 
 clean:
 	rm -rf $(BUILDDIR) $(STATICDIR) $(COVDIR)
