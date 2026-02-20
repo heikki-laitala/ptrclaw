@@ -217,6 +217,19 @@ std::vector<ChannelMessage> TelegramChannel::poll_updates() {
     return messages;
 }
 
+void TelegramChannel::send_typing_indicator(const std::string& target) {
+    nlohmann::json body = {
+        {"chat_id", target},
+        {"action", "typing"}
+    };
+    try {
+        http_.post(api_url("sendChatAction"), body.dump(),
+                   {{"Content-Type", "application/json"}}, 10);
+    } catch (...) {
+        // Best-effort, ignore failures
+    }
+}
+
 bool TelegramChannel::supports_streaming_display() const {
     return true;
 }

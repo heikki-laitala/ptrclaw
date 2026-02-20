@@ -27,6 +27,8 @@ public:
     bool supports_polling() const override { return true; }
     std::vector<ChannelMessage> poll_updates() override;
 
+    void send_typing_indicator(const std::string& target) override;
+
     bool supports_streaming_display() const override;
     int64_t send_streaming_placeholder(const std::string& target) override;
     void edit_message(const std::string& target, int64_t message_id,
