@@ -4,7 +4,7 @@ A minimal C++ port of the [nullclaw](https://github.com/nullclaw/nullclaw) agent
 
 Nullclaw is a fully autonomous AI assistant infrastructure written in Zig — 678 KB binary, ~1 MB RAM, 22+ providers, 11+ messaging channels, 18+ tools. PtrClaw ports its core agent loop to C++17: provider abstraction, tool dispatch, history compaction, and a terminal REPL.
 
-**307 KB binary. 5 providers. 4 tools. 2 messaging channels. C++17.**
+**362 KB binary (macOS static). 5 providers. 4 tools. 2 messaging channels. C++17.**
 
 ## Features
 
