@@ -76,8 +76,6 @@ bool TelegramChannel::is_user_allowed(const std::string& username,
             entry = entry.substr(1);
         }
 
-        std::string uname = username;
-
         // Case-insensitive comparison
         auto to_lower = [](std::string s) {
             std::transform(s.begin(), s.end(), s.begin(),
@@ -85,7 +83,7 @@ bool TelegramChannel::is_user_allowed(const std::string& username,
             return s;
         };
 
-        if (to_lower(entry) == to_lower(uname)) return true;
+        if (to_lower(entry) == to_lower(username)) return true;
     }
     return false;
 }

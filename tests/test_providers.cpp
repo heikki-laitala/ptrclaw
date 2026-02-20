@@ -57,7 +57,7 @@ TEST_CASE("AnthropicProvider: chat sends correct request", "[providers][anthropi
     REQUIRE(body["messages"][0]["content"] == "Hi");
 
     // Verify response parsing
-    REQUIRE(result.content.value() == "Hello!");
+    REQUIRE(result.content.value_or("") == "Hello!");
     REQUIRE(result.model == "claude-3-haiku-20240307");
     REQUIRE(result.usage.prompt_tokens == 10);
     REQUIRE(result.usage.completion_tokens == 5);
@@ -105,7 +105,7 @@ TEST_CASE("AnthropicProvider: chat parses tool calls", "[providers][anthropic]")
     };
     auto result = provider.chat(messages, {}, "claude-3-haiku-20240307", 0.5);
 
-    REQUIRE(result.content.value() == "I'll read the file.");
+    REQUIRE(result.content.value_or("") == "I'll read the file.");
     REQUIRE(result.has_tool_calls());
     REQUIRE(result.tool_calls.size() == 1);
     REQUIRE(result.tool_calls[0].id == "toolu_123");
@@ -215,7 +215,7 @@ TEST_CASE("OpenAIProvider: chat sends correct request", "[providers][openai]") {
     REQUIRE(body["messages"][1]["role"] == "user");
 
     // Verify response parsing
-    REQUIRE(result.content.value() == "Hello!");
+    REQUIRE(result.content.value_or("") == "Hello!");
     REQUIRE(result.model == "gpt-4");
     REQUIRE(result.usage.prompt_tokens == 10);
     REQUIRE(result.usage.completion_tokens == 5);
@@ -348,7 +348,7 @@ TEST_CASE("OllamaProvider: chat sends correct request", "[providers][ollama]") {
     REQUIRE(body["messages"][0]["role"] == "user");
 
     // Verify response parsing
-    REQUIRE(result.content.value() == "Hello from Ollama");
+    REQUIRE(result.content.value_or("") == "Hello from Ollama");
     REQUIRE(result.model == "llama3");
     REQUIRE(result.usage.prompt_tokens == 20);
     REQUIRE(result.usage.completion_tokens == 10);
@@ -418,7 +418,7 @@ TEST_CASE("OpenRouterProvider: chat sends correct request with extra headers", "
     REQUIRE(find_header(mock.last_headers, "X-Title") == "PtrClaw");
 
     // Verify response parsing (OpenAI format)
-    REQUIRE(result.content.value() == "Hello!");
+    REQUIRE(result.content.value_or("") == "Hello!");
     REQUIRE(result.usage.prompt_tokens == 10);
 }
 

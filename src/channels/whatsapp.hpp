@@ -1,6 +1,6 @@
 #pragma once
-#include "channel.hpp"
-#include "http.hpp"
+#include "../channel.hpp"
+#include "../http.hpp"
 #include <string>
 #include <vector>
 
