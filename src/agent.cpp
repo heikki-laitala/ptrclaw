@@ -45,6 +45,7 @@ std::string Agent::process(const std::string& user_message) {
 
     std::string final_content;
     uint32_t iterations = 0;
+    bool stream_started = false;
 
     while (iterations < config_.agent.max_tool_iterations) {
         iterations++;
@@ -60,13 +61,24 @@ std::string Agent::process(const std::string& user_message) {
         }
 
         ChatResponse response;
-        std::vector<std::string> buffered_chunks;
         try {
             if (provider_->supports_streaming()) {
                 response = provider_->chat_stream(
                     history_, tool_specs, model_, config_.default_temperature,
-                    [&buffered_chunks](const std::string& delta) -> bool {
-                        buffered_chunks.push_back(delta);
+                    [this, &stream_started](const std::string& delta) -> bool {
+                        if (event_bus_) {
+                            if (!stream_started) {
+                                StreamStartEvent ev;
+                                ev.session_id = session_id_;
+                                ev.model = model_;
+                                event_bus_->publish(ev);
+                                stream_started = true;
+                            }
+                            StreamChunkEvent ev;
+                            ev.session_id = session_id_;
+                            ev.delta = delta;
+                            event_bus_->publish(ev);
+                        }
                         return true;
                     });
             } else {
@@ -85,25 +97,6 @@ std::string Agent::process(const std::string& user_message) {
             ev.has_tool_calls = response.has_tool_calls();
             ev.usage = response.usage;
             event_bus_->publish(ev);
-        }
-
-        // Replay buffered chunks if this is the final answer (no tool calls)
-        if (event_bus_ && !buffered_chunks.empty() && !response.has_tool_calls()) {
-            StreamStartEvent start_ev;
-            start_ev.session_id = session_id_;
-            start_ev.model = model_;
-            event_bus_->publish(start_ev);
-
-            for (const auto& chunk : buffered_chunks) {
-                StreamChunkEvent chunk_ev;
-                chunk_ev.session_id = session_id_;
-                chunk_ev.delta = chunk;
-                event_bus_->publish(chunk_ev);
-            }
-
-            StreamEndEvent end_ev;
-            end_ev.session_id = session_id_;
-            event_bus_->publish(end_ev);
         }
 
         // Append assistant message (encode tool_calls in name field for round-tripping)
@@ -185,6 +178,13 @@ std::string Agent::process(const std::string& user_message) {
 
     if (final_content.empty()) {
         final_content = "[Max tool iterations reached]";
+    }
+
+    // Signal stream complete (placeholder already shows the final text)
+    if (event_bus_ && stream_started) {
+        StreamEndEvent ev;
+        ev.session_id = session_id_;
+        event_bus_->publish(ev);
     }
 
     // Auto-compact if needed
