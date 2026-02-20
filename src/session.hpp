@@ -10,6 +10,8 @@
 
 namespace ptrclaw {
 
+class EventBus; // forward declaration
+
 struct Session {
     std::string id;
     std::unique_ptr<Agent> agent;
@@ -32,11 +34,15 @@ public:
     // List active session IDs
     std::vector<std::string> list_sessions() const;
 
+    // Optional event bus — propagated to new agents
+    void set_event_bus(EventBus* bus) { event_bus_ = bus; }
+
 private:
     Config config_;
     HttpClient& http_;
     std::unordered_map<std::string, Session> sessions_;
     mutable std::mutex mutex_;
+    EventBus* event_bus_ = nullptr;
 };
 
 } // namespace ptrclaw

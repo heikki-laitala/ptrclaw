@@ -1,4 +1,5 @@
 #include "session.hpp"
+#include "event_bus.hpp"
 #include "util.hpp"
 #include <algorithm>
 
@@ -31,6 +32,16 @@ Agent& SessionManager::get_session(const std::string& session_id) {
     session.agent = std::make_unique<Agent>(std::move(provider), std::move(tools), config_);
     session.last_active = epoch_seconds();
 
+    // Propagate event bus to new agent
+    if (event_bus_) {
+        session.agent->set_event_bus(event_bus_);
+        session.agent->set_session_id(session_id);
+
+        SessionCreatedEvent ev;
+        ev.session_id = session_id;
+        event_bus_->publish(ev);
+    }
+
     auto [inserted, _] = sessions_.emplace(session_id, std::move(session));
     return *(inserted->second.agent);
 }
@@ -46,6 +57,11 @@ void SessionManager::evict_idle(uint64_t max_idle_seconds) {
 
     for (auto it = sessions_.begin(); it != sessions_.end(); ) {
         if ((now - it->second.last_active) > max_idle_seconds) {
+            if (event_bus_) {
+                SessionEvictedEvent ev;
+                ev.session_id = it->first;
+                event_bus_->publish(ev);
+            }
             it = sessions_.erase(it);
         } else {
             ++it;

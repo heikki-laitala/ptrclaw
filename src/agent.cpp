@@ -1,4 +1,5 @@
 #include "agent.hpp"
+#include "event_bus.hpp"
 #include "dispatcher.hpp"
 #include "prompt.hpp"
 #include "util.hpp"
@@ -47,11 +48,31 @@ std::string Agent::process(const std::string& user_message) {
     while (iterations < config_.agent.max_tool_iterations) {
         iterations++;
 
+        // Emit ProviderRequest event
+        if (event_bus_) {
+            ProviderRequestEvent ev;
+            ev.session_id = session_id_;
+            ev.model = model_;
+            ev.message_count = history_.size();
+            ev.tool_count = tool_specs.size();
+            event_bus_->publish(ev);
+        }
+
         ChatResponse response;
         try {
             response = provider_->chat(history_, tool_specs, model_, config_.default_temperature);
         } catch (const std::exception& e) {
             return std::string("Error calling provider: ") + e.what();
+        }
+
+        // Emit ProviderResponse event
+        if (event_bus_) {
+            ProviderResponseEvent ev;
+            ev.session_id = session_id_;
+            ev.model = model_;
+            ev.has_tool_calls = response.has_tool_calls();
+            ev.usage = response.usage;
+            event_bus_->publish(ev);
         }
 
         // Append assistant message (encode tool_calls in name field for round-tripping)
@@ -96,7 +117,25 @@ std::string Agent::process(const std::string& user_message) {
         for (const auto& call : response.tool_calls) {
             std::cerr << "[tool] " << call.name << '\n';
 
+            // Emit ToolCallRequest event
+            if (event_bus_) {
+                ToolCallRequestEvent ev;
+                ev.session_id = session_id_;
+                ev.tool_name = call.name;
+                ev.tool_call_id = call.id;
+                event_bus_->publish(ev);
+            }
+
             ToolResult result = dispatch_tool(call, tools_);
+
+            // Emit ToolCallResult event
+            if (event_bus_) {
+                ToolCallResultEvent ev;
+                ev.session_id = session_id_;
+                ev.tool_name = call.name;
+                ev.success = result.success;
+                event_bus_->publish(ev);
+            }
 
             if (provider_->supports_native_tools()) {
                 history_.push_back(

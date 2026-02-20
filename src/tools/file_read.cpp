@@ -1,7 +1,11 @@
 #include "file_read.hpp"
+#include "../plugin.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <sstream>
+
+static ptrclaw::ToolRegistrar reg_file_read("file_read",
+    []() { return std::make_unique<ptrclaw::FileReadTool>(); });
 
 namespace ptrclaw {
 

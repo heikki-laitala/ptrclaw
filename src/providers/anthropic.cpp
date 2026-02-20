@@ -1,7 +1,13 @@
 #include "anthropic.hpp"
 #include "../http.hpp"
+#include "../plugin.hpp"
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+
+static ptrclaw::ProviderRegistrar reg_anthropic("anthropic",
+    [](const std::string& key, ptrclaw::HttpClient& http, const std::string&) {
+        return std::make_unique<ptrclaw::AnthropicProvider>(key, http);
+    });
 
 using json = nlohmann::json;
 

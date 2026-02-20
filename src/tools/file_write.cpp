@@ -1,7 +1,11 @@
 #include "file_write.hpp"
+#include "../plugin.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <filesystem>
+
+static ptrclaw::ToolRegistrar reg_file_write("file_write",
+    []() { return std::make_unique<ptrclaw::FileWriteTool>(); });
 
 namespace ptrclaw {
 
