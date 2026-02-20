@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 #include <optional>
 #include <cstdint>
 
@@ -9,6 +10,26 @@ struct AgentConfig {
     uint32_t max_tool_iterations = 10;
     uint32_t max_history_messages = 50;
     uint32_t token_limit = 128000;
+};
+
+struct TelegramChannelConfig {
+    std::string bot_token;
+    std::vector<std::string> allow_from;
+    bool reply_in_private = true;
+    std::string proxy;
+};
+
+struct WhatsAppChannelConfig {
+    std::string access_token;
+    std::string phone_number_id;
+    std::string verify_token;
+    std::string app_secret;
+    std::vector<std::string> allow_from;
+};
+
+struct ChannelsConfig {
+    std::optional<TelegramChannelConfig> telegram;
+    std::optional<WhatsAppChannelConfig> whatsapp;
 };
 
 struct Config {
@@ -24,6 +45,7 @@ struct Config {
     double default_temperature = 0.7;
 
     AgentConfig agent;
+    ChannelsConfig channels;
 
     // Load from ~/.ptrclaw/config.json + env vars
     static Config load();

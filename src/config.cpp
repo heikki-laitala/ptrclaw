@@ -41,6 +41,49 @@ Config Config::load() {
                 if (a.contains("token_limit") && a["token_limit"].is_number_unsigned())
                     cfg.agent.token_limit = a["token_limit"].get<uint32_t>();
             }
+
+            // Channel configurations
+            if (j.contains("channels") && j["channels"].is_object()) {
+                auto& ch = j["channels"];
+
+                if (ch.contains("telegram") && ch["telegram"].is_object()) {
+                    auto& t = ch["telegram"];
+                    TelegramChannelConfig tc;
+                    if (t.contains("bot_token") && t["bot_token"].is_string())
+                        tc.bot_token = t["bot_token"].get<std::string>();
+                    if (t.contains("reply_in_private") && t["reply_in_private"].is_boolean())
+                        tc.reply_in_private = t["reply_in_private"].get<bool>();
+                    if (t.contains("proxy") && t["proxy"].is_string())
+                        tc.proxy = t["proxy"].get<std::string>();
+                    if (t.contains("allow_from") && t["allow_from"].is_array()) {
+                        for (const auto& u : t["allow_from"]) {
+                            if (u.is_string()) tc.allow_from.push_back(u.get<std::string>());
+                        }
+                    }
+                    if (!tc.bot_token.empty())
+                        cfg.channels.telegram = std::move(tc);
+                }
+
+                if (ch.contains("whatsapp") && ch["whatsapp"].is_object()) {
+                    auto& w = ch["whatsapp"];
+                    WhatsAppChannelConfig wc;
+                    if (w.contains("access_token") && w["access_token"].is_string())
+                        wc.access_token = w["access_token"].get<std::string>();
+                    if (w.contains("phone_number_id") && w["phone_number_id"].is_string())
+                        wc.phone_number_id = w["phone_number_id"].get<std::string>();
+                    if (w.contains("verify_token") && w["verify_token"].is_string())
+                        wc.verify_token = w["verify_token"].get<std::string>();
+                    if (w.contains("app_secret") && w["app_secret"].is_string())
+                        wc.app_secret = w["app_secret"].get<std::string>();
+                    if (w.contains("allow_from") && w["allow_from"].is_array()) {
+                        for (const auto& p : w["allow_from"]) {
+                            if (p.is_string()) wc.allow_from.push_back(p.get<std::string>());
+                        }
+                    }
+                    if (!wc.access_token.empty() && !wc.phone_number_id.empty())
+                        cfg.channels.whatsapp = std::move(wc);
+                }
+            }
         } catch (...) { // NOLINT(bugprone-empty-catch)
             // Config file is malformed — continue with defaults
         }
@@ -55,6 +98,28 @@ Config Config::load() {
         cfg.openrouter_api_key = v;
     if (const char* v = std::getenv("OLLAMA_BASE_URL"))
         cfg.ollama_base_url = v;
+
+    // Channel env var overrides
+    if (const char* v = std::getenv("TELEGRAM_BOT_TOKEN")) {
+        if (!cfg.channels.telegram)
+            cfg.channels.telegram = TelegramChannelConfig{};
+        cfg.channels.telegram->bot_token = v;
+    }
+    if (const char* v = std::getenv("WHATSAPP_ACCESS_TOKEN")) {
+        if (!cfg.channels.whatsapp)
+            cfg.channels.whatsapp = WhatsAppChannelConfig{};
+        cfg.channels.whatsapp->access_token = v;
+    }
+    if (const char* v = std::getenv("WHATSAPP_PHONE_ID")) {
+        if (!cfg.channels.whatsapp)
+            cfg.channels.whatsapp = WhatsAppChannelConfig{};
+        cfg.channels.whatsapp->phone_number_id = v;
+    }
+    if (const char* v = std::getenv("WHATSAPP_VERIFY_TOKEN")) {
+        if (!cfg.channels.whatsapp)
+            cfg.channels.whatsapp = WhatsAppChannelConfig{};
+        cfg.channels.whatsapp->verify_token = v;
+    }
 
     return cfg;
 }
