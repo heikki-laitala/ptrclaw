@@ -15,6 +15,7 @@ builddir-static/
 # Meson subproject downloads
 subprojects/Catch2-*/
 subprojects/cpp-httplib-*/
+subprojects/packagecache/
 
 # Compiled
 *.o
