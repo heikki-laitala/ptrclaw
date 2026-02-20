@@ -6,10 +6,11 @@ curl_dep = dependency('libcurl')
 inc = include_directories('include', 'src')
 
 lib_sources = files(
-  'src/agent.cpp', 'src/config.cpp', 'src/dispatcher.cpp',
+  'src/agent.cpp', 'src/channel.cpp', 'src/config.cpp', 'src/dispatcher.cpp',
   'src/http.cpp', 'src/prompt.cpp',
   'src/provider.cpp', 'src/session.cpp', 'src/tool.cpp',
   'src/util.cpp',
+  'src/channels/telegram.cpp', 'src/channels/whatsapp.cpp',
   'src/providers/anthropic.cpp', 'src/providers/compatible.cpp',
   'src/providers/ollama.cpp', 'src/providers/openai.cpp',
   'src/providers/openrouter.cpp', 'src/providers/reliable.cpp',
@@ -46,6 +47,9 @@ test_sources = files(
   'tests/test_provider.cpp',
   'tests/test_providers.cpp',
   'tests/test_session.cpp',
+  'tests/test_channel.cpp',
+  'tests/test_telegram.cpp',
+  'tests/test_whatsapp.cpp',
 )
 
 test_exe = executable('ptrclaw_tests', test_sources,

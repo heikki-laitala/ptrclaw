@@ -4,7 +4,7 @@ A minimal C++ port of the [nullclaw](https://github.com/nullclaw/nullclaw) agent
 
 Nullclaw is a fully autonomous AI assistant infrastructure written in Zig — 678 KB binary, ~1 MB RAM, 22+ providers, 11+ messaging channels, 18+ tools. PtrClaw ports its core agent loop to C++17: provider abstraction, tool dispatch, history compaction, and a terminal REPL.
 
-**307 KB binary. 5 providers. 4 tools. C++17.**
+**307 KB binary. 5 providers. 4 tools. 2 messaging channels. C++17.**
 
 ## Features
 
@@ -16,6 +16,8 @@ Nullclaw is a fully autonomous AI assistant infrastructure written in Zig — 67
 - **Automatic history compaction** when token usage approaches the context limit
 - **Provider failover** — `reliable` provider wraps multiple backends with automatic fallback
 - **Session management** with idle eviction
+- **Telegram channel** — run as a Telegram bot with long-polling, user allowlists, Markdown-to-HTML conversion, and per-user sessions
+- **WhatsApp channel** — WhatsApp Business Cloud API integration with webhook payload parsing, E.164 phone normalization, and sender allowlists
 
 ## Quick start
 
@@ -65,6 +67,19 @@ Create `~/.ptrclaw/config.json`:
     "max_tool_iterations": 10,
     "max_history_messages": 50,
     "token_limit": 128000
+  },
+  "channels": {
+    "telegram": {
+      "bot_token": "123456:ABC-DEF...",
+      "allow_from": ["alice", "bob"],
+      "reply_in_private": true
+    },
+    "whatsapp": {
+      "access_token": "EAA...",
+      "phone_number_id": "123456789",
+      "verify_token": "my-verify-secret",
+      "allow_from": ["+1234567890"]
+    }
   }
 }
 ```
@@ -77,6 +92,10 @@ Environment variables override the config file:
 | `OPENAI_API_KEY` | OpenAI API key |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 | `OLLAMA_BASE_URL` | Ollama server URL (default `http://localhost:11434`) |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token (overrides config) |
+| `WHATSAPP_ACCESS_TOKEN` | WhatsApp Business API access token |
+| `WHATSAPP_PHONE_ID` | WhatsApp Business phone number ID |
+| `WHATSAPP_VERIFY_TOKEN` | WhatsApp webhook verification token |
 
 ## Usage
 
@@ -92,10 +111,18 @@ Environment variables override the config file:
 ./builddir/ptrclaw -m "Explain what src/agent.cpp does"
 ```
 
+### Telegram bot
+
+```sh
+export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+./builddir/ptrclaw --channel telegram
+```
+
 ### CLI options
 
 ```text
 -m, --message MSG    Send a single message and exit
+--channel NAME       Run as a channel bot (telegram, whatsapp)
 --provider NAME      Use a specific provider (anthropic, openai, ollama, openrouter)
 --model NAME         Use a specific model
 -h, --help           Show help
@@ -125,6 +152,10 @@ src/
   prompt.hpp/cpp        System prompt builder
   http.hpp/cpp          HttpClient interface (libcurl implementation)
   util.hpp/cpp          String/path utilities
+  channel.hpp/cpp       Channel interface, ChannelMessage, ChannelRegistry
+  channels/
+    telegram.hpp/cpp    Telegram Bot API (long-polling, Markdown→HTML)
+    whatsapp.hpp/cpp    WhatsApp Business Cloud API (webhooks)
   providers/
     anthropic.cpp       Anthropic Messages API
     openai.cpp          OpenAI Chat Completions API
