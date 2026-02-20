@@ -37,6 +37,12 @@ public:
     // Poll for new messages; default returns empty (webhook channels)
     virtual std::vector<ChannelMessage> poll_updates() { return {}; }
 
+    // Streaming display: progressive message editing
+    virtual bool supports_streaming_display() const { return false; }
+    virtual int64_t send_streaming_placeholder(const std::string& /*target*/) { return 0; }
+    virtual void edit_message(const std::string& /*target*/, int64_t /*message_id*/,
+                              const std::string& /*text*/) {}
+
     // Split a message into chunks respecting max_len, preferring newline/space boundaries
     static std::vector<std::string> split_message(const std::string& text, size_t max_len);
 };

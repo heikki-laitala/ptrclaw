@@ -27,6 +27,11 @@ public:
     bool supports_polling() const override { return true; }
     std::vector<ChannelMessage> poll_updates() override;
 
+    bool supports_streaming_display() const override;
+    int64_t send_streaming_placeholder(const std::string& target) override;
+    void edit_message(const std::string& target, int64_t message_id,
+                      const std::string& text) override;
+
     // Set bot commands in the Telegram menu
     bool set_my_commands();
 
