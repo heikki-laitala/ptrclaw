@@ -3,6 +3,7 @@
 #include <vector>
 #include <functional>
 #include <utility>
+#include <atomic>
 
 namespace ptrclaw {
 
@@ -11,6 +12,10 @@ void http_init();
 
 // Cleanup libcurl (call once at shutdown)
 void http_cleanup();
+
+// Set a global abort flag checked by all curl transfers (~1s granularity).
+// When the flag becomes true, in-flight HTTP requests abort promptly.
+void http_set_abort_flag(const std::atomic<bool>* flag);
 
 using Header = std::pair<std::string, std::string>;
 

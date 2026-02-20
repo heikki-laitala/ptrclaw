@@ -5,12 +5,34 @@
 
 namespace ptrclaw {
 
+static const std::atomic<bool>* g_http_abort_flag = nullptr;
+
 void http_init() {
     curl_global_init(CURL_GLOBAL_ALL);
 }
 
 void http_cleanup() {
     curl_global_cleanup();
+}
+
+void http_set_abort_flag(const std::atomic<bool>* flag) {
+    g_http_abort_flag = flag;
+}
+
+// Called by curl ~once per second; return non-zero to abort the transfer.
+static int abort_progress_cb(void* /*clientp*/,
+                              curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
+                              curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
+    if (g_http_abort_flag && g_http_abort_flag->load(std::memory_order_relaxed))
+        return 1;
+    return 0;
+}
+
+static void apply_abort_hook(CURL* curl) {
+    if (g_http_abort_flag) {
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, abort_progress_cb);
+    }
 }
 
 static size_t write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
@@ -91,6 +113,7 @@ HttpResponse http_post(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_seconds);
+    apply_abort_hook(curl);
 
     CURLcode res = curl_easy_perform(curl);
     if (res == CURLE_OK) {
@@ -117,6 +140,7 @@ HttpResponse http_get(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_seconds);
+    apply_abort_hook(curl);
 
     CURLcode res = curl_easy_perform(curl);
     if (res == CURLE_OK) {
@@ -150,6 +174,7 @@ HttpResponse http_stream_post(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, stream_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_seconds);
+    apply_abort_hook(curl);
 
     CURLcode res = curl_easy_perform(curl);
     if (res == CURLE_OK) {
@@ -209,6 +234,7 @@ HttpResponse http_stream_post_raw(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, raw_stream_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_seconds);
+    apply_abort_hook(curl);
 
     CURLcode res = curl_easy_perform(curl);
     if (res == CURLE_OK) {
