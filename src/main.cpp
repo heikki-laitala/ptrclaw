@@ -266,6 +266,7 @@ int main(int argc, char* argv[]) try {
     if (!channel_name.empty()) {
         std::signal(SIGINT, signal_handler);
         std::signal(SIGTERM, signal_handler);
+        ptrclaw::http_set_abort_flag(&g_shutdown);
 
         ptrclaw::CurlHttpClient http_client;
         int rc = run_channel(channel_name, config, http_client);
