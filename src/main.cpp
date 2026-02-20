@@ -6,6 +6,7 @@
 #include "channel.hpp"
 #include "plugin.hpp"
 #include "event_bus.hpp"
+#include "event.hpp"
 #include "session.hpp"
 #include <iostream>
 #include <string>
@@ -13,6 +14,8 @@
 #include <thread>
 #include <atomic>
 #include <csignal>
+#include <chrono>
+#include <unordered_map>
 
 static std::atomic<bool> g_shutdown{false};
 
@@ -73,9 +76,25 @@ static int run_channel(const std::string& channel_name,
     ptrclaw::SessionManager sessions(config, http_client);
     sessions.set_event_bus(&bus);
 
-    // MessageReady → send via channel
+    // Streaming display state
+    struct StreamState {
+        std::string chat_id;
+        int64_t message_id = 0;
+        std::string accumulated;
+        std::chrono::steady_clock::time_point last_edit;
+        bool delivered = false;
+    };
+    std::unordered_map<std::string, StreamState> stream_states;
+
+    // MessageReady → send via channel (skip if already delivered via streaming)
     ptrclaw::subscribe<ptrclaw::MessageReadyEvent>(bus,
-        [&channel](const ptrclaw::MessageReadyEvent& ev) {
+        [&channel, &stream_states](const ptrclaw::MessageReadyEvent& ev) {
+            auto it = stream_states.find(ev.session_id);
+            if (it != stream_states.end()) {
+                bool delivered = it->second.delivered;
+                stream_states.erase(it);
+                if (delivered) return;
+            }
             if (!ev.reply_target.empty()) {
                 channel->send_message(ev.reply_target, ev.content);
             }
@@ -83,7 +102,7 @@ static int run_channel(const std::string& channel_name,
 
     // MessageReceived → process via agent, emit MessageReady
     ptrclaw::subscribe<ptrclaw::MessageReceivedEvent>(bus,
-        [&sessions, &bus](const ptrclaw::MessageReceivedEvent& ev) {
+        [&sessions, &bus, &stream_states](const ptrclaw::MessageReceivedEvent& ev) {
             auto& agent = sessions.get_session(ev.session_id);
 
             // Handle /start command
@@ -110,13 +129,60 @@ static int run_channel(const std::string& channel_name,
                 return;
             }
 
+            // Register stream state before processing
+            std::string chat_id = ev.message.reply_target.value_or("");
+            stream_states[ev.session_id] = {chat_id, 0, {},
+                                             std::chrono::steady_clock::now(), false};
+
             std::string response = agent.process(ev.message.content);
             ptrclaw::MessageReadyEvent reply;
             reply.session_id = ev.session_id;
-            reply.reply_target = ev.message.reply_target.value_or("");
+            reply.reply_target = chat_id;
             reply.content = response;
             bus.publish(reply);
         });
+
+    // Stream event subscribers (progressive message editing)
+    if (channel->supports_streaming_display()) {
+        ptrclaw::subscribe<ptrclaw::StreamStartEvent>(bus,
+            [&channel, &stream_states](const ptrclaw::StreamStartEvent& ev) {
+                auto it = stream_states.find(ev.session_id);
+                if (it == stream_states.end()) return;
+                int64_t msg_id = channel->send_streaming_placeholder(
+                    it->second.chat_id);
+                it->second.message_id = msg_id;
+                it->second.last_edit = std::chrono::steady_clock::now();
+            });
+
+        ptrclaw::subscribe<ptrclaw::StreamChunkEvent>(bus,
+            [&channel, &stream_states](const ptrclaw::StreamChunkEvent& ev) {
+                auto it = stream_states.find(ev.session_id);
+                if (it == stream_states.end() || it->second.message_id == 0)
+                    return;
+                it->second.accumulated += ev.delta;
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<
+                    std::chrono::milliseconds>(
+                    now - it->second.last_edit).count();
+                if (elapsed >= 1000) {
+                    channel->edit_message(it->second.chat_id,
+                                          it->second.message_id,
+                                          it->second.accumulated);
+                    it->second.last_edit = now;
+                }
+            });
+
+        ptrclaw::subscribe<ptrclaw::StreamEndEvent>(bus,
+            [&channel, &stream_states](const ptrclaw::StreamEndEvent& ev) {
+                auto it = stream_states.find(ev.session_id);
+                if (it == stream_states.end() || it->second.message_id == 0)
+                    return;
+                channel->edit_message(it->second.chat_id,
+                                      it->second.message_id,
+                                      it->second.accumulated);
+                it->second.delivered = true;
+            });
+    }
 
     uint32_t poll_count = 0;
     std::cerr << "[" << channel_name << "] Bot started. Polling for messages...\n";

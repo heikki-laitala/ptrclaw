@@ -217,6 +217,52 @@ std::vector<ChannelMessage> TelegramChannel::poll_updates() {
     return messages;
 }
 
+bool TelegramChannel::supports_streaming_display() const {
+    return true;
+}
+
+int64_t TelegramChannel::send_streaming_placeholder(const std::string& target) {
+    nlohmann::json body = {
+        {"chat_id", target},
+        {"text", "\u2026"}
+    };
+    try {
+        auto resp = http_.post(api_url("sendMessage"), body.dump(),
+                               {{"Content-Type", "application/json"}}, 30);
+        if (resp.status_code == 200) {
+            auto j = nlohmann::json::parse(resp.body);
+            if (j.value("ok", false) && j.contains("result")) {
+                return j["result"].value("message_id", int64_t(0));
+            }
+        }
+    } catch (...) {
+        return 0;
+    }
+    return 0;
+}
+
+void TelegramChannel::edit_message(const std::string& target, int64_t message_id,
+                                    const std::string& text) {
+    std::string html = markdown_to_telegram_html(text);
+    nlohmann::json body = {
+        {"chat_id", target},
+        {"message_id", message_id},
+        {"text", html},
+        {"parse_mode", "HTML"}
+    };
+    auto resp = http_.post(api_url("editMessageText"), body.dump(),
+                           {{"Content-Type", "application/json"}}, 30);
+    if (resp.status_code != 200) {
+        nlohmann::json plain_body = {
+            {"chat_id", target},
+            {"message_id", message_id},
+            {"text", text}
+        };
+        http_.post(api_url("editMessageText"), plain_body.dump(),
+                   {{"Content-Type", "application/json"}}, 30);
+    }
+}
+
 void TelegramChannel::send_message(const std::string& target, const std::string& message) {
     auto parts = split_message(message, MAX_MESSAGE_LEN);
     if (parts.empty()) parts.push_back(message);
