@@ -225,8 +225,7 @@ void TelegramChannel::send_typing_indicator(const std::string& target) {
     try {
         http_.post(api_url("sendChatAction"), body.dump(),
                    {{"Content-Type", "application/json"}}, 10);
-    } catch (...) {
-        // Best-effort, ignore failures
+    } catch (...) { // NOLINT(bugprone-empty-catch) — best-effort, ignore failures
     }
 }
 

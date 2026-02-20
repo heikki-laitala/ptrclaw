@@ -1,7 +1,7 @@
 #include "session.hpp"
+#include "event.hpp"
 #include "event_bus.hpp"
 #include "util.hpp"
-#include <algorithm>
 
 namespace ptrclaw {
 
@@ -77,6 +77,47 @@ std::vector<std::string> SessionManager::list_sessions() const {
         ids.push_back(id);
     }
     return ids;
+}
+
+void SessionManager::subscribe_events() {
+    if (!event_bus_) return;
+
+    ptrclaw::subscribe<MessageReceivedEvent>(*event_bus_,
+        [this](const MessageReceivedEvent& ev) {
+            auto& agent = get_session(ev.session_id);
+            std::string chat_id = ev.message.reply_target.value_or("");
+
+            // Handle /start command
+            if (ev.message.content == "/start") {
+                MessageReadyEvent reply;
+                reply.session_id = ev.session_id;
+                reply.reply_target = chat_id;
+                std::string greeting = "Hello";
+                if (ev.message.first_name) greeting += " " + *ev.message.first_name;
+                greeting += "! I'm PtrClaw, an AI assistant. How can I help you?";
+                reply.content = greeting;
+                event_bus_->publish(reply);
+                return;
+            }
+
+            // Handle /new command
+            if (ev.message.content == "/new") {
+                agent.clear_history();
+                MessageReadyEvent reply;
+                reply.session_id = ev.session_id;
+                reply.reply_target = chat_id;
+                reply.content = "Conversation cleared. What would you like to discuss?";
+                event_bus_->publish(reply);
+                return;
+            }
+
+            std::string response = agent.process(ev.message.content);
+            MessageReadyEvent reply;
+            reply.session_id = ev.session_id;
+            reply.reply_target = chat_id;
+            reply.content = response;
+            event_bus_->publish(reply);
+        });
 }
 
 } // namespace ptrclaw
