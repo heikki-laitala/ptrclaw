@@ -12,10 +12,11 @@ Optimized for:
 
 ```bash
 make build          # Build with meson/ninja (clang++, LTO)
+make build-minimal  # Slim build: openai + telegram + tools only
+make build-static   # Static binary for distribution
 make test           # Run Catch2 unit tests
 make lint           # Run clang-tidy
 make coverage       # Generate coverage report
-make build-static   # Static binary for distribution
 ```
 
 Dependencies: `make deps` (requires Homebrew on macOS, apt on Linux).
@@ -41,9 +42,10 @@ All source is in `namespace ptrclaw`. Interfaces are abstract base classes with 
 
 Extension points:
 
-- `src/providers/` — add `<name>.hpp/cpp` implementing `Provider`, register in `provider.cpp`
-- `src/channels/` — add `<name>.hpp/cpp` implementing `Channel`
-- `src/tools/` — add `<name>.hpp/cpp` implementing `Tool`, register in `tool.cpp`
+- `src/providers/` — add `<name>.hpp/cpp` implementing `Provider`, self-registers via static `ProviderRegistrar`
+- `src/channels/` — add `<name>.hpp/cpp` implementing `Channel`, self-registers via static `ChannelRegistrar`
+- `src/tools/` — add `<name>.hpp/cpp` implementing `Tool`, self-registers via static `ToolRegistrar`
+- `meson_options.txt` — add a `with_<name>` feature flag, gate the source in `meson.build`
 
 ## Engineering Principles
 
@@ -84,7 +86,8 @@ Never log secrets or tokens. Validate at system boundaries. Keep network/filesys
 | `src/config.hpp` | Config loader (~/.ptrclaw/config.json + env vars) |
 | `src/dispatcher.hpp` | XML tool call parsing for non-native providers |
 | `src/session.hpp` | Thread-safe multi-session management |
-| `meson.build` | Build config: static lib + executable + tests |
+| `meson.build` | Build config: static lib + executable + tests, feature-flag gating |
+| `meson_options.txt` | Compile-time feature flags for optional components |
 | `.clang-tidy` | Linting rules (bugprone, modernize, performance, readability) |
 
 ## Risk Tiers
@@ -110,6 +113,6 @@ clang-tidy is configured via `.clang-tidy`. The Makefile filters subproject warn
 - Do not add dependencies without strong justification (binary size impact).
 - Do not modify unrelated code "while here".
 - Do not silently weaken security or access constraints.
-- Do not add speculative config/feature flags "just in case".
+- Do not add speculative abstractions "just in case".
 - Do not commit real API keys, tokens, or credentials. Use `"test-key"` in tests.
 - Do not skip `make test && make lint` before committing.
