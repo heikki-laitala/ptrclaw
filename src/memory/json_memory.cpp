@@ -17,6 +17,37 @@ static ptrclaw::MemoryRegistrar reg_json("json",
 
 namespace ptrclaw {
 
+static MemoryEntry entry_from_json(const nlohmann::json& item) {
+    MemoryEntry entry;
+    entry.id = item.value("id", "");
+    entry.key = item.value("key", "");
+    entry.content = item.value("content", "");
+    entry.category = category_from_string(item.value("category", "knowledge"));
+    entry.timestamp = item.value("timestamp", uint64_t{0});
+    entry.session_id = item.value("session_id", "");
+    if (item.contains("links") && item["links"].is_array()) {
+        for (const auto& lnk : item["links"]) {
+            if (lnk.is_string()) entry.links.push_back(lnk.get<std::string>());
+        }
+    }
+    return entry;
+}
+
+static nlohmann::json entry_to_json(const MemoryEntry& entry) {
+    nlohmann::json item = {
+        {"id", entry.id},
+        {"key", entry.key},
+        {"content", entry.content},
+        {"category", category_to_string(entry.category)},
+        {"timestamp", entry.timestamp},
+        {"session_id", entry.session_id}
+    };
+    if (!entry.links.empty()) {
+        item["links"] = entry.links;
+    }
+    return item;
+}
+
 JsonMemory::JsonMemory(const std::string& path) : path_(path) {
     load();
 }
@@ -32,19 +63,7 @@ void JsonMemory::load() {
         entries_.clear();
         entries_.reserve(j.size());
         for (const auto& item : j) {
-            MemoryEntry entry;
-            entry.id = item.value("id", "");
-            entry.key = item.value("key", "");
-            entry.content = item.value("content", "");
-            entry.category = category_from_string(item.value("category", "knowledge"));
-            entry.timestamp = item.value("timestamp", uint64_t{0});
-            entry.session_id = item.value("session_id", "");
-            if (item.contains("links") && item["links"].is_array()) {
-                for (const auto& lnk : item["links"]) {
-                    if (lnk.is_string()) entry.links.push_back(lnk.get<std::string>());
-                }
-            }
-            entries_.push_back(std::move(entry));
+            entries_.push_back(entry_from_json(item));
         }
     } catch (...) { // NOLINT(bugprone-empty-catch)
         // Corrupt file — start fresh
@@ -54,20 +73,8 @@ void JsonMemory::load() {
 void JsonMemory::save() {
     nlohmann::json j = nlohmann::json::array();
     for (const auto& entry : entries_) {
-        nlohmann::json item = {
-            {"id", entry.id},
-            {"key", entry.key},
-            {"content", entry.content},
-            {"category", category_to_string(entry.category)},
-            {"timestamp", entry.timestamp},
-            {"session_id", entry.session_id}
-        };
-        if (!entry.links.empty()) {
-            item["links"] = entry.links;
-        }
-        j.push_back(std::move(item));
+        j.push_back(entry_to_json(entry));
     }
-
     atomic_write_file(path_, j.dump(2));
 }
 
@@ -228,18 +235,7 @@ std::string JsonMemory::snapshot_export() {
 
     nlohmann::json j = nlohmann::json::array();
     for (const auto& entry : entries_) {
-        nlohmann::json item = {
-            {"id", entry.id},
-            {"key", entry.key},
-            {"content", entry.content},
-            {"category", category_to_string(entry.category)},
-            {"timestamp", entry.timestamp},
-            {"session_id", entry.session_id}
-        };
-        if (!entry.links.empty()) {
-            item["links"] = entry.links;
-        }
-        j.push_back(std::move(item));
+        j.push_back(entry_to_json(entry));
     }
     return j.dump(2);
 }
@@ -263,18 +259,9 @@ uint32_t JsonMemory::snapshot_import(const std::string& json_str) {
             }
             if (exists) continue;
 
-            MemoryEntry entry;
-            entry.id = item.value("id", generate_id());
-            entry.key = key;
-            entry.content = item.value("content", "");
-            entry.category = category_from_string(item.value("category", "knowledge"));
-            entry.timestamp = item.value("timestamp", epoch_seconds());
-            entry.session_id = item.value("session_id", "");
-            if (item.contains("links") && item["links"].is_array()) {
-                for (const auto& lnk : item["links"]) {
-                    if (lnk.is_string()) entry.links.push_back(lnk.get<std::string>());
-                }
-            }
+            auto entry = entry_from_json(item);
+            if (entry.id.empty()) entry.id = generate_id();
+            if (entry.timestamp == 0) entry.timestamp = epoch_seconds();
             entries_.push_back(std::move(entry));
             imported++;
         }
