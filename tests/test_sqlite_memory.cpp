@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "memory/sqlite_memory.hpp"
 #include <filesystem>
+#include <unistd.h>
 
 using namespace ptrclaw;
 

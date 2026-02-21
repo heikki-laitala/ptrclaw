@@ -39,18 +39,20 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 - C++17 compiler (Clang 15+ recommended, GCC 10+ works)
 - [Meson](https://mesonbuild.com/) + Ninja
-- libssl (Linux) / libcurl + libssl (macOS path)
+- libssl (OpenSSL)
+- libcurl (macOS only; Linux uses a built-in socket HTTP backend)
+- libsqlite3 (for SQLite memory backend)
 
 ### macOS
 
 ```sh
-brew install meson llvm gcovr
+brew install meson llvm gcovr sqlite3
 ```
 
 ### Linux (Debian/Ubuntu)
 
 ```sh
-sudo apt-get install g++ meson ninja-build libssl-dev clang-tidy lld gcovr
+sudo apt-get install g++ meson ninja-build libssl-dev libsqlite3-dev clang-tidy lld gcovr
 ```
 
 Linux builds use `clang++` with the `lld` linker (required for LTO) via `meson-native-linux.ini`.
@@ -192,8 +194,8 @@ export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 
 ```sh
 make build          # compile (all features)
-make build-minimal  # slim build: openai + telegram + tools only (~436 KB)
-make build-static   # static binary for distribution
+make build-minimal  # slim build: openai + telegram + tools + json memory (~436 KB)
+make build-static   # static binary with all features including SQLite memory
 make test           # run unit tests (Catch2)
 make lint           # run clang-tidy
 make coverage       # generate HTML coverage report
