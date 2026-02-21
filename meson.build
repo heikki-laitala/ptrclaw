@@ -176,6 +176,7 @@ if opt_memory
     'tests/test_memory.cpp',
     'tests/test_json_memory.cpp',
     'tests/test_response_cache.cpp',
+    'tests/test_hatch.cpp',
   )
 endif
 if opt_sqlite_memory

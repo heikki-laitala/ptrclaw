@@ -111,6 +111,17 @@ void SessionManager::subscribe_events() {
                 return;
             }
 
+            // Handle /hatch command
+            if (ev.message.content == "/hatch") {
+                agent.start_hatch();
+                MessageReadyEvent reply;
+                reply.session_id = ev.session_id;
+                reply.reply_target = chat_id;
+                reply.content = "Entering hatching mode...";
+                event_bus_->publish(reply);
+                return;
+            }
+
             std::string response = agent.process(ev.message.content);
             MessageReadyEvent reply;
             reply.session_id = ev.session_id;
