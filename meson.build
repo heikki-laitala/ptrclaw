@@ -117,6 +117,7 @@ if opt_memory_tools
     'src/tools/memory_store.cpp',
     'src/tools/memory_recall.cpp',
     'src/tools/memory_forget.cpp',
+    'src/tools/memory_link.cpp',
   )
 endif
 lib_sources = core_sources + optional_sources
@@ -227,5 +228,5 @@ summary({
   'Channels':  channels.length() > 0  ? ', '.join(channels)  : 'none',
   'Tools':     opt_tools ? 'file_read, file_write, file_edit, shell' : 'none',
   'Memory':    memory_features.length() > 0 ? ', '.join(memory_features) : 'none',
-  'Memory tools': opt_memory_tools ? 'memory_store, memory_recall, memory_forget' : 'none',
+  'Memory tools': opt_memory_tools ? 'memory_store, memory_recall, memory_forget, memory_link' : 'none',
 }, section: 'Features')

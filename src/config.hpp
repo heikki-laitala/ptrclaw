@@ -41,6 +41,9 @@ struct MemoryConfig {
     bool response_cache = false;
     uint32_t cache_ttl = 3600;
     uint32_t cache_max_entries = 100;
+    uint32_t enrich_depth = 1;          // 0 = flat, 1 = follow links
+    bool synthesis = false;
+    uint32_t synthesis_interval = 5;    // synthesize every N user messages
 };
 
 struct Config {

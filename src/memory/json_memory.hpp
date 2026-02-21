@@ -32,6 +32,10 @@ public:
 
     uint32_t hygiene_purge(uint32_t max_age_seconds) override;
 
+    bool link(const std::string& from_key, const std::string& to_key) override;
+    bool unlink(const std::string& from_key, const std::string& to_key) override;
+    std::vector<MemoryEntry> neighbors(const std::string& key, uint32_t limit) override;
+
 private:
     void load();
     void save();

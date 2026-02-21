@@ -26,6 +26,10 @@ public:
     uint32_t snapshot_import(const std::string&) override { return 0; }
 
     uint32_t hygiene_purge(uint32_t) override { return 0; }
+
+    bool link(const std::string&, const std::string&) override { return false; }
+    bool unlink(const std::string&, const std::string&) override { return false; }
+    std::vector<MemoryEntry> neighbors(const std::string&, uint32_t) override { return {}; }
 };
 
 } // namespace ptrclaw

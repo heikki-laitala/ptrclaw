@@ -1,4 +1,6 @@
 #pragma once
+#include "memory.hpp"
+#include "provider.hpp"
 #include "tool.hpp"
 #include <string>
 #include <vector>
@@ -11,5 +13,9 @@ namespace ptrclaw {
 std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
                                 bool include_tool_descriptions,
                                 bool has_memory = false);
+
+// Build synthesis prompt to extract atomic notes from conversation history.
+std::string build_synthesis_prompt(const std::vector<ChatMessage>& history,
+                                    const std::vector<MemoryEntry>& existing_entries);
 
 } // namespace ptrclaw

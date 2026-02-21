@@ -85,3 +85,18 @@ TEST_CASE("NoneMemory: hygiene_purge returns 0", "[memory]") {
     NoneMemory mem;
     REQUIRE(mem.hygiene_purge(3600) == 0);
 }
+
+TEST_CASE("NoneMemory: link returns false", "[memory]") {
+    NoneMemory mem;
+    REQUIRE_FALSE(mem.link("a", "b"));
+}
+
+TEST_CASE("NoneMemory: unlink returns false", "[memory]") {
+    NoneMemory mem;
+    REQUIRE_FALSE(mem.unlink("a", "b"));
+}
+
+TEST_CASE("NoneMemory: neighbors returns empty", "[memory]") {
+    NoneMemory mem;
+    REQUIRE(mem.neighbors("a", 10).empty());
+}

@@ -39,6 +39,11 @@ void JsonMemory::load() {
             entry.category = category_from_string(item.value("category", "knowledge"));
             entry.timestamp = item.value("timestamp", uint64_t{0});
             entry.session_id = item.value("session_id", "");
+            if (item.contains("links") && item["links"].is_array()) {
+                for (const auto& lnk : item["links"]) {
+                    if (lnk.is_string()) entry.links.push_back(lnk.get<std::string>());
+                }
+            }
             entries_.push_back(std::move(entry));
         }
     } catch (...) { // NOLINT(bugprone-empty-catch)
@@ -49,14 +54,18 @@ void JsonMemory::load() {
 void JsonMemory::save() {
     nlohmann::json j = nlohmann::json::array();
     for (const auto& entry : entries_) {
-        j.push_back({
+        nlohmann::json item = {
             {"id", entry.id},
             {"key", entry.key},
             {"content", entry.content},
             {"category", category_to_string(entry.category)},
             {"timestamp", entry.timestamp},
             {"session_id", entry.session_id}
-        });
+        };
+        if (!entry.links.empty()) {
+            item["links"] = entry.links;
+        }
+        j.push_back(std::move(item));
     }
 
     atomic_write_file(path_, j.dump(2));
@@ -191,6 +200,12 @@ bool JsonMemory::forget(const std::string& key) {
                            [&key](const MemoryEntry& e) { return e.key == key; });
     if (it == entries_.end()) return false;
 
+    // Clean up links referencing this key in other entries
+    for (auto& entry : entries_) {
+        auto& lnks = entry.links;
+        lnks.erase(std::remove(lnks.begin(), lnks.end(), key), lnks.end());
+    }
+
     entries_.erase(it);
     save();
     return true;
@@ -213,14 +228,18 @@ std::string JsonMemory::snapshot_export() {
 
     nlohmann::json j = nlohmann::json::array();
     for (const auto& entry : entries_) {
-        j.push_back({
+        nlohmann::json item = {
             {"id", entry.id},
             {"key", entry.key},
             {"content", entry.content},
             {"category", category_to_string(entry.category)},
             {"timestamp", entry.timestamp},
             {"session_id", entry.session_id}
-        });
+        };
+        if (!entry.links.empty()) {
+            item["links"] = entry.links;
+        }
+        j.push_back(std::move(item));
     }
     return j.dump(2);
 }
@@ -251,6 +270,11 @@ uint32_t JsonMemory::snapshot_import(const std::string& json_str) {
             entry.category = category_from_string(item.value("category", "knowledge"));
             entry.timestamp = item.value("timestamp", epoch_seconds());
             entry.session_id = item.value("session_id", "");
+            if (item.contains("links") && item["links"].is_array()) {
+                for (const auto& lnk : item["links"]) {
+                    if (lnk.is_string()) entry.links.push_back(lnk.get<std::string>());
+                }
+            }
             entries_.push_back(std::move(entry));
             imported++;
         }
@@ -267,9 +291,12 @@ uint32_t JsonMemory::hygiene_purge(uint32_t max_age_seconds) {
     uint64_t cutoff = epoch_seconds() - max_age_seconds;
     uint32_t purged = 0;
 
+    // Collect keys being purged
+    std::vector<std::string> purged_keys;
     auto it = entries_.begin();
     while (it != entries_.end()) {
         if (it->category == MemoryCategory::Conversation && it->timestamp < cutoff) {
+            purged_keys.push_back(it->key);
             it = entries_.erase(it);
             purged++;
         } else {
@@ -277,8 +304,90 @@ uint32_t JsonMemory::hygiene_purge(uint32_t max_age_seconds) {
         }
     }
 
-    if (purged > 0) save();
+    // Clean up dangling links
+    if (!purged_keys.empty()) {
+        for (auto& entry : entries_) {
+            auto& lnks = entry.links;
+            lnks.erase(std::remove_if(lnks.begin(), lnks.end(),
+                [&purged_keys](const std::string& k) {
+                    return std::find(purged_keys.begin(), purged_keys.end(), k) != purged_keys.end();
+                }), lnks.end());
+        }
+        save();
+    }
+
     return purged;
+}
+
+bool JsonMemory::link(const std::string& from_key, const std::string& to_key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    MemoryEntry* from_entry = nullptr;
+    MemoryEntry* to_entry = nullptr;
+    for (auto& e : entries_) {
+        if (e.key == from_key) from_entry = &e;
+        if (e.key == to_key) to_entry = &e;
+    }
+    if (!from_entry || !to_entry) return false;
+
+    // Add to_key to from_entry's links if not already present
+    if (std::find(from_entry->links.begin(), from_entry->links.end(), to_key) == from_entry->links.end()) {
+        from_entry->links.push_back(to_key);
+    }
+    // Add from_key to to_entry's links if not already present
+    if (std::find(to_entry->links.begin(), to_entry->links.end(), from_key) == to_entry->links.end()) {
+        to_entry->links.push_back(from_key);
+    }
+
+    save();
+    return true;
+}
+
+bool JsonMemory::unlink(const std::string& from_key, const std::string& to_key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    MemoryEntry* from_entry = nullptr;
+    MemoryEntry* to_entry = nullptr;
+    for (auto& e : entries_) {
+        if (e.key == from_key) from_entry = &e;
+        if (e.key == to_key) to_entry = &e;
+    }
+    if (!from_entry || !to_entry) return false;
+
+    auto& from_links = from_entry->links;
+    auto& to_links = to_entry->links;
+    auto fit = std::find(from_links.begin(), from_links.end(), to_key);
+    auto tit = std::find(to_links.begin(), to_links.end(), from_key);
+    if (fit == from_links.end() && tit == to_links.end()) return false;
+
+    if (fit != from_links.end()) from_links.erase(fit);
+    if (tit != to_links.end()) to_links.erase(tit);
+
+    save();
+    return true;
+}
+
+std::vector<MemoryEntry> JsonMemory::neighbors(const std::string& key, uint32_t limit) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find the source entry
+    const MemoryEntry* source = nullptr;
+    for (const auto& e : entries_) {
+        if (e.key == key) { source = &e; break; }
+    }
+    if (!source) return {};
+
+    std::vector<MemoryEntry> result;
+    for (const auto& linked_key : source->links) {
+        if (result.size() >= limit) break;
+        for (const auto& e : entries_) {
+            if (e.key == linked_key) {
+                result.push_back(e);
+                break;
+            }
+        }
+    }
+    return result;
 }
 
 } // namespace ptrclaw
