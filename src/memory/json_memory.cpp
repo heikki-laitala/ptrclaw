@@ -282,7 +282,7 @@ uint32_t JsonMemory::hygiene_purge(uint32_t max_age_seconds) {
     std::vector<std::string> purged_keys;
     auto it = entries_.begin();
     while (it != entries_.end()) {
-        if (it->category == MemoryCategory::Conversation && it->timestamp < cutoff) {
+        if (it->category == MemoryCategory::Conversation && it->timestamp <= cutoff) {
             purged_keys.push_back(it->key);
             it = entries_.erase(it);
             purged++;
