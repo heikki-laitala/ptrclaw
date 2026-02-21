@@ -28,7 +28,7 @@ A lightweight, extensible AI assistant infrastructure in C++17. Run it as a CLI,
 
 ```sh
 git clone <repo-url> && cd ptrclaw
-make deps    # install meson, llvm, ssl deps
+make deps    # install build dependencies
 make build   # compile (output: builddir/ptrclaw)
 
 export ANTHROPIC_API_KEY=sk-ant-...
