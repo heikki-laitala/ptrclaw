@@ -7,12 +7,20 @@ permissions:
   contents: read
 
 jobs:
-  smoke-anthropic-linux:
-    runs-on: ubuntu-latest
+  smoke-anthropic:
+    name: smoke-anthropic (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+          - os: macos-latest
+            target: macos
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      # Override if needed in workflow dispatch by editing file or using repo vars later
       SMOKE_MODEL: claude-haiku-4-5-20251001
     steps:
       - name: Checkout
@@ -27,13 +35,17 @@ jobs:
           fi
           echo "::add-mask::${ANTHROPIC_API_KEY}"
 
-      - name: Install dependencies
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          # Keep libcurl for main-branch compatibility; harmless on libcurl-free branches.
           sudo apt-get install -y g++ meson ninja-build libssl-dev libcurl4-openssl-dev
 
-      - name: Build (Linux backend path)
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install meson
+
+      - name: Build
         run: |
           meson setup builddir --buildtype=release
           meson compile -C builddir
@@ -42,8 +54,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Single-provider, single-turn smoke test against Anthropic.
-          # Keep prompt deterministic and output check strict.
           OUT=$(timeout 120s ./builddir/ptrclaw \
             --provider anthropic \
             --model "${SMOKE_MODEL}" \
@@ -62,6 +72,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-anthropic-linux
+          name: smoke-anthropic-${{ matrix.target }}
           path: builddir/meson-logs/
           if-no-files-found: ignore
