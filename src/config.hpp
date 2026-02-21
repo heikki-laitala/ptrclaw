@@ -33,7 +33,7 @@ struct ChannelsConfig {
 };
 
 struct MemoryConfig {
-    std::string backend = "none";
+    std::string backend = "json";
     std::string path;
     bool auto_save = false;
     uint32_t recall_limit = 5;
