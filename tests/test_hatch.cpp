@@ -52,25 +52,32 @@ TEST_CASE("build_hatch_prompt: returns non-empty string", "[hatch]") {
     REQUIRE(prompt.find("<soul>") != std::string::npos);
 }
 
+TEST_CASE("build_hatch_prompt: covers all three sections", "[hatch]") {
+    auto prompt = build_hatch_prompt();
+    REQUIRE(prompt.find("soul:identity") != std::string::npos);
+    REQUIRE(prompt.find("soul:user") != std::string::npos);
+    REQUIRE(prompt.find("soul:philosophy") != std::string::npos);
+}
+
 // ── parse_soul_json ─────────────────────────────────────────────
 
 TEST_CASE("parse_soul_json: extracts valid soul block", "[hatch]") {
     std::string text = R"(Here's your soul!
 <soul>
 [
-  {"key": "soul:identity", "content": "Name: Aria. Nature: AI assistant."},
-  {"key": "soul:vibe", "content": "Warm and concise."}
+  {"key": "soul:identity", "content": "Name: Aria\nNature: AI assistant"},
+  {"key": "soul:user", "content": "Name: Henri\nTimezone: Europe/Helsinki"},
+  {"key": "soul:philosophy", "content": "Core truths: Be genuine"}
 ]
 </soul>
 Done!)";
 
     auto result = parse_soul_json(text);
     REQUIRE(result.found());
-    REQUIRE(result.entries.size() == 2);
+    REQUIRE(result.entries.size() == 3);
     REQUIRE(result.entries[0].first == "soul:identity");
-    REQUIRE(result.entries[0].second == "Name: Aria. Nature: AI assistant.");
-    REQUIRE(result.entries[1].first == "soul:vibe");
-    REQUIRE(result.entries[1].second == "Warm and concise.");
+    REQUIRE(result.entries[1].first == "soul:user");
+    REQUIRE(result.entries[2].first == "soul:philosophy");
     REQUIRE(result.block_start == text.find("<soul>"));
     REQUIRE(result.block_end == text.find("</soul>") + 7);
 }
@@ -116,20 +123,44 @@ TEST_CASE("build_soul_block: returns empty when no soul entries exist", "[hatch]
     std::filesystem::remove(path);
 }
 
-TEST_CASE("build_soul_block: formats soul entries correctly", "[hatch]") {
+TEST_CASE("build_soul_block: formats three-section soul correctly", "[hatch]") {
     std::string path = temp_memory_path("soul_block");
     auto mem = std::make_unique<JsonMemory>(path);
 
-    mem->store("soul:identity", "Name: Aria.", MemoryCategory::Core, "");
-    mem->store("soul:vibe", "Direct and warm.", MemoryCategory::Core, "");
+    mem->store("soul:identity", "Name: Aria\nNature: AI assistant\nVibe: Warm", MemoryCategory::Core, "");
+    mem->store("soul:user", "Name: Henri\nTimezone: Europe/Helsinki", MemoryCategory::Core, "");
+    mem->store("soul:philosophy", "Core truths: Be genuine\nBoundaries: None", MemoryCategory::Core, "");
     mem->store("other-core", "Not a soul entry.", MemoryCategory::Core, "");
 
     std::string block = build_soul_block(mem.get());
     REQUIRE(block.find("Your Identity") != std::string::npos);
-    REQUIRE(block.find("Identity: Name: Aria.") != std::string::npos);
-    REQUIRE(block.find("Vibe: Direct and warm.") != std::string::npos);
+    REQUIRE(block.find("About you (the AI):\nName: Aria") != std::string::npos);
+    REQUIRE(block.find("About your human:\nName: Henri") != std::string::npos);
+    REQUIRE(block.find("Your philosophy:\nCore truths: Be genuine") != std::string::npos);
     REQUIRE(block.find("Not a soul entry") == std::string::npos);
     REQUIRE(block.find("Embody this persona") != std::string::npos);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("build_soul_block: backward compat with legacy keys", "[hatch]") {
+    std::string path = temp_memory_path("soul_legacy");
+    auto mem = std::make_unique<JsonMemory>(path);
+
+    // Old format: identity + vibe/boundaries/preferences, no philosophy
+    mem->store("soul:identity", "Name: Aria.", MemoryCategory::Core, "");
+    mem->store("soul:vibe", "Direct and warm.", MemoryCategory::Core, "");
+    mem->store("soul:boundaries", "Never share private info.", MemoryCategory::Core, "");
+    mem->store("soul:preferences", "User prefers concise.", MemoryCategory::Core, "");
+
+    std::string block = build_soul_block(mem.get());
+    REQUIRE(block.find("About you (the AI):\nName: Aria.") != std::string::npos);
+    REQUIRE(block.find("Vibe: Direct and warm.") != std::string::npos);
+    REQUIRE(block.find("Boundaries: Never share private info.") != std::string::npos);
+    REQUIRE(block.find("Preferences: User prefers concise.") != std::string::npos);
+    REQUIRE(block.find("Embody this persona") != std::string::npos);
+    // Should NOT show "Your philosophy:" section
+    REQUIRE(block.find("Your philosophy:") == std::string::npos);
 
     std::filesystem::remove(path);
 }
@@ -201,15 +232,16 @@ TEST_CASE("Agent: hatching mode uses hatch system prompt", "[hatch]") {
 
 // ── Soul extraction in process ──────────────────────────────────
 
-TEST_CASE("Agent: soul extraction stores entries and exits hatching", "[hatch]") {
+TEST_CASE("Agent: soul extraction stores three-section entries and exits hatching", "[hatch]") {
     auto provider = std::make_unique<HatchMockProvider>();
     auto* mock = provider.get();
 
     std::string soul_response =
         "Great! Here's your soul:\n"
         "<soul>\n"
-        "[{\"key\":\"soul:identity\",\"content\":\"Name: Aria.\"},"
-        "{\"key\":\"soul:vibe\",\"content\":\"Warm.\"}]\n"
+        "[{\"key\":\"soul:identity\",\"content\":\"Name: Aria.\\nNature: AI assistant.\"},"
+        "{\"key\":\"soul:user\",\"content\":\"Name: Henri.\\nTimezone: UTC.\"},"
+        "{\"key\":\"soul:philosophy\",\"content\":\"Core truths: Be genuine.\"}]\n"
         "</soul>";
     mock->next_response.content = soul_response;
 
@@ -227,14 +259,59 @@ TEST_CASE("Agent: soul extraction stores entries and exits hatching", "[hatch]")
     REQUIRE_FALSE(agent.hatching());
     REQUIRE(agent.is_hatched());
 
-    // Verify entries stored
+    // Verify all three entries stored
     auto identity = agent.memory()->get("soul:identity");
     REQUIRE(identity.has_value());
-    REQUIRE(identity.value_or(MemoryEntry{}).content == "Name: Aria.");
+    REQUIRE(identity.value_or(MemoryEntry{}).content == "Name: Aria.\nNature: AI assistant.");
 
-    auto vibe = agent.memory()->get("soul:vibe");
-    REQUIRE(vibe.has_value());
-    REQUIRE(vibe.value_or(MemoryEntry{}).content == "Warm.");
+    auto user = agent.memory()->get("soul:user");
+    REQUIRE(user.has_value());
+    REQUIRE(user.value_or(MemoryEntry{}).content == "Name: Henri.\nTimezone: UTC.");
+
+    auto philosophy = agent.memory()->get("soul:philosophy");
+    REQUIRE(philosophy.has_value());
+    REQUIRE(philosophy.value_or(MemoryEntry{}).content == "Core truths: Be genuine.");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Agent: re-hatch removes legacy keys", "[hatch]") {
+    auto provider = std::make_unique<HatchMockProvider>();
+    auto* mock = provider.get();
+
+    std::string soul_response =
+        "<soul>\n"
+        "[{\"key\":\"soul:identity\",\"content\":\"Name: Aria.\"},"
+        "{\"key\":\"soul:user\",\"content\":\"Name: Henri.\"},"
+        "{\"key\":\"soul:philosophy\",\"content\":\"Be genuine.\"}]\n"
+        "</soul>";
+    mock->next_response.content = soul_response;
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    std::string path = temp_memory_path("soul_rehatch");
+    auto mem = std::make_unique<JsonMemory>(path);
+    // Pre-populate legacy keys
+    mem->store("soul:identity", "Old identity", MemoryCategory::Core, "");
+    mem->store("soul:vibe", "Old vibe", MemoryCategory::Core, "");
+    mem->store("soul:boundaries", "Old boundaries", MemoryCategory::Core, "");
+    mem->store("soul:preferences", "Old preferences", MemoryCategory::Core, "");
+    agent.set_memory(std::move(mem));
+
+    agent.start_hatch();
+    agent.process("redo it");
+
+    // Legacy keys should be gone
+    REQUIRE_FALSE(agent.memory()->get("soul:vibe").has_value());
+    REQUIRE_FALSE(agent.memory()->get("soul:boundaries").has_value());
+    REQUIRE_FALSE(agent.memory()->get("soul:preferences").has_value());
+
+    // New keys should exist
+    REQUIRE(agent.memory()->get("soul:identity").has_value());
+    REQUIRE(agent.memory()->get("soul:user").has_value());
+    REQUIRE(agent.memory()->get("soul:philosophy").has_value());
 
     std::filesystem::remove(path);
 }
