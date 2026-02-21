@@ -1,7 +1,6 @@
 #include "prompt.hpp"
 #include "util.hpp"
 #include <algorithm>
-#include <cctype>
 #include <filesystem>
 #include <sstream>
 #include <nlohmann/json.hpp>
@@ -147,16 +146,6 @@ std::string build_soul_block(Memory* memory) {
     auto philosophy = memory->get("soul:philosophy");
     if (philosophy) {
         ss << "Your philosophy:\n" << philosophy->content << "\n\n";
-    } else {
-        // Backward compat: render legacy keys if new format not yet hatched
-        auto vibe = memory->get("soul:vibe");
-        auto boundaries = memory->get("soul:boundaries");
-        auto preferences = memory->get("soul:preferences");
-
-        if (vibe) ss << "Vibe: " << vibe->content << "\n";
-        if (boundaries) ss << "Boundaries: " << boundaries->content << "\n";
-        if (preferences) ss << "Preferences: " << preferences->content << "\n";
-        if (vibe || boundaries || preferences) ss << "\n";
     }
 
     auto core_entries = memory->list(MemoryCategory::Core, 50);

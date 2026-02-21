@@ -144,28 +144,6 @@ TEST_CASE("build_soul_block: formats three-section soul correctly", "[hatch]") {
     std::filesystem::remove(path);
 }
 
-TEST_CASE("build_soul_block: backward compat with legacy keys", "[hatch]") {
-    std::string path = temp_memory_path("soul_legacy");
-    auto mem = std::make_unique<JsonMemory>(path);
-
-    // Old format: identity + vibe/boundaries/preferences, no philosophy
-    mem->store("soul:identity", "Name: Aria.", MemoryCategory::Core, "");
-    mem->store("soul:vibe", "Direct and warm.", MemoryCategory::Core, "");
-    mem->store("soul:boundaries", "Never share private info.", MemoryCategory::Core, "");
-    mem->store("soul:preferences", "User prefers concise.", MemoryCategory::Core, "");
-
-    std::string block = build_soul_block(mem.get());
-    REQUIRE(block.find("About you (the AI):\nName: Aria.") != std::string::npos);
-    REQUIRE(block.find("Vibe: Direct and warm.") != std::string::npos);
-    REQUIRE(block.find("Boundaries: Never share private info.") != std::string::npos);
-    REQUIRE(block.find("Preferences: User prefers concise.") != std::string::npos);
-    REQUIRE(block.find("Embody this persona") != std::string::npos);
-    // Should NOT show "Your philosophy:" section
-    REQUIRE(block.find("Your philosophy:") == std::string::npos);
-
-    std::filesystem::remove(path);
-}
-
 // ── is_hatched ──────────────────────────────────────────────────
 
 TEST_CASE("Agent: is_hatched returns false on fresh memory", "[hatch]") {
@@ -276,7 +254,7 @@ TEST_CASE("Agent: soul extraction stores three-section entries and exits hatchin
     std::filesystem::remove(path);
 }
 
-TEST_CASE("Agent: re-hatch removes legacy keys", "[hatch]") {
+TEST_CASE("Agent: re-hatch overwrites existing soul entries", "[hatch]") {
     auto provider = std::make_unique<HatchMockProvider>();
     auto* mock = provider.get();
 
@@ -294,23 +272,14 @@ TEST_CASE("Agent: re-hatch removes legacy keys", "[hatch]") {
 
     std::string path = temp_memory_path("soul_rehatch");
     auto mem = std::make_unique<JsonMemory>(path);
-    // Pre-populate legacy keys
     mem->store("soul:identity", "Old identity", MemoryCategory::Core, "");
-    mem->store("soul:vibe", "Old vibe", MemoryCategory::Core, "");
-    mem->store("soul:boundaries", "Old boundaries", MemoryCategory::Core, "");
-    mem->store("soul:preferences", "Old preferences", MemoryCategory::Core, "");
     agent.set_memory(std::move(mem));
 
     agent.start_hatch();
     agent.process("redo it");
 
-    // Legacy keys should be gone
-    REQUIRE_FALSE(agent.memory()->get("soul:vibe").has_value());
-    REQUIRE_FALSE(agent.memory()->get("soul:boundaries").has_value());
-    REQUIRE_FALSE(agent.memory()->get("soul:preferences").has_value());
-
-    // New keys should exist
-    REQUIRE(agent.memory()->get("soul:identity").has_value());
+    // New keys should overwrite old
+    REQUIRE(agent.memory()->get("soul:identity").value_or(MemoryEntry{}).content == "Name: Aria.");
     REQUIRE(agent.memory()->get("soul:user").has_value());
     REQUIRE(agent.memory()->get("soul:philosophy").has_value());
 
