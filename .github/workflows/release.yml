@@ -23,9 +23,25 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++ meson ninja-build libssl-dev libcurl4-openssl-dev lld \
-            libnghttp2-dev libidn2-dev librtmp-dev libssh-dev libpsl-dev libgssapi-krb5-2 libkrb5-dev \
-            libldap2-dev libbrotli-dev
+          sudo apt-get install -y meson ninja-build libssl-dev zlib1g-dev lld
+
+      - name: Build minimal libcurl (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -sL https://curl.se/download/curl-8.11.1.tar.gz | tar xz
+          cd curl-8.11.1
+          ./configure --prefix=${{ github.workspace }}/curl-static \
+            --enable-static --disable-shared \
+            --with-openssl --with-zlib \
+            --without-brotli --without-zstd --without-nghttp2 \
+            --without-libidn2 --without-librtmp --without-libssh \
+            --without-libssh2 --without-libpsl --without-gssapi \
+            --disable-ldap --disable-ldaps --disable-dict \
+            --disable-gopher --disable-imap --disable-mqtt \
+            --disable-pop3 --disable-rtsp --disable-smb \
+            --disable-smtp --disable-telnet --disable-tftp
+          make -j$(nproc)
+          make install
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -33,6 +49,8 @@ jobs:
 
       - name: Build static binary
         run: make build-static
+        env:
+          PKG_CONFIG_PATH: ${{ github.workspace }}/curl-static/lib/pkgconfig
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
