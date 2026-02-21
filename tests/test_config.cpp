@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <cstdlib>
 #include <unistd.h>
+#include <nlohmann/json.hpp>
 
 using namespace ptrclaw;
 
@@ -217,6 +218,148 @@ TEST_CASE("Config::load: all env var overrides", "[config]") {
     unsetenv("OPENAI_API_KEY");
     unsetenv("OPENROUTER_API_KEY");
     unsetenv("OLLAMA_BASE_URL");
+    setenv("HOME", old_home.c_str(), 1);
+    std::filesystem::remove_all(dir);
+}
+
+// ── Default config creation and migration ────────────────────────
+
+TEST_CASE("Config::load: creates default config when missing", "[config]") {
+    auto dir = make_temp_dir();
+    REQUIRE_FALSE(dir.empty());
+
+    std::string old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
+    setenv("HOME", dir.c_str(), 1);
+    unsetenv("ANTHROPIC_API_KEY");
+    unsetenv("OPENAI_API_KEY");
+    unsetenv("OPENROUTER_API_KEY");
+    unsetenv("OLLAMA_BASE_URL");
+
+    Config::load();
+
+    std::string config_path = dir + "/.ptrclaw/config.json";
+    REQUIRE(std::filesystem::exists(config_path));
+
+    std::ifstream f(config_path);
+    nlohmann::json j = nlohmann::json::parse(f);
+
+    REQUIRE(j.contains("default_provider"));
+    REQUIRE(j["default_provider"] == "anthropic");
+    REQUIRE(j.contains("agent"));
+    REQUIRE(j["agent"].contains("max_tool_iterations"));
+    REQUIRE(j.contains("memory"));
+    REQUIRE(j["memory"].contains("backend"));
+    REQUIRE(j["memory"]["backend"] == "json");
+
+    // Must not contain API keys or channels
+    REQUIRE_FALSE(j.contains("anthropic_api_key"));
+    REQUIRE_FALSE(j.contains("openai_api_key"));
+    REQUIRE_FALSE(j.contains("channels"));
+
+    setenv("HOME", old_home.c_str(), 1);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Config::load: migrates existing config with missing keys", "[config]") {
+    auto dir = make_temp_dir();
+    REQUIRE_FALSE(dir.empty());
+
+    std::filesystem::create_directories(dir + "/.ptrclaw");
+    {
+        std::ofstream f(dir + "/.ptrclaw/config.json");
+        f << R"({"anthropic_api_key": "sk-test", "default_model": "gpt-4o"})";
+    }
+
+    std::string old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
+    setenv("HOME", dir.c_str(), 1);
+    unsetenv("ANTHROPIC_API_KEY");
+    unsetenv("OPENAI_API_KEY");
+    unsetenv("OPENROUTER_API_KEY");
+    unsetenv("OLLAMA_BASE_URL");
+
+    Config cfg = Config::load();
+
+    // User values preserved
+    REQUIRE(cfg.anthropic_api_key == "sk-test");
+    REQUIRE(cfg.default_model == "gpt-4o");
+
+    // Re-read file to verify migration wrote new keys
+    std::ifstream f(dir + "/.ptrclaw/config.json");
+    nlohmann::json j = nlohmann::json::parse(f);
+
+    REQUIRE(j["anthropic_api_key"] == "sk-test");
+    REQUIRE(j["default_model"] == "gpt-4o");
+    REQUIRE(j.contains("memory"));
+    REQUIRE(j["memory"]["backend"] == "json");
+    REQUIRE(j.contains("agent"));
+    REQUIRE(j["agent"]["max_tool_iterations"] == 10);
+
+    setenv("HOME", old_home.c_str(), 1);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Config::load: does not rewrite complete config", "[config]") {
+    auto dir = make_temp_dir();
+    REQUIRE_FALSE(dir.empty());
+
+    // Write a config containing all default keys (with some custom values)
+    nlohmann::json full = {
+        {"default_provider", "openai"},
+        {"default_model", "gpt-4o"},
+        {"default_temperature", 0.9},
+        {"ollama_base_url", "http://localhost:11434"},
+        {"agent", {
+            {"max_tool_iterations", 5},
+            {"max_history_messages", 50},
+            {"token_limit", 128000}
+        }},
+        {"memory", {
+            {"backend", "json"},
+            {"auto_save", false},
+            {"recall_limit", 5},
+            {"hygiene_max_age", 604800},
+            {"response_cache", false},
+            {"cache_ttl", 3600},
+            {"cache_max_entries", 100},
+            {"enrich_depth", 1},
+            {"synthesis", true},
+            {"synthesis_interval", 5}
+        }}
+    };
+
+    std::filesystem::create_directories(dir + "/.ptrclaw");
+    std::string config_path = dir + "/.ptrclaw/config.json";
+    {
+        std::ofstream f(config_path);
+        f << full.dump(4) << "\n";
+    }
+
+    // Record content before loading
+    std::string before;
+    {
+        std::ifstream f(config_path);
+        before.assign(std::istreambuf_iterator<char>(f),
+                      std::istreambuf_iterator<char>());
+    }
+
+    std::string old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
+    setenv("HOME", dir.c_str(), 1);
+    unsetenv("ANTHROPIC_API_KEY");
+    unsetenv("OPENAI_API_KEY");
+    unsetenv("OPENROUTER_API_KEY");
+    unsetenv("OLLAMA_BASE_URL");
+
+    Config::load();
+
+    // File should be unchanged — no unnecessary rewrite
+    std::string after;
+    {
+        std::ifstream f(config_path);
+        after.assign(std::istreambuf_iterator<char>(f),
+                     std::istreambuf_iterator<char>());
+    }
+    REQUIRE(before == after);
+
     setenv("HOME", old_home.c_str(), 1);
     std::filesystem::remove_all(dir);
 }
