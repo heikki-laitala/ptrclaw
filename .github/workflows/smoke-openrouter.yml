@@ -1,0 +1,63 @@
+name: Smoke (OpenRouter)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-openrouter-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      SMOKE_MODEL: openai/gpt-4o-mini
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate secret exists
+        shell: bash
+        run: |
+          if [ -z "${OPENROUTER_API_KEY}" ]; then
+            echo "Missing required secret: OPENROUTER_API_KEY"
+            exit 1
+          fi
+          echo "::add-mask::${OPENROUTER_API_KEY}"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ meson ninja-build libssl-dev libcurl4-openssl-dev
+
+      - name: Build
+        run: |
+          meson setup builddir --buildtype=release
+          meson compile -C builddir
+
+      - name: OpenRouter provider smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=$(timeout 120s ./builddir/ptrclaw \
+            --provider openrouter \
+            --model "${SMOKE_MODEL}" \
+            -m "Reply with exactly: SMOKE_OK" 2>&1 || true)
+
+          echo "--- ptrclaw output (sanitized) ---"
+          echo "$OUT" | sed -E 's/sk-[A-Za-z0-9_-]+/***REDACTED***/g'
+          echo "----------------------------------"
+
+          if ! echo "$OUT" | grep -q "SMOKE_OK"; then
+            echo "Smoke test failed: expected token SMOKE_OK not found in output"
+            exit 1
+          fi
+
+      - name: Upload smoke output artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-openrouter-linux
+          path: builddir/meson-logs/
+          if-no-files-found: ignore
