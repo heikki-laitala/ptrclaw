@@ -22,15 +22,49 @@ MemoryCategory category_from_string(const std::string& s) {
 }
 
 std::string memory_enrich(Memory* memory, const std::string& user_message,
-                          uint32_t recall_limit) {
+                          uint32_t recall_limit, uint32_t enrich_depth) {
     if (!memory || recall_limit == 0) return user_message;
 
     auto entries = memory->recall(user_message, recall_limit, std::nullopt);
     if (entries.empty()) return user_message;
 
+    // Follow links (1-hop) if depth > 0
+    std::vector<MemoryEntry> neighbor_entries;
+    if (enrich_depth > 0) {
+        // Collect keys of recalled entries for deduplication
+        std::vector<std::string> seen_keys;
+        seen_keys.reserve(entries.size());
+        for (const auto& e : entries) {
+            seen_keys.push_back(e.key);
+        }
+
+        for (const auto& entry : entries) {
+            if (entry.links.empty()) continue;
+            auto neighbors = memory->neighbors(entry.key, recall_limit);
+            for (auto& n : neighbors) {
+                if (std::find(seen_keys.begin(), seen_keys.end(), n.key) == seen_keys.end()) {
+                    seen_keys.push_back(n.key);
+                    neighbor_entries.push_back(std::move(n));
+                }
+            }
+        }
+    }
+
     std::ostringstream ss;
     ss << "[Memory context]\n";
     for (const auto& entry : entries) {
+        ss << "- " << entry.key << ": " << entry.content;
+        if (!entry.links.empty()) {
+            ss << " [links: ";
+            for (size_t i = 0; i < entry.links.size(); i++) {
+                if (i > 0) ss << ", ";
+                ss << entry.links[i];
+            }
+            ss << "]";
+        }
+        ss << "\n";
+    }
+    for (const auto& entry : neighbor_entries) {
         ss << "- " << entry.key << ": " << entry.content << "\n";
     }
     ss << "[/Memory context]\n\n" << user_message;

@@ -105,6 +105,12 @@ Config Config::load() {
                     cfg.memory.cache_ttl = m["cache_ttl"].get<uint32_t>();
                 if (m.contains("cache_max_entries") && m["cache_max_entries"].is_number_unsigned())
                     cfg.memory.cache_max_entries = m["cache_max_entries"].get<uint32_t>();
+                if (m.contains("enrich_depth") && m["enrich_depth"].is_number_unsigned())
+                    cfg.memory.enrich_depth = m["enrich_depth"].get<uint32_t>();
+                if (m.contains("synthesis") && m["synthesis"].is_boolean())
+                    cfg.memory.synthesis = m["synthesis"].get<bool>();
+                if (m.contains("synthesis_interval") && m["synthesis_interval"].is_number_unsigned())
+                    cfg.memory.synthesis_interval = m["synthesis_interval"].get<uint32_t>();
             }
         } catch (...) { // NOLINT(bugprone-empty-catch)
             // Config file is malformed — continue with defaults

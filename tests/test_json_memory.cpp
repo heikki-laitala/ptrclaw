@@ -200,6 +200,122 @@ TEST_CASE("JsonMemory: hygiene_purge removes old conversation entries", "[json_m
 
 // ── Persistence ──────────────────────────────────────────────
 
+// ── Links ────────────────────────────────────────────────────
+
+TEST_CASE("JsonMemory: link creates bidirectional links", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.store("topic-a", "About topic A", MemoryCategory::Knowledge, "");
+    f.mem.store("topic-b", "About topic B", MemoryCategory::Knowledge, "");
+
+    bool ok = f.mem.link("topic-a", "topic-b");
+    REQUIRE(ok);
+
+    auto a = f.mem.get("topic-a");
+    REQUIRE(a.has_value());
+    REQUIRE(a.value_or(MemoryEntry{}).links.size() == 1);
+    REQUIRE(a.value_or(MemoryEntry{}).links[0] == "topic-b");
+
+    auto b = f.mem.get("topic-b");
+    REQUIRE(b.has_value());
+    REQUIRE(b.value_or(MemoryEntry{}).links.size() == 1);
+    REQUIRE(b.value_or(MemoryEntry{}).links[0] == "topic-a");
+}
+
+TEST_CASE("JsonMemory: unlink removes bidirectional links", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.store("x", "X content", MemoryCategory::Knowledge, "");
+    f.mem.store("y", "Y content", MemoryCategory::Knowledge, "");
+    f.mem.link("x", "y");
+
+    bool ok = f.mem.unlink("x", "y");
+    REQUIRE(ok);
+
+    auto x = f.mem.get("x");
+    REQUIRE(x.value_or(MemoryEntry{}).links.empty());
+    auto y = f.mem.get("y");
+    REQUIRE(y.value_or(MemoryEntry{}).links.empty());
+}
+
+TEST_CASE("JsonMemory: neighbors returns linked entries", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.store("center", "Center node", MemoryCategory::Knowledge, "");
+    f.mem.store("neighbor1", "First neighbor", MemoryCategory::Knowledge, "");
+    f.mem.store("neighbor2", "Second neighbor", MemoryCategory::Knowledge, "");
+
+    f.mem.link("center", "neighbor1");
+    f.mem.link("center", "neighbor2");
+
+    auto neighbors = f.mem.neighbors("center", 10);
+    REQUIRE(neighbors.size() == 2);
+}
+
+TEST_CASE("JsonMemory: link fails for missing entry", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.store("exists", "content", MemoryCategory::Knowledge, "");
+    REQUIRE_FALSE(f.mem.link("exists", "missing"));
+    REQUIRE_FALSE(f.mem.link("missing", "exists"));
+}
+
+TEST_CASE("JsonMemory: forget cleans up links", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.store("a", "A", MemoryCategory::Knowledge, "");
+    f.mem.store("b", "B", MemoryCategory::Knowledge, "");
+    f.mem.store("c", "C", MemoryCategory::Knowledge, "");
+    f.mem.link("a", "b");
+    f.mem.link("b", "c");
+
+    f.mem.forget("b");
+
+    // a and c should have no links to b
+    auto a = f.mem.get("a");
+    REQUIRE(a.value_or(MemoryEntry{}).links.empty());
+    auto c = f.mem.get("c");
+    REQUIRE(c.value_or(MemoryEntry{}).links.empty());
+}
+
+TEST_CASE("JsonMemory: links persist across instances", "[json_memory]") {
+    std::string path = test_path() + "_links";
+
+    {
+        JsonMemory mem(path);
+        mem.store("p", "P data", MemoryCategory::Knowledge, "");
+        mem.store("q", "Q data", MemoryCategory::Knowledge, "");
+        mem.link("p", "q");
+    }
+
+    {
+        JsonMemory mem(path);
+        auto p = mem.get("p");
+        REQUIRE(p.has_value());
+        REQUIRE(p.value_or(MemoryEntry{}).links.size() == 1);
+        REQUIRE(p.value_or(MemoryEntry{}).links[0] == "q");
+    }
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("JsonMemory: hygiene_purge cleans dangling links", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.store("conv-item", "conversation data", MemoryCategory::Conversation, "");
+    f.mem.store("knowledge-item", "knowledge data", MemoryCategory::Knowledge, "");
+    f.mem.link("conv-item", "knowledge-item");
+
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+    f.mem.hygiene_purge(1);
+
+    auto k = f.mem.get("knowledge-item");
+    REQUIRE(k.has_value());
+    REQUIRE(k.value_or(MemoryEntry{}).links.empty());
+}
+
+// ── Persistence ──────────────────────────────────────────────
+
 TEST_CASE("JsonMemory: persists across instances", "[json_memory]") {
     std::string path = test_path() + "_persist";
 

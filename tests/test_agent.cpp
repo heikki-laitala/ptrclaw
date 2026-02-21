@@ -1,7 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include "agent.hpp"
 #include "dispatcher.hpp"
+#include "memory/json_memory.hpp"
 #include <stdexcept>
+#include <filesystem>
+#include <unistd.h>
 
 using namespace ptrclaw;
 
@@ -449,4 +452,44 @@ TEST_CASE("Agent: set_provider removes old system prompt", "[agent]") {
     REQUIRE(new_ptr->last_messages[0].role == Role::System);
     // Non-native provider should get tool descriptions
     REQUIRE(new_ptr->last_messages[0].content.find("Available tools:") != std::string::npos);
+}
+
+// ── Synthesis ────────────────────────────────────────────────────
+
+TEST_CASE("Agent: synthesis triggers after configured interval", "[agent]") {
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+
+    // Regular chat responses
+    ChatResponse normal;
+    normal.content = "I understand.";
+
+    // Synthesis response (chat_simple is used for synthesis)
+    // The mock's chat_simple returns "simple response" which isn't valid JSON,
+    // so synthesis will silently fail — which is correct behavior.
+    // We verify it doesn't crash and the agent still works.
+    mock->next_response = normal;
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_tool_iterations = 5;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 2; // trigger every 2 turns
+
+    // Use a temp memory file
+    std::string mem_path = "/tmp/ptrclaw_test_synthesis_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    // Process enough messages to trigger synthesis
+    agent.process("Tell me about C++");
+    agent.process("What about Python?");
+
+    // Agent should still work correctly after synthesis attempt
+    REQUIRE(mock->chat_call_count >= 2);
+
+    std::filesystem::remove(mem_path);
 }

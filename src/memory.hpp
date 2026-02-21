@@ -18,6 +18,7 @@ struct MemoryEntry {
     uint64_t timestamp = 0;
     std::string session_id;
     double score = 0.0;
+    std::vector<std::string> links;  // keys of bidirectionally linked entries
 };
 
 // Abstract memory backend interface
@@ -59,6 +60,15 @@ public:
 
     // Purge conversation entries older than max_age_seconds. Returns count purged.
     virtual uint32_t hygiene_purge(uint32_t max_age_seconds) = 0;
+
+    // Create bidirectional link between two entries. Returns false if either doesn't exist.
+    virtual bool link(const std::string& from_key, const std::string& to_key) = 0;
+
+    // Remove bidirectional link. Returns false if link doesn't exist.
+    virtual bool unlink(const std::string& from_key, const std::string& to_key) = 0;
+
+    // Get entries linked to the given key, up to limit.
+    virtual std::vector<MemoryEntry> neighbors(const std::string& key, uint32_t limit) = 0;
 };
 
 // Base class for tools that need a Memory* pointer.
@@ -79,7 +89,7 @@ MemoryCategory category_from_string(const std::string& s);
 // Returns the enriched message (original message with prepended context),
 // or the original message unchanged if memory is null or recall returns nothing.
 std::string memory_enrich(Memory* memory, const std::string& user_message,
-                          uint32_t recall_limit);
+                          uint32_t recall_limit, uint32_t enrich_depth = 0);
 
 // Create a memory backend from config.
 // Uses the plugin registry to instantiate the configured backend.

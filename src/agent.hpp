@@ -53,6 +53,7 @@ private:
     void compact_history();
     void inject_system_prompt();
     void wire_memory_tools();
+    void maybe_synthesize();
 
     std::unique_ptr<Provider> provider_;
     std::vector<std::unique_ptr<Tool>> tools_;
@@ -64,6 +65,7 @@ private:
     std::string session_id_;
     std::unique_ptr<Memory> memory_;
     std::unique_ptr<ResponseCache> response_cache_;
+    uint32_t turns_since_synthesis_ = 0;
 };
 
 } // namespace ptrclaw

@@ -39,8 +39,13 @@ public:
 
     uint32_t hygiene_purge(uint32_t max_age_seconds) override;
 
+    bool link(const std::string& from_key, const std::string& to_key) override;
+    bool unlink(const std::string& from_key, const std::string& to_key) override;
+    std::vector<MemoryEntry> neighbors(const std::string& key, uint32_t limit) override;
+
 private:
     void init_schema();
+    void populate_links(MemoryEntry& entry);
 
     sqlite3* db_ = nullptr;
     std::string path_;

@@ -102,6 +102,15 @@ void SqliteMemory::init_schema() {
         "  VALUES (new.rowid, new.key, new.content);"
         "END;";
     sqlite3_exec(db_, trigger_update, nullptr, nullptr, nullptr);
+
+    // Links table for knowledge graph
+    const char* create_links =
+        "CREATE TABLE IF NOT EXISTS memory_links ("
+        "  from_key TEXT NOT NULL,"
+        "  to_key   TEXT NOT NULL,"
+        "  PRIMARY KEY (from_key, to_key)"
+        ");";
+    sqlite3_exec(db_, create_links, nullptr, nullptr, nullptr);
 }
 
 // Run a recall query: prepare, bind text params + limit, step, collect MemoryEntry results.
@@ -154,6 +163,18 @@ static MemoryEntry entry_from_stmt(sqlite3_stmt* stmt) {
     entry.timestamp  = static_cast<uint64_t>(sqlite3_column_int64(stmt, 4));
     if (auto* v = sqlite3_column_text(stmt, 5)) entry.session_id = reinterpret_cast<const char*>(v);
     return entry;
+}
+
+void SqliteMemory::populate_links(MemoryEntry& entry) {
+    StmtGuard g;
+    const char* sql = "SELECT to_key FROM memory_links WHERE from_key = ?;";
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return;
+    sqlite3_bind_text(g.stmt, 1, entry.key.c_str(), -1, SQLITE_STATIC);
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) {
+        if (auto* v = sqlite3_column_text(g.stmt, 0)) {
+            entry.links.emplace_back(reinterpret_cast<const char*>(v));
+        }
+    }
 }
 
 std::string SqliteMemory::store(const std::string& key, const std::string& content,
@@ -250,7 +271,9 @@ std::optional<MemoryEntry> SqliteMemory::get(const std::string& key) {
     sqlite3_bind_text(g.stmt, 1, key.c_str(), -1, SQLITE_STATIC);
 
     if (sqlite3_step(g.stmt) == SQLITE_ROW) {
-        return entry_from_stmt(g.stmt);
+        auto entry = entry_from_stmt(g.stmt);
+        populate_links(entry);
+        return entry;
     }
     return std::nullopt;
 }
@@ -286,7 +309,9 @@ std::vector<MemoryEntry> SqliteMemory::list(std::optional<MemoryCategory> catego
     std::vector<MemoryEntry> results;
     int rc = sqlite3_step(g.stmt);
     while (rc == SQLITE_ROW) {
-        results.push_back(entry_from_stmt(g.stmt));
+        auto entry = entry_from_stmt(g.stmt);
+        populate_links(entry);
+        results.push_back(std::move(entry));
         rc = sqlite3_step(g.stmt);
     }
     return results;
@@ -294,6 +319,17 @@ std::vector<MemoryEntry> SqliteMemory::list(std::optional<MemoryCategory> catego
 
 bool SqliteMemory::forget(const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
+
+    // Delete links referencing this key
+    {
+        StmtGuard lg;
+        const char* link_sql = "DELETE FROM memory_links WHERE from_key = ? OR to_key = ?;";
+        if (sqlite3_prepare_v2(db_, link_sql, -1, &lg.stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_text(lg.stmt, 1, key.c_str(), -1, SQLITE_STATIC);
+            sqlite3_bind_text(lg.stmt, 2, key.c_str(), -1, SQLITE_STATIC);
+            sqlite3_step(lg.stmt);
+        }
+    }
 
     StmtGuard g;
     const char* sql = "DELETE FROM memories WHERE key = ?;";
@@ -346,14 +382,19 @@ std::string SqliteMemory::snapshot_export() {
     int rc = sqlite3_step(g.stmt);
     while (rc == SQLITE_ROW) {
         MemoryEntry entry = entry_from_stmt(g.stmt);
-        arr.push_back({
+        populate_links(entry);
+        nlohmann::json item = {
             {"id",         entry.id},
             {"key",        entry.key},
             {"content",    entry.content},
             {"category",   category_to_string(entry.category)},
             {"timestamp",  entry.timestamp},
             {"session_id", entry.session_id}
-        });
+        };
+        if (!entry.links.empty()) {
+            item["links"] = entry.links;
+        }
+        arr.push_back(std::move(item));
         rc = sqlite3_step(g.stmt);
     }
     return arr.dump(2);
@@ -393,6 +434,22 @@ uint32_t SqliteMemory::snapshot_import(const std::string& json_str) {
 
             if (sqlite3_step(g.stmt) == SQLITE_DONE && sqlite3_changes(db_) > 0) {
                 imported++;
+
+                // Import links for this entry
+                if (item.contains("links") && item["links"].is_array()) {
+                    for (const auto& lnk : item["links"]) {
+                        if (!lnk.is_string()) continue;
+                        std::string to = lnk.get<std::string>();
+                        StmtGuard lg;
+                        const char* link_sql =
+                            "INSERT OR IGNORE INTO memory_links (from_key, to_key) VALUES (?, ?);";
+                        if (sqlite3_prepare_v2(db_, link_sql, -1, &lg.stmt, nullptr) == SQLITE_OK) {
+                            sqlite3_bind_text(lg.stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+                            sqlite3_bind_text(lg.stmt, 2, to.c_str(), -1, SQLITE_TRANSIENT);
+                            sqlite3_step(lg.stmt);
+                        }
+                    }
+                }
             }
         }
     } catch (...) { // NOLINT(bugprone-empty-catch)
@@ -405,6 +462,21 @@ uint32_t SqliteMemory::hygiene_purge(uint32_t max_age_seconds) {
 
     auto cutoff = static_cast<int64_t>(epoch_seconds()) - static_cast<int64_t>(max_age_seconds);
 
+    // Clean up links referencing entries about to be purged
+    {
+        StmtGuard lg;
+        const char* link_sql =
+            "DELETE FROM memory_links WHERE from_key IN "
+            "(SELECT key FROM memories WHERE category = 'conversation' AND timestamp < ?) "
+            "OR to_key IN "
+            "(SELECT key FROM memories WHERE category = 'conversation' AND timestamp < ?);";
+        if (sqlite3_prepare_v2(db_, link_sql, -1, &lg.stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int64(lg.stmt, 1, cutoff);
+            sqlite3_bind_int64(lg.stmt, 2, cutoff);
+            sqlite3_step(lg.stmt);
+        }
+    }
+
     StmtGuard g;
     const char* sql =
         "DELETE FROM memories WHERE category = 'conversation' AND timestamp < ?;";
@@ -415,6 +487,80 @@ uint32_t SqliteMemory::hygiene_purge(uint32_t max_age_seconds) {
     sqlite3_step(g.stmt);
 
     return static_cast<uint32_t>(sqlite3_changes(db_));
+}
+
+bool SqliteMemory::link(const std::string& from_key, const std::string& to_key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Verify both keys exist
+    auto key_exists = [this](const std::string& key) -> bool {
+        StmtGuard g;
+        const char* sql = "SELECT 1 FROM memories WHERE key = ?;";
+        if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
+        sqlite3_bind_text(g.stmt, 1, key.c_str(), -1, SQLITE_STATIC);
+        return sqlite3_step(g.stmt) == SQLITE_ROW;
+    };
+
+    if (!key_exists(from_key) || !key_exists(to_key)) return false;
+
+    // Insert both directions
+    const char* sql = "INSERT OR IGNORE INTO memory_links (from_key, to_key) VALUES (?, ?);";
+
+    {
+        StmtGuard g;
+        if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
+        sqlite3_bind_text(g.stmt, 1, from_key.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(g.stmt, 2, to_key.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(g.stmt);
+    }
+    {
+        StmtGuard g;
+        if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
+        sqlite3_bind_text(g.stmt, 1, to_key.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(g.stmt, 2, from_key.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(g.stmt);
+    }
+
+    return true;
+}
+
+bool SqliteMemory::unlink(const std::string& from_key, const std::string& to_key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    const char* sql = "DELETE FROM memory_links WHERE "
+                      "(from_key = ? AND to_key = ?) OR (from_key = ? AND to_key = ?);";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_text(g.stmt, 1, from_key.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(g.stmt, 2, to_key.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(g.stmt, 3, to_key.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(g.stmt, 4, from_key.c_str(), -1, SQLITE_STATIC);
+    sqlite3_step(g.stmt);
+
+    return sqlite3_changes(db_) > 0;
+}
+
+std::vector<MemoryEntry> SqliteMemory::neighbors(const std::string& key, uint32_t limit) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    const char* sql =
+        "SELECT m.id, m.key, m.content, m.category, m.timestamp, m.session_id"
+        " FROM memories m"
+        " JOIN memory_links l ON m.key = l.to_key"
+        " WHERE l.from_key = ? LIMIT ?;";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return {};
+    sqlite3_bind_text(g.stmt, 1, key.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_int(g.stmt, 2, static_cast<int>(limit));
+
+    std::vector<MemoryEntry> results;
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) {
+        auto entry = entry_from_stmt(g.stmt);
+        populate_links(entry);
+        results.push_back(std::move(entry));
+    }
+    return results;
 }
 
 } // namespace ptrclaw

@@ -47,7 +47,8 @@ std::string Agent::process(const std::string& user_message) {
 
     // Enrich user message with recalled memory context
     std::string enriched_message = memory_enrich(memory_.get(), user_message,
-                                                  config_.memory.recall_limit);
+                                                  config_.memory.recall_limit,
+                                                  config_.memory.enrich_depth);
     history_.push_back(ChatMessage{Role::User, enriched_message, {}, {}});
 
     // Build tool specs
@@ -236,6 +237,9 @@ std::string Agent::process(const std::string& user_message) {
         response_cache_->put(model_, sys_prompt, user_message, final_content);
     }
 
+    // Synthesize knowledge from conversation
+    maybe_synthesize();
+
     // Auto-compact if needed
     compact_history();
 
@@ -280,7 +284,8 @@ void Agent::wire_memory_tools() {
     if (!memory_) return;
     for (auto& tool : tools_) {
         const auto& name = tool->tool_name();
-        if (name == "memory_store" || name == "memory_recall" || name == "memory_forget") {
+        if (name == "memory_store" || name == "memory_recall" ||
+            name == "memory_forget" || name == "memory_link") {
             static_cast<MemoryAwareTool*>(tool.get())->set_memory(memory_.get());
         }
     }
@@ -288,6 +293,61 @@ void Agent::wire_memory_tools() {
 
 void Agent::set_response_cache(std::unique_ptr<ResponseCache> cache) {
     response_cache_ = std::move(cache);
+}
+
+void Agent::maybe_synthesize() {
+    if (!memory_ || !config_.memory.synthesis || memory_->backend_name() == "none") return;
+    if (config_.memory.synthesis_interval == 0) return;
+
+    turns_since_synthesis_++;
+    if (turns_since_synthesis_ < config_.memory.synthesis_interval) return;
+    turns_since_synthesis_ = 0;
+
+    // Collect recent user+assistant messages for synthesis
+    std::vector<ChatMessage> recent;
+    size_t start = (history_.size() > 10) ? history_.size() - 10 : 0;
+    for (size_t i = start; i < history_.size(); i++) {
+        if (history_[i].role == Role::User || history_[i].role == Role::Assistant) {
+            recent.push_back(history_[i]);
+        }
+    }
+    if (recent.empty()) return;
+
+    // Get existing entries for link suggestion context
+    auto existing = memory_->list(std::nullopt, 50);
+
+    std::string synthesis_prompt = build_synthesis_prompt(recent, existing);
+
+    try {
+        std::string result = provider_->chat_simple(
+            synthesis_prompt, "You are a knowledge extraction assistant.",
+            model_, 0.3);
+
+        // Parse JSON array response
+        auto j = nlohmann::json::parse(result);
+        if (!j.is_array()) return;
+
+        for (const auto& note : j) {
+            if (!note.contains("key") || !note.contains("content")) continue;
+
+            std::string key = note["key"].get<std::string>();
+            std::string content = note["content"].get<std::string>();
+            std::string cat_str = note.value("category", "knowledge");
+            MemoryCategory category = category_from_string(cat_str);
+
+            memory_->store(key, content, category, session_id_);
+
+            if (note.contains("links") && note["links"].is_array()) {
+                for (const auto& lnk : note["links"]) {
+                    if (lnk.is_string()) {
+                        memory_->link(key, lnk.get<std::string>());
+                    }
+                }
+            }
+        }
+    } catch (...) { // NOLINT(bugprone-empty-catch)
+        // Synthesis failure is non-critical — silently continue
+    }
 }
 
 void Agent::compact_history() {
