@@ -78,41 +78,56 @@ static std::string make_temp_dir() {
     return result ? std::string(result) : "";
 }
 
-TEST_CASE("Config::load: reads config file", "[config]") {
-    auto dir = make_temp_dir();
-    REQUIRE_FALSE(dir.empty());
+// RAII guard: redirects HOME to a temp dir, clears env vars, restores on destruction
+struct ConfigTestGuard {
+    std::string dir;
+    std::string old_home;
 
-    // Create a config file
-    std::string config_path = dir + "/config.json";
-    {
-        std::ofstream f(config_path);
-        f << R"({
-            "anthropic_api_key": "sk-file-ant",
-            "openai_api_key": "sk-file-oai",
-            "openrouter_api_key": "sk-file-or",
-            "ollama_base_url": "http://custom:9999",
-            "default_provider": "openai",
-            "default_model": "gpt-4o",
-            "default_temperature": 0.5,
-            "agent": {
-                "max_tool_iterations": 20,
-                "max_history_messages": 100,
-                "token_limit": 64000
-            }
-        })";
+    ConfigTestGuard() {
+        dir = make_temp_dir();
+        old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
+        setenv("HOME", dir.c_str(), 1);
+        unsetenv("ANTHROPIC_API_KEY");
+        unsetenv("OPENAI_API_KEY");
+        unsetenv("OPENROUTER_API_KEY");
+        unsetenv("OLLAMA_BASE_URL");
     }
 
-    // Temporarily override HOME to redirect ~/.ptrclaw/config.json
-    std::string old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
-    setenv("HOME", dir.c_str(), 1);
-    std::filesystem::create_directories(dir + "/.ptrclaw");
-    std::filesystem::copy_file(config_path, dir + "/.ptrclaw/config.json");
+    ~ConfigTestGuard() {
+        setenv("HOME", old_home.c_str(), 1);
+        std::filesystem::remove_all(dir);
+    }
 
-    // Clear env vars that would override
-    unsetenv("ANTHROPIC_API_KEY");
-    unsetenv("OPENAI_API_KEY");
-    unsetenv("OPENROUTER_API_KEY");
-    unsetenv("OLLAMA_BASE_URL");
+    ConfigTestGuard(const ConfigTestGuard&) = delete;
+    ConfigTestGuard& operator=(const ConfigTestGuard&) = delete;
+
+    std::string config_path() const { return dir + "/.ptrclaw/config.json"; }
+
+    void write_config(const std::string& content) {
+        std::filesystem::create_directories(dir + "/.ptrclaw");
+        std::ofstream f(config_path());
+        f << content;
+    }
+};
+
+TEST_CASE("Config::load: reads config file", "[config]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+
+    g.write_config(R"({
+        "anthropic_api_key": "sk-file-ant",
+        "openai_api_key": "sk-file-oai",
+        "openrouter_api_key": "sk-file-or",
+        "ollama_base_url": "http://custom:9999",
+        "default_provider": "openai",
+        "default_model": "gpt-4o",
+        "default_temperature": 0.5,
+        "agent": {
+            "max_tool_iterations": 20,
+            "max_history_messages": 100,
+            "token_limit": 64000
+        }
+    })");
 
     Config cfg = Config::load();
 
@@ -126,83 +141,45 @@ TEST_CASE("Config::load: reads config file", "[config]") {
     REQUIRE(cfg.agent.max_tool_iterations == 20);
     REQUIRE(cfg.agent.max_history_messages == 100);
     REQUIRE(cfg.agent.token_limit == 64000);
-
-    setenv("HOME", old_home.c_str(), 1);
-    std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("Config::load: env vars override config file", "[config]") {
-    auto dir = make_temp_dir();
-    REQUIRE_FALSE(dir.empty());
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
 
-    std::filesystem::create_directories(dir + "/.ptrclaw");
-    {
-        std::ofstream f(dir + "/.ptrclaw/config.json");
-        f << R"({"anthropic_api_key": "from-file"})";
-    }
-
-    std::string old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
-    setenv("HOME", dir.c_str(), 1);
+    g.write_config(R"({"anthropic_api_key": "from-file"})");
     setenv("ANTHROPIC_API_KEY", "from-env", 1);
 
     Config cfg = Config::load();
     REQUIRE(cfg.anthropic_api_key == "from-env");
 
     unsetenv("ANTHROPIC_API_KEY");
-    setenv("HOME", old_home.c_str(), 1);
-    std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("Config::load: malformed JSON falls back to defaults", "[config]") {
-    auto dir = make_temp_dir();
-    REQUIRE_FALSE(dir.empty());
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
 
-    std::filesystem::create_directories(dir + "/.ptrclaw");
-    {
-        std::ofstream f(dir + "/.ptrclaw/config.json");
-        f << "not valid json {{{";
-    }
-
-    std::string old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
-    setenv("HOME", dir.c_str(), 1);
-    unsetenv("ANTHROPIC_API_KEY");
-    unsetenv("OPENAI_API_KEY");
-    unsetenv("OPENROUTER_API_KEY");
-    unsetenv("OLLAMA_BASE_URL");
+    g.write_config("not valid json {{{");
 
     Config cfg = Config::load();
     REQUIRE(cfg.default_provider == "anthropic");
     REQUIRE(cfg.anthropic_api_key.empty());
-
-    setenv("HOME", old_home.c_str(), 1);
-    std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("Config::load: missing config file uses defaults", "[config]") {
-    auto dir = make_temp_dir();
-    REQUIRE_FALSE(dir.empty());
-
-    std::string old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
-    setenv("HOME", dir.c_str(), 1);
-    unsetenv("ANTHROPIC_API_KEY");
-    unsetenv("OPENAI_API_KEY");
-    unsetenv("OPENROUTER_API_KEY");
-    unsetenv("OLLAMA_BASE_URL");
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
 
     Config cfg = Config::load();
     REQUIRE(cfg.default_provider == "anthropic");
     REQUIRE(cfg.default_temperature == 0.7);
-
-    setenv("HOME", old_home.c_str(), 1);
-    std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("Config::load: all env var overrides", "[config]") {
-    auto dir = make_temp_dir();
-    REQUIRE_FALSE(dir.empty());
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
 
-    std::string old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
-    setenv("HOME", dir.c_str(), 1);
     setenv("ANTHROPIC_API_KEY", "env-ant", 1);
     setenv("OPENAI_API_KEY", "env-oai", 1);
     setenv("OPENROUTER_API_KEY", "env-or", 1);
@@ -218,29 +195,19 @@ TEST_CASE("Config::load: all env var overrides", "[config]") {
     unsetenv("OPENAI_API_KEY");
     unsetenv("OPENROUTER_API_KEY");
     unsetenv("OLLAMA_BASE_URL");
-    setenv("HOME", old_home.c_str(), 1);
-    std::filesystem::remove_all(dir);
 }
 
 // ── Default config creation and migration ────────────────────────
 
 TEST_CASE("Config::load: creates default config when missing", "[config]") {
-    auto dir = make_temp_dir();
-    REQUIRE_FALSE(dir.empty());
-
-    std::string old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
-    setenv("HOME", dir.c_str(), 1);
-    unsetenv("ANTHROPIC_API_KEY");
-    unsetenv("OPENAI_API_KEY");
-    unsetenv("OPENROUTER_API_KEY");
-    unsetenv("OLLAMA_BASE_URL");
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
 
     Config::load();
 
-    std::string config_path = dir + "/.ptrclaw/config.json";
-    REQUIRE(std::filesystem::exists(config_path));
+    REQUIRE(std::filesystem::exists(g.config_path()));
 
-    std::ifstream f(config_path);
+    std::ifstream f(g.config_path());
     nlohmann::json j = nlohmann::json::parse(f);
 
     REQUIRE(j.contains("default_provider"));
@@ -259,27 +226,13 @@ TEST_CASE("Config::load: creates default config when missing", "[config]") {
     REQUIRE_FALSE(j.contains("anthropic_api_key"));
     REQUIRE_FALSE(j.contains("openai_api_key"));
     REQUIRE_FALSE(j.contains("channels"));
-
-    setenv("HOME", old_home.c_str(), 1);
-    std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("Config::load: migrates existing config with missing keys", "[config]") {
-    auto dir = make_temp_dir();
-    REQUIRE_FALSE(dir.empty());
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
 
-    std::filesystem::create_directories(dir + "/.ptrclaw");
-    {
-        std::ofstream f(dir + "/.ptrclaw/config.json");
-        f << R"({"anthropic_api_key": "sk-test", "default_model": "gpt-4o"})";
-    }
-
-    std::string old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
-    setenv("HOME", dir.c_str(), 1);
-    unsetenv("ANTHROPIC_API_KEY");
-    unsetenv("OPENAI_API_KEY");
-    unsetenv("OPENROUTER_API_KEY");
-    unsetenv("OLLAMA_BASE_URL");
+    g.write_config(R"({"anthropic_api_key": "sk-test", "default_model": "gpt-4o"})");
 
     Config cfg = Config::load();
 
@@ -288,7 +241,7 @@ TEST_CASE("Config::load: migrates existing config with missing keys", "[config]"
     REQUIRE(cfg.default_model == "gpt-4o");
 
     // Re-read file to verify migration wrote new keys
-    std::ifstream f(dir + "/.ptrclaw/config.json");
+    std::ifstream f(g.config_path());
     nlohmann::json j = nlohmann::json::parse(f);
 
     REQUIRE(j["anthropic_api_key"] == "sk-test");
@@ -301,14 +254,11 @@ TEST_CASE("Config::load: migrates existing config with missing keys", "[config]"
 #endif
     REQUIRE(j.contains("agent"));
     REQUIRE(j["agent"]["max_tool_iterations"] == 10);
-
-    setenv("HOME", old_home.c_str(), 1);
-    std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("Config::load: does not rewrite complete config", "[config]") {
-    auto dir = make_temp_dir();
-    REQUIRE_FALSE(dir.empty());
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
 
     // Write a config containing all default keys (with some custom values)
     nlohmann::json full = {
@@ -339,39 +289,24 @@ TEST_CASE("Config::load: does not rewrite complete config", "[config]") {
         }}
     };
 
-    std::filesystem::create_directories(dir + "/.ptrclaw");
-    std::string config_path = dir + "/.ptrclaw/config.json";
-    {
-        std::ofstream f(config_path);
-        f << full.dump(4) << "\n";
-    }
+    g.write_config(full.dump(4) + "\n");
 
     // Record content before loading
     std::string before;
     {
-        std::ifstream f(config_path);
+        std::ifstream f(g.config_path());
         before.assign(std::istreambuf_iterator<char>(f),
                       std::istreambuf_iterator<char>());
     }
-
-    std::string old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
-    setenv("HOME", dir.c_str(), 1);
-    unsetenv("ANTHROPIC_API_KEY");
-    unsetenv("OPENAI_API_KEY");
-    unsetenv("OPENROUTER_API_KEY");
-    unsetenv("OLLAMA_BASE_URL");
 
     Config::load();
 
     // File should be unchanged — no unnecessary rewrite
     std::string after;
     {
-        std::ifstream f(config_path);
+        std::ifstream f(g.config_path());
         after.assign(std::istreambuf_iterator<char>(f),
                      std::istreambuf_iterator<char>());
     }
     REQUIRE(before == after);
-
-    setenv("HOME", old_home.c_str(), 1);
-    std::filesystem::remove_all(dir);
 }
