@@ -1,6 +1,6 @@
 # PtrClaw — Agent Instructions
 
-C++17 agentic AI assistant (port of nullclaw). Enables LLM-driven tool use via CLI, Telegram, and WhatsApp.
+Lightweight, extensible AI assistant infrastructure in C++17. Enables LLM-driven tool use via CLI, Telegram, and WhatsApp. Event-driven architecture with a plugin system for providers, channels, and tools.
 
 Optimized for:
 
