@@ -139,7 +139,7 @@ jobs:
       - name: Install dependencies
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: g++ meson ninja-build libssl-dev libsqlite3-dev lld gcovr
+          packages: g++ meson ninja-build libssl-dev libsqlite3-dev lld llvm gcovr
           version: 1.0
 
       - name: Coverage
