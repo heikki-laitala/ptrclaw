@@ -1,0 +1,66 @@
+name: Smoke (Anthropic)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-anthropic-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Override if needed in workflow dispatch by editing file or using repo vars later
+      SMOKE_MODEL: claude-3-5-haiku-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate secret exists
+        shell: bash
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then
+            echo "Missing required secret: ANTHROPIC_API_KEY"
+            exit 1
+          fi
+          echo "::add-mask::${ANTHROPIC_API_KEY}"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ meson ninja-build libssl-dev
+
+      - name: Build (Linux backend path)
+        run: |
+          meson setup builddir --buildtype=release
+          meson compile -C builddir
+
+      - name: Anthropic provider smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Single-provider, single-turn smoke test against Anthropic.
+          # Keep prompt deterministic and output check strict.
+          OUT=$(timeout 120s ./builddir/ptrclaw \
+            --provider anthropic \
+            --model "${SMOKE_MODEL}" \
+            -m "Reply with exactly: SMOKE_OK" 2>&1 || true)
+
+          echo "--- ptrclaw output (sanitized) ---"
+          echo "$OUT" | sed -E 's/sk-ant-[A-Za-z0-9_-]+/***REDACTED***/g'
+          echo "----------------------------------"
+
+          if ! echo "$OUT" | grep -q "SMOKE_OK"; then
+            echo "Smoke test failed: expected token SMOKE_OK not found in output"
+            exit 1
+          fi
+
+      - name: Upload smoke output artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-anthropic-linux
+          path: builddir/meson-logs/
+          if-no-files-found: ignore
