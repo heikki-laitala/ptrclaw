@@ -89,7 +89,11 @@ static int run_channel(const std::string& channel_name,
 
     if (!channel->supports_polling()) {
         std::cerr << channel_name << " channel requires an external webhook gateway.\n"
-                  << "Use the channel API programmatically with your HTTP server.\n";
+                  << "For whatsapp: set webhook_listen (e.g. \"127.0.0.1:8080\") in\n"
+                  << "~/.ptrclaw/config.json under channels.whatsapp, or via the\n"
+                  << "WHATSAPP_WEBHOOK_LISTEN env var, to start the built-in webhook\n"
+                  << "server. Place a reverse proxy (nginx, Caddy) in front for TLS\n"
+                  << "and rate-limiting. See docs/reverse-proxy.md for details.\n";
         return 1;
     }
 

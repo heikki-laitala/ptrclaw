@@ -28,7 +28,7 @@ nlohmann::json Config::defaults_json() {
         }},
         {"channels", {
             {"telegram", {{"bot_token", ""}, {"allow_from", nlohmann::json::array()}, {"reply_in_private", true}, {"proxy", ""}}},
-            {"whatsapp", {{"access_token", ""}, {"phone_number_id", ""}, {"verify_token", ""}, {"app_secret", ""}, {"allow_from", nlohmann::json::array()}}}
+            {"whatsapp", {{"access_token", ""}, {"phone_number_id", ""}, {"verify_token", ""}, {"app_secret", ""}, {"allow_from", nlohmann::json::array()}, {"webhook_listen", ""}, {"webhook_secret", ""}, {"webhook_max_body", 65536}}}
         }},
         {"memory", {
 #ifdef PTRCLAW_HAS_SQLITE_MEMORY
@@ -180,6 +180,10 @@ Config Config::load() {
         cfg.channels["whatsapp"]["phone_number_id"] = v;
     if (const char* v = std::getenv("WHATSAPP_VERIFY_TOKEN"))
         cfg.channels["whatsapp"]["verify_token"] = v;
+    if (const char* v = std::getenv("WHATSAPP_WEBHOOK_LISTEN"))
+        cfg.channels["whatsapp"]["webhook_listen"] = v;
+    if (const char* v = std::getenv("WHATSAPP_WEBHOOK_SECRET"))
+        cfg.channels["whatsapp"]["webhook_secret"] = v;
 
     return cfg;
 }
