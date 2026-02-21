@@ -262,6 +262,71 @@ WhatsApp is not included in the default build — enable it with `-Dwith_whatsap
 
 See [`docs/whatsapp.md`](docs/whatsapp.md) for credentials setup and [`docs/reverse-proxy.md`](docs/reverse-proxy.md) for proxy configuration.
 
+## Docker
+
+Pre-built images are not published; build from source with:
+
+```sh
+docker build -t ptrclaw .
+```
+
+The multi-stage build compiles ptrclaw in an Ubuntu 22.04 environment (clang + lld + OpenSSL) and copies the binary into a minimal `debian:bookworm-slim` runtime image. The container runs as a non-root `ptrclaw` user.
+
+### Config inside the container
+
+Config is read from `/home/ptrclaw/.ptrclaw/config.json`. Supply it one of two ways:
+
+**Mount a host directory:**
+
+```sh
+docker run -it --rm \
+  -v "$HOME/.ptrclaw:/home/ptrclaw/.ptrclaw:ro" \
+  ptrclaw
+```
+
+**Pass environment variables directly (no config file needed):**
+
+```sh
+docker run -it --rm \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
+  ptrclaw
+```
+
+### Single-message mode
+
+```sh
+docker run --rm \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
+  ptrclaw -m "Summarise the Anthropic AUP"
+```
+
+### Telegram bot
+
+```sh
+docker run -d --restart unless-stopped \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
+  -e TELEGRAM_BOT_TOKEN=123456:ABC-DEF... \
+  ptrclaw --channel telegram
+```
+
+### docker-compose
+
+`docker-compose.yml` defines three services: `ptrclaw` (interactive CLI), `telegram`, and `whatsapp`. Copy your values into a `.env` file and start the service you need:
+
+```sh
+# .env
+ANTHROPIC_API_KEY=sk-ant-...
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+```
+
+```sh
+docker compose up ptrclaw          # interactive REPL
+docker compose up -d telegram      # Telegram bot (detached)
+docker compose up -d whatsapp      # WhatsApp bot (detached)
+```
+
+The `ptrclaw` service mounts `~/.ptrclaw` from the host by default. Override with `PTRCLAW_CONFIG_DIR=/path/to/config`.
+
 ## Usage
 
 ### Interactive REPL
