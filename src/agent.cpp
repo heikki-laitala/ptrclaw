@@ -243,10 +243,6 @@ std::string Agent::process(const std::string& user_message) {
             for (const auto& entry : parsed.entries) {
                 memory_->store(entry.first, entry.second, MemoryCategory::Core, "");
             }
-            // Clean up legacy soul keys from old format
-            for (const char* key : {"soul:vibe", "soul:boundaries", "soul:preferences"}) {
-                memory_->forget(key);
-            }
             // Strip <soul> block from visible response
             final_content.erase(parsed.block_start,
                                 parsed.block_end - parsed.block_start);
