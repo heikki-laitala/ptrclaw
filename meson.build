@@ -90,7 +90,10 @@ if opt_telegram
   optional_sources += files('src/channels/telegram.cpp')
 endif
 if opt_whatsapp
-  optional_sources += files('src/channels/whatsapp.cpp')
+  optional_sources += files(
+    'src/channels/whatsapp.cpp',
+    'src/channels/whatsapp_server.cpp',
+  )
 endif
 if opt_tools
   optional_sources += files(
@@ -165,7 +168,10 @@ if opt_telegram
   optional_test_sources += files('tests/test_telegram.cpp')
 endif
 if opt_whatsapp
-  optional_test_sources += files('tests/test_whatsapp.cpp')
+  optional_test_sources += files(
+    'tests/test_whatsapp.cpp',
+    'tests/test_whatsapp_webhook.cpp',
+  )
 endif
 # test_providers.cpp tests all five providers in a single file
 if opt_anthropic and opt_openai and opt_ollama and opt_openrouter and opt_compatible

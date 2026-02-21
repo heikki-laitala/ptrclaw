@@ -2,6 +2,8 @@
 #include "plugin.hpp"
 #include "util.hpp"
 #include <nlohmann/json.hpp>
+#include <chrono>
+#include <iostream>
 
 static ptrclaw::ChannelRegistrar reg_whatsapp("whatsapp",
     [](const ptrclaw::Config& config, ptrclaw::HttpClient& http)
@@ -11,11 +13,14 @@ static ptrclaw::ChannelRegistrar reg_whatsapp("whatsapp",
         }
         auto& wc = *config.channels.whatsapp;
         ptrclaw::WhatsAppConfig wa_cfg;
-        wa_cfg.access_token = wc.access_token;
-        wa_cfg.phone_number_id = wc.phone_number_id;
-        wa_cfg.verify_token = wc.verify_token;
-        wa_cfg.app_secret = wc.app_secret;
-        wa_cfg.allow_from = wc.allow_from;
+        wa_cfg.access_token     = wc.access_token;
+        wa_cfg.phone_number_id  = wc.phone_number_id;
+        wa_cfg.verify_token     = wc.verify_token;
+        wa_cfg.app_secret       = wc.app_secret;
+        wa_cfg.allow_from       = wc.allow_from;
+        wa_cfg.webhook_listen   = wc.webhook_listen;
+        wa_cfg.webhook_secret   = wc.webhook_secret;
+        wa_cfg.webhook_max_body = wc.webhook_max_body;
         return std::make_unique<ptrclaw::WhatsAppChannel>(wa_cfg, http);
     });
 
@@ -71,6 +76,88 @@ void WhatsAppChannel::send_message(const std::string& target, const std::string&
                 {"Authorization", "Bearer " + config_.access_token}},
                30);
 }
+
+// ── Webhook server mode ───────────────────────────────────────────────────────
+
+bool WhatsAppChannel::supports_polling() const {
+    return !config_.webhook_listen.empty();
+}
+
+void WhatsAppChannel::initialize() {
+    if (config_.webhook_listen.empty()) return;
+
+    server_ = std::make_unique<WhatsAppWebhookServer>(
+        config_.webhook_listen,
+        config_.webhook_max_body,
+        [this](const WebhookRequest& req) -> WebhookResponse {
+            return handle_webhook_request(req);
+        });
+
+    std::string error;
+    if (!server_->start(error)) {
+        throw std::runtime_error("WhatsApp webhook server: " + error);
+    }
+    std::cerr << "[whatsapp] Webhook server listening on " << config_.webhook_listen << "\n";
+}
+
+std::vector<ChannelMessage> WhatsAppChannel::poll_updates() {
+    std::vector<ChannelMessage> result;
+    std::unique_lock<std::mutex> lock(queue_mutex_);
+    if (message_queue_.empty()) {
+        queue_cv_.wait_for(lock, std::chrono::milliseconds(100));
+    }
+    result.swap(message_queue_);
+    return result;
+}
+
+WebhookResponse WhatsAppChannel::handle_webhook_request(const WebhookRequest& req) {
+    if (req.path != "/webhook") {
+        return {404, "text/plain", "Not Found"};
+    }
+
+    if (req.method == "GET") {
+        // Meta webhook verification handshake
+        if (req.query_param("hub.mode") == "subscribe" &&
+            !config_.verify_token.empty() &&
+            req.query_param("hub.verify_token") == config_.verify_token) {
+            return {200, "text/plain", req.query_param("hub.challenge")};
+        }
+        return {403, "text/plain", "Forbidden"};
+    }
+
+    if (req.method == "POST") {
+        // Enforce shared secret when configured (proxy-to-local trust)
+        if (!config_.webhook_secret.empty()) {
+            auto it = req.headers.find("x-webhook-secret");
+            if (it == req.headers.end() || it->second != config_.webhook_secret) {
+                return {403, "text/plain", "Forbidden"};
+            }
+        }
+
+        // Parse payload and push authorised text messages into the queue.
+        auto parsed = parse_webhook_payload(req.body);
+        if (!parsed.empty()) {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            for (auto& msg : parsed) {
+                ChannelMessage cm;
+                cm.id          = std::to_string(msg.timestamp) + "_" + msg.sender;
+                cm.sender      = msg.sender;
+                cm.content     = msg.content;
+                cm.channel     = "whatsapp";
+                cm.timestamp   = msg.timestamp;
+                cm.reply_target = msg.sender;
+                message_queue_.push_back(std::move(cm));
+            }
+            queue_cv_.notify_one();
+        }
+
+        return {200, "application/json", R"({"status":"ok"})"};
+    }
+
+    return {405, "text/plain", "Method Not Allowed"};
+}
+
+// ── Webhook payload parser ────────────────────────────────────────────────────
 
 std::vector<WhatsAppParsedMessage> WhatsAppChannel::parse_webhook_payload(
         const std::string& payload) const {

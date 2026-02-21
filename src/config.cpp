@@ -146,6 +146,12 @@ Config Config::load() {
                     if (p.is_string()) wc.allow_from.push_back(p.get<std::string>());
                 }
             }
+            if (w.contains("webhook_listen") && w["webhook_listen"].is_string())
+                wc.webhook_listen = w["webhook_listen"].get<std::string>();
+            if (w.contains("webhook_secret") && w["webhook_secret"].is_string())
+                wc.webhook_secret = w["webhook_secret"].get<std::string>();
+            if (w.contains("webhook_max_body") && w["webhook_max_body"].is_number_unsigned())
+                wc.webhook_max_body = w["webhook_max_body"].get<uint32_t>();
             if (!wc.access_token.empty() && !wc.phone_number_id.empty())
                 cfg.channels.whatsapp = std::move(wc);
         }
@@ -210,6 +216,16 @@ Config Config::load() {
         if (!cfg.channels.whatsapp)
             cfg.channels.whatsapp = WhatsAppChannelConfig{};
         cfg.channels.whatsapp->verify_token = v;
+    }
+    if (const char* v = std::getenv("WHATSAPP_WEBHOOK_LISTEN")) {
+        if (!cfg.channels.whatsapp)
+            cfg.channels.whatsapp = WhatsAppChannelConfig{};
+        cfg.channels.whatsapp->webhook_listen = v;
+    }
+    if (const char* v = std::getenv("WHATSAPP_WEBHOOK_SECRET")) {
+        if (!cfg.channels.whatsapp)
+            cfg.channels.whatsapp = WhatsAppChannelConfig{};
+        cfg.channels.whatsapp->webhook_secret = v;
     }
 
     return cfg;

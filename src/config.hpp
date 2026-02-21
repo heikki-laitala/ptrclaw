@@ -26,6 +26,10 @@ struct WhatsAppChannelConfig {
     std::string verify_token;
     std::string app_secret;
     std::vector<std::string> allow_from;
+    // Built-in webhook server (for reverse-proxy ingestion)
+    std::string webhook_listen;           // "host:port", e.g. "127.0.0.1:8080"; empty = disabled
+    std::string webhook_secret;           // X-Webhook-Secret header for proxy→local trust
+    uint32_t    webhook_max_body = 65536; // max POST body size in bytes
 };
 
 struct ChannelsConfig {
