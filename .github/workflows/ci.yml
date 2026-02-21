@@ -50,7 +50,7 @@ jobs:
       - name: Coverage
         if: runner.os == 'Linux'
         run: |
-          meson setup builddir-cov --native-file meson-native-linux.ini -Db_coverage=true -Dcatch2:tests=false
+          meson setup builddir-cov -Db_coverage=true -Dcatch2:tests=false
           meson test -C builddir-cov
           gcovr -x --root . builddir-cov --filter src/ > coverage.xml
 
