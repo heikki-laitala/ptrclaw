@@ -126,7 +126,7 @@ std::string build_soul_block(Memory* memory) {
     std::ostringstream ss;
     bool found = false;
     for (const auto& e : entries) {
-        if (e.key.size() > 5 && e.key.substr(0, 5) == "soul:") {
+        if (e.key.size() > 5 && e.key.compare(0, 5, "soul:") == 0) {
             if (!found) {
                 ss << "## Your Identity\n\n"
                    << "You have a persistent soul that defines who you are:\n\n";
@@ -146,8 +146,8 @@ std::string build_soul_block(Memory* memory) {
     return ss.str();
 }
 
-std::vector<std::pair<std::string, std::string>> parse_soul_json(const std::string& text) {
-    std::vector<std::pair<std::string, std::string>> result;
+SoulParseResult parse_soul_json(const std::string& text) {
+    SoulParseResult result;
 
     auto start = text.find("<soul>");
     auto end = text.find("</soul>");
@@ -163,12 +163,17 @@ std::vector<std::pair<std::string, std::string>> parse_soul_json(const std::stri
 
         for (const auto& entry : j) {
             if (!entry.contains("key") || !entry.contains("content")) continue;
-            result.emplace_back(
+            result.entries.emplace_back(
                 entry["key"].get<std::string>(),
                 entry["content"].get<std::string>());
         }
     } catch (...) { // NOLINT(bugprone-empty-catch)
         // Malformed JSON — return empty
+    }
+
+    if (!result.entries.empty()) {
+        result.block_start = start;
+        result.block_end = end + 7; // past </soul>
     }
 
     return result;
