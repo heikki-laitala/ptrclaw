@@ -6,7 +6,7 @@ Optimized for:
 
 - **Minimal binary size** — target: smallest possible static binary. Avoid unnecessary dependencies and abstractions.
 - **Minimal memory footprint** — prefer stack allocation, avoid gratuitous heap use.
-- **Single external dependency** — libcurl only. Everything else is header-only or subproject.
+- **Minimal external dependencies** — libcurl (macOS) or POSIX sockets+OpenSSL (Linux), sqlite3 (optional). Everything else is header-only or subproject.
 
 ## Build & Test
 
@@ -113,7 +113,7 @@ clang-tidy is configured via `.clang-tidy`. The Makefile filters subproject warn
 
 - **Linux**: Uses `clang++` with `lld` linker (required for LTO). See `meson-native-linux.ini`.
 - **macOS**: Uses system `clang++`. Lint needs extra args for stdlib/sysroot (handled by Makefile).
-- **Static builds**: `make build-static` — works on macOS; Linux needs curl transitive deps.
+- **Static builds**: `make build-static` — works on macOS; Linux needs OpenSSL and sqlite3 transitive deps.
 
 ## Anti-Patterns (Do Not)
 
