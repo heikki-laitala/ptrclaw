@@ -32,15 +32,6 @@ struct ChannelsConfig {
     std::optional<WhatsAppChannelConfig> whatsapp;
 };
 
-struct EmbeddingConfig {
-    std::string provider = "none";
-    std::string api_key;
-    std::string model = "text-embedding-3-small";
-    uint32_t dimensions = 1536;
-    double vector_weight = 0.7;
-    double keyword_weight = 0.3;
-};
-
 struct MemoryConfig {
     std::string backend = "none";
     std::string path;
@@ -50,7 +41,6 @@ struct MemoryConfig {
     bool response_cache = false;
     uint32_t cache_ttl = 3600;
     uint32_t cache_max_entries = 100;
-    EmbeddingConfig embeddings;
 };
 
 struct Config {

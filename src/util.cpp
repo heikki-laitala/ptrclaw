@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <random>
 #include <sstream>
@@ -153,6 +155,21 @@ std::string expand_home(const std::string& path) {
         }
     }
     return path;
+}
+
+bool atomic_write_file(const std::string& path, const std::string& content) {
+    auto parent = std::filesystem::path(path).parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent);
+    }
+
+    std::string tmp_path = path + ".tmp";
+    {
+        std::ofstream file(tmp_path, std::ios::trunc);
+        if (!file.is_open()) return false;
+        file << content;
+    }
+    return std::rename(tmp_path.c_str(), path.c_str()) == 0;
 }
 
 } // namespace ptrclaw

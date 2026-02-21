@@ -105,22 +105,6 @@ Config Config::load() {
                     cfg.memory.cache_ttl = m["cache_ttl"].get<uint32_t>();
                 if (m.contains("cache_max_entries") && m["cache_max_entries"].is_number_unsigned())
                     cfg.memory.cache_max_entries = m["cache_max_entries"].get<uint32_t>();
-
-                if (m.contains("embeddings") && m["embeddings"].is_object()) {
-                    auto& e = m["embeddings"];
-                    if (e.contains("provider") && e["provider"].is_string())
-                        cfg.memory.embeddings.provider = e["provider"].get<std::string>();
-                    if (e.contains("api_key") && e["api_key"].is_string())
-                        cfg.memory.embeddings.api_key = e["api_key"].get<std::string>();
-                    if (e.contains("model") && e["model"].is_string())
-                        cfg.memory.embeddings.model = e["model"].get<std::string>();
-                    if (e.contains("dimensions") && e["dimensions"].is_number_unsigned())
-                        cfg.memory.embeddings.dimensions = e["dimensions"].get<uint32_t>();
-                    if (e.contains("vector_weight") && e["vector_weight"].is_number())
-                        cfg.memory.embeddings.vector_weight = e["vector_weight"].get<double>();
-                    if (e.contains("keyword_weight") && e["keyword_weight"].is_number())
-                        cfg.memory.embeddings.keyword_weight = e["keyword_weight"].get<double>();
-                }
             }
         } catch (...) { // NOLINT(bugprone-empty-catch)
             // Config file is malformed — continue with defaults

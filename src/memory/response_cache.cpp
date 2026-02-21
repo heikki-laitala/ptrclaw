@@ -2,7 +2,6 @@
 #include "../util.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
-#include <filesystem>
 #include <algorithm>
 
 namespace ptrclaw {
@@ -148,11 +147,6 @@ void ResponseCache::load() {
 void ResponseCache::save() {
     // Must be called with mutex_ already held.
 
-    auto parent = std::filesystem::path(path_).parent_path();
-    if (!parent.empty()) {
-        std::filesystem::create_directories(parent);
-    }
-
     nlohmann::json j = nlohmann::json::array();
     for (const auto& [key, entry] : entries_) {
         j.push_back({
@@ -163,13 +157,7 @@ void ResponseCache::save() {
         });
     }
 
-    std::string tmp_path = path_ + ".tmp";
-    {
-        std::ofstream file(tmp_path, std::ios::trunc);
-        if (!file.is_open()) return;
-        file << j.dump(2);
-    }
-    std::rename(tmp_path.c_str(), path_.c_str());
+    atomic_write_file(path_, j.dump(2));
 }
 
 } // namespace ptrclaw

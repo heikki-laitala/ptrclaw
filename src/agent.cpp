@@ -22,22 +22,13 @@ Agent::Agent(std::unique_ptr<Provider> provider,
 {
     // Create memory backend from config
     memory_ = create_memory(config_);
+    wire_memory_tools();
 
-    // Wire memory pointer into memory-aware tools
-    if (memory_) {
-        for (auto& tool : tools_) {
-            const auto& name = tool->tool_name();
-            if (name == "memory_store" || name == "memory_recall" || name == "memory_forget") {
-                static_cast<MemoryAwareTool*>(tool.get())->set_memory(memory_.get());
-            }
-        }
-
-        // Create response cache if enabled
-        if (config_.memory.response_cache) {
-            std::string cache_path = expand_home("~/.ptrclaw/response_cache.json");
-            response_cache_ = std::make_unique<ResponseCache>(
-                cache_path, config_.memory.cache_ttl, config_.memory.cache_max_entries);
-        }
+    // Create response cache if enabled
+    if (memory_ && config_.memory.response_cache) {
+        std::string cache_path = expand_home("~/.ptrclaw/response_cache.json");
+        response_cache_ = std::make_unique<ResponseCache>(
+            cache_path, config_.memory.cache_ttl, config_.memory.cache_max_entries);
     }
 }
 
@@ -282,13 +273,15 @@ std::string Agent::provider_name() const {
 
 void Agent::set_memory(std::unique_ptr<Memory> memory) {
     memory_ = std::move(memory);
-    // Re-wire memory-aware tools
-    if (memory_) {
-        for (auto& tool : tools_) {
-            const auto& name = tool->tool_name();
-            if (name == "memory_store" || name == "memory_recall" || name == "memory_forget") {
-                static_cast<MemoryAwareTool*>(tool.get())->set_memory(memory_.get());
-            }
+    wire_memory_tools();
+}
+
+void Agent::wire_memory_tools() {
+    if (!memory_) return;
+    for (auto& tool : tools_) {
+        const auto& name = tool->tool_name();
+        if (name == "memory_store" || name == "memory_recall" || name == "memory_forget") {
+            static_cast<MemoryAwareTool*>(tool.get())->set_memory(memory_.get());
         }
     }
 }

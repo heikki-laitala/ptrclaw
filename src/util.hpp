@@ -35,4 +35,7 @@ uint32_t estimate_tokens(const std::string& text);
 // Expand ~ to home directory
 std::string expand_home(const std::string& path);
 
+// Atomic file write: create parent dirs, write to .tmp, rename into place
+bool atomic_write_file(const std::string& path, const std::string& content);
+
 } // namespace ptrclaw

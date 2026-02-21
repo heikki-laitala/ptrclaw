@@ -27,5 +27,3 @@ option('with_sqlite_memory', type: 'boolean', value: false,
        description: 'Build SQLite memory backend (requires sqlite3)')
 option('with_memory_tools', type: 'boolean', value: true,
        description: 'Build memory tools (memory_store, memory_recall, memory_forget)')
-option('with_embeddings', type: 'boolean', value: false,
-       description: 'Build vector embedding support (OpenAI-compatible API)')

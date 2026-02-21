@@ -104,6 +104,45 @@ void SqliteMemory::init_schema() {
     sqlite3_exec(db_, trigger_update, nullptr, nullptr, nullptr);
 }
 
+// Run a recall query: prepare, bind text params + limit, step, collect MemoryEntry results.
+// score_col is the 0-based column index for score, or -1 for no score column.
+// negate_score flips the sign (for bm25 which returns negative values).
+static std::vector<MemoryEntry> run_recall_query(
+    sqlite3* db, const std::string& sql,
+    const std::vector<std::string>& text_params,
+    int limit, int score_col, bool negate_score) {
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) {
+        return {};
+    }
+
+    int col = 1;
+    for (const auto& p : text_params) {
+        sqlite3_bind_text(g.stmt, col++, p.c_str(), -1, SQLITE_TRANSIENT);
+    }
+    sqlite3_bind_int(g.stmt, col, limit);
+
+    std::vector<MemoryEntry> results;
+    int rc = sqlite3_step(g.stmt);
+    while (rc == SQLITE_ROW) {
+        MemoryEntry entry;
+        if (auto* v = sqlite3_column_text(g.stmt, 0)) entry.id         = reinterpret_cast<const char*>(v);
+        if (auto* v = sqlite3_column_text(g.stmt, 1)) entry.key        = reinterpret_cast<const char*>(v);
+        if (auto* v = sqlite3_column_text(g.stmt, 2)) entry.content    = reinterpret_cast<const char*>(v);
+        if (auto* v = sqlite3_column_text(g.stmt, 3)) entry.category   = category_from_string(reinterpret_cast<const char*>(v));
+        entry.timestamp  = static_cast<uint64_t>(sqlite3_column_int64(g.stmt, 4));
+        if (auto* v = sqlite3_column_text(g.stmt, 5)) entry.session_id = reinterpret_cast<const char*>(v);
+        if (score_col >= 0) {
+            double s = sqlite3_column_double(g.stmt, score_col);
+            entry.score = negate_score ? -s : s;
+        }
+        results.push_back(std::move(entry));
+        rc = sqlite3_step(g.stmt);
+    }
+    return results;
+}
+
 // Helper: read a full MemoryEntry from a prepared statement that has selected
 // id, key, content, category, timestamp, session_id (columns 0-5).
 static MemoryEntry entry_from_stmt(sqlite3_stmt* stmt) {
@@ -162,102 +201,40 @@ std::vector<MemoryEntry> SqliteMemory::recall(const std::string& query, uint32_t
                                                std::optional<MemoryCategory> category_filter) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    std::vector<MemoryEntry> results;
+    int lim = static_cast<int>(limit);
 
     // Try FTS5 MATCH first
-    bool fts_ok = false;
-    {
-        std::string fts_sql;
-        if (category_filter) {
-            fts_sql =
-                "SELECT m.id, m.key, m.content, m.category, m.timestamp, m.session_id,"
-                "       bm25(memories_fts) AS score"
-                " FROM memories_fts"
-                " JOIN memories AS m ON memories_fts.rowid = m.rowid"
-                " WHERE memories_fts MATCH ?"
-                "   AND m.category = ?"
-                " ORDER BY bm25(memories_fts)"
-                " LIMIT ?;";
-        } else {
-            fts_sql =
-                "SELECT m.id, m.key, m.content, m.category, m.timestamp, m.session_id,"
-                "       bm25(memories_fts) AS score"
-                " FROM memories_fts"
-                " JOIN memories AS m ON memories_fts.rowid = m.rowid"
-                " WHERE memories_fts MATCH ?"
-                " ORDER BY bm25(memories_fts)"
-                " LIMIT ?;";
-        }
-
-        StmtGuard g;
-        if (sqlite3_prepare_v2(db_, fts_sql.c_str(), -1, &g.stmt, nullptr) == SQLITE_OK) {
-            int col = 1;
-            sqlite3_bind_text(g.stmt, col++, query.c_str(), -1, SQLITE_STATIC);
-            if (category_filter) {
-                std::string cat = category_to_string(*category_filter);
-                sqlite3_bind_text(g.stmt, col++, cat.c_str(), -1, SQLITE_TRANSIENT);
-            }
-            sqlite3_bind_int(g.stmt, col, static_cast<int>(limit));
-
-            int rc = sqlite3_step(g.stmt);
-            if (rc == SQLITE_ROW || rc == SQLITE_DONE) {
-                fts_ok = true;
-                while (rc == SQLITE_ROW) {
-                    MemoryEntry entry = entry_from_stmt(g.stmt);
-                    // bm25 returns negative values; negate for a positive score
-                    entry.score = -sqlite3_column_double(g.stmt, 6);
-                    results.push_back(std::move(entry));
-                    rc = sqlite3_step(g.stmt);
-                }
-            }
-        }
+    std::string fts_sql =
+        "SELECT m.id, m.key, m.content, m.category, m.timestamp, m.session_id,"
+        "       bm25(memories_fts) AS score"
+        " FROM memories_fts"
+        " JOIN memories AS m ON memories_fts.rowid = m.rowid"
+        " WHERE memories_fts MATCH ?";
+    std::vector<std::string> fts_params = {query};
+    if (category_filter) {
+        fts_sql += " AND m.category = ?";
+        fts_params.push_back(category_to_string(*category_filter));
     }
+    fts_sql += " ORDER BY bm25(memories_fts) LIMIT ?;";
 
-    if (!fts_ok || results.empty()) {
-        results.clear();
+    auto results = run_recall_query(db_, fts_sql, fts_params, lim, 6, true);
 
-        // Fall back to LIKE search on key and content
-        std::string like_pat = "%" + query + "%";
-        std::string like_sql;
-        if (category_filter) {
-            like_sql =
-                "SELECT id, key, content, category, timestamp, session_id"
-                " FROM memories"
-                " WHERE (key LIKE ? OR content LIKE ?)"
-                "   AND category = ?"
-                " ORDER BY timestamp DESC"
-                " LIMIT ?;";
-        } else {
-            like_sql =
-                "SELECT id, key, content, category, timestamp, session_id"
-                " FROM memories"
-                " WHERE key LIKE ? OR content LIKE ?"
-                " ORDER BY timestamp DESC"
-                " LIMIT ?;";
-        }
+    if (!results.empty()) return results;
 
-        StmtGuard g;
-        if (sqlite3_prepare_v2(db_, like_sql.c_str(), -1, &g.stmt, nullptr) == SQLITE_OK) {
-            int col = 1;
-            sqlite3_bind_text(g.stmt, col++, like_pat.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(g.stmt, col++, like_pat.c_str(), -1, SQLITE_TRANSIENT);
-            if (category_filter) {
-                std::string cat = category_to_string(*category_filter);
-                sqlite3_bind_text(g.stmt, col++, cat.c_str(), -1, SQLITE_TRANSIENT);
-            }
-            sqlite3_bind_int(g.stmt, col, static_cast<int>(limit));
-
-            int rc = sqlite3_step(g.stmt);
-            while (rc == SQLITE_ROW) {
-                MemoryEntry entry = entry_from_stmt(g.stmt);
-                entry.score = 1.0;
-                results.push_back(std::move(entry));
-                rc = sqlite3_step(g.stmt);
-            }
-        }
+    // Fall back to LIKE search on key and content
+    std::string like_pat = "%" + query + "%";
+    std::string like_sql =
+        "SELECT id, key, content, category, timestamp, session_id"
+        " FROM memories"
+        " WHERE (key LIKE ? OR content LIKE ?)";
+    std::vector<std::string> like_params = {like_pat, like_pat};
+    if (category_filter) {
+        like_sql += " AND category = ?";
+        like_params.push_back(category_to_string(*category_filter));
     }
+    like_sql += " ORDER BY timestamp DESC LIMIT ?;";
 
-    return results;
+    return run_recall_query(db_, like_sql, like_params, lim, -1, false);
 }
 
 std::optional<MemoryEntry> SqliteMemory::get(const std::string& key) {

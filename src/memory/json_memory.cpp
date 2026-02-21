@@ -4,7 +4,6 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <algorithm>
-#include <filesystem>
 #include <cctype>
 
 static ptrclaw::MemoryRegistrar reg_json("json",
@@ -48,12 +47,6 @@ void JsonMemory::load() {
 }
 
 void JsonMemory::save() {
-    // Ensure parent directory exists
-    auto parent = std::filesystem::path(path_).parent_path();
-    if (!parent.empty()) {
-        std::filesystem::create_directories(parent);
-    }
-
     nlohmann::json j = nlohmann::json::array();
     for (const auto& entry : entries_) {
         j.push_back({
@@ -66,14 +59,7 @@ void JsonMemory::save() {
         });
     }
 
-    // Atomic write: write to temp, then rename
-    std::string tmp_path = path_ + ".tmp";
-    {
-        std::ofstream file(tmp_path, std::ios::trunc);
-        if (!file.is_open()) return;
-        file << j.dump(2);
-    }
-    std::rename(tmp_path.c_str(), path_.c_str());
+    atomic_write_file(path_, j.dump(2));
 }
 
 static std::string to_lower(const std::string& s) {

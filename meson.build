@@ -39,7 +39,6 @@ opt_tools      = get_option('with_tools')
 opt_memory        = get_option('with_memory')
 opt_sqlite_memory = get_option('with_sqlite_memory')
 opt_memory_tools  = get_option('with_memory_tools') and opt_memory
-opt_embeddings    = get_option('with_embeddings') and opt_memory
 
 # sse.cpp is shared by anthropic and openai streaming
 opt_sse = opt_anthropic or opt_openai
@@ -120,13 +119,6 @@ if opt_memory_tools
     'src/tools/memory_forget.cpp',
   )
 endif
-if opt_embeddings
-  optional_sources += files(
-    'src/memory/embeddings.cpp',
-    'src/memory/vector.cpp',
-  )
-endif
-
 lib_sources = core_sources + optional_sources
 
 ptrclaw_lib = static_library('ptrclaw_lib', lib_sources,
@@ -190,10 +182,6 @@ endif
 if opt_memory_tools
   optional_test_sources += files('tests/test_memory_tools.cpp')
 endif
-if opt_embeddings
-  optional_test_sources += files('tests/test_embeddings.cpp')
-endif
-
 test_sources = core_test_sources + optional_test_sources
 
 test_exe = executable('ptrclaw_tests', test_sources,
@@ -234,10 +222,6 @@ endif
 if opt_sqlite_memory
   memory_features += 'sqlite'
 endif
-if opt_embeddings
-  memory_features += 'embeddings'
-endif
-
 summary({
   'Providers': providers.length() > 0 ? ', '.join(providers) : 'none',
   'Channels':  channels.length() > 0  ? ', '.join(channels)  : 'none',
