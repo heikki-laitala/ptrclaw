@@ -16,6 +16,7 @@ public:
     ChatResponse next_response;
     std::vector<ChatMessage> last_messages;
     int chat_call_count = 0;
+    std::string simple_response = "simple response";
 
     ChatResponse chat(const std::vector<ChatMessage>& messages,
                       const std::vector<ToolSpec>&,
@@ -30,7 +31,7 @@ public:
                             const std::string&,
                             const std::string&,
                             double) override {
-        return "simple response";
+        return simple_response;
     }
 
     bool supports_native_tools() const override { return true; }
@@ -316,6 +317,45 @@ TEST_CASE("Agent: re-hatch removes legacy keys", "[hatch]") {
     std::filesystem::remove(path);
 }
 
+TEST_CASE("Agent: hatching synthesizes user knowledge from conversation", "[hatch]") {
+    auto provider = std::make_unique<HatchMockProvider>();
+    auto* mock = provider.get();
+
+    std::string soul_response =
+        "<soul>\n"
+        "[{\"key\":\"soul:identity\",\"content\":\"Name: Aria.\"},"
+        "{\"key\":\"soul:user\",\"content\":\"Name: Henri.\"},"
+        "{\"key\":\"soul:philosophy\",\"content\":\"Be genuine.\"}]\n"
+        "</soul>";
+    mock->next_response.content = soul_response;
+
+    // Synthesis will extract this from the hatching conversation
+    mock->simple_response =
+        R"([{"key":"user-likes-cpp","content":"User enjoys C++ and systems programming","category":"knowledge"}])";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    std::string path = temp_memory_path("soul_synth");
+    agent.set_memory(std::make_unique<JsonMemory>(path));
+    agent.start_hatch();
+
+    agent.process("I love C++ and systems programming");
+
+    // Soul entries stored
+    REQUIRE(agent.memory()->get("soul:identity").has_value());
+
+    // Synthesized knowledge from user's hatching messages
+    auto note = agent.memory()->get("user-likes-cpp");
+    REQUIRE(note.has_value());
+    REQUIRE(note.value_or(MemoryEntry{}).content == "User enjoys C++ and systems programming");
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("Agent: hatching continues when no soul block in response", "[hatch]") {
     auto provider = std::make_unique<HatchMockProvider>();
     auto* mock = provider.get();
@@ -355,4 +395,97 @@ TEST_CASE("build_system_prompt: no soul block when memory is null", "[hatch]") {
     std::vector<std::unique_ptr<Tool>> tools;
     auto result = build_system_prompt(tools, false, false, nullptr);
     REQUIRE(result.find("Your Identity") == std::string::npos);
+}
+
+// ── Learned traits in soul block ────────────────────────────────
+
+TEST_CASE("build_soul_block: renders learned traits section", "[hatch]") {
+    std::string path = temp_memory_path("soul_traits");
+    auto mem = std::make_unique<JsonMemory>(path);
+
+    mem->store("soul:identity", "Name: Aria.", MemoryCategory::Core, "");
+    mem->store("personality:prefers-examples", "User learns best through concrete code examples", MemoryCategory::Core, "");
+    mem->store("personality:dislikes-verbosity", "User prefers concise responses", MemoryCategory::Core, "");
+
+    std::string block = build_soul_block(mem.get());
+    REQUIRE(block.find("Learned traits:") != std::string::npos);
+    REQUIRE(block.find("User learns best through concrete code examples") != std::string::npos);
+    REQUIRE(block.find("User prefers concise responses") != std::string::npos);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("build_soul_block: caps learned traits at 5", "[hatch]") {
+    std::string path = temp_memory_path("soul_traits_cap");
+    auto mem = std::make_unique<JsonMemory>(path);
+
+    mem->store("soul:identity", "Name: Aria.", MemoryCategory::Core, "");
+    for (int i = 0; i < 7; i++) {
+        mem->store("personality:trait-" + std::to_string(i),
+                   "Trait number " + std::to_string(i), MemoryCategory::Core, "");
+    }
+
+    std::string block = build_soul_block(mem.get());
+    REQUIRE(block.find("Learned traits:") != std::string::npos);
+
+    // Count bullet points in learned traits section
+    size_t pos = block.find("Learned traits:");
+    size_t end = block.find("\n\n", pos);
+    std::string section = block.substr(pos, end - pos);
+    int count = 0;
+    size_t search = 0;
+    while ((search = section.find("\n- ", search)) != std::string::npos) {
+        count++;
+        search++;
+    }
+    REQUIRE(count == 5);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("build_soul_block: learned traits sorted by recency", "[hatch]") {
+    std::string path = temp_memory_path("soul_traits_order");
+    auto mem = std::make_unique<JsonMemory>(path);
+
+    mem->store("soul:identity", "Name: Aria.", MemoryCategory::Core, "");
+    // Use snapshot_import to set explicit timestamps for deterministic ordering
+    mem->snapshot_import(R"([
+        {"key":"personality:old","content":"Old trait","category":"core","timestamp":1000},
+        {"key":"personality:mid","content":"Mid trait","category":"core","timestamp":2000},
+        {"key":"personality:new","content":"New trait","category":"core","timestamp":3000}
+    ])");
+
+    std::string block = build_soul_block(mem.get());
+    // Most recent (highest timestamp) should appear first
+    size_t pos_new = block.find("New trait");
+    size_t pos_mid = block.find("Mid trait");
+    size_t pos_old = block.find("Old trait");
+    REQUIRE(pos_new != std::string::npos);
+    REQUIRE(pos_mid != std::string::npos);
+    REQUIRE(pos_old != std::string::npos);
+    REQUIRE(pos_new < pos_mid);
+    REQUIRE(pos_mid < pos_old);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("build_soul_block: learned traits coexist with three soul sections", "[hatch]") {
+    std::string path = temp_memory_path("soul_traits_combined");
+    auto mem = std::make_unique<JsonMemory>(path);
+
+    mem->store("soul:identity", "Name: Aria.", MemoryCategory::Core, "");
+    mem->store("soul:user", "Name: Henri.", MemoryCategory::Core, "");
+    mem->store("soul:philosophy", "Be genuine.", MemoryCategory::Core, "");
+    mem->store("personality:likes-humor", "User responds well to light humor", MemoryCategory::Core, "");
+
+    std::string block = build_soul_block(mem.get());
+    REQUIRE(block.find("Your Identity") != std::string::npos);
+    REQUIRE(block.find("About you (the AI):") != std::string::npos);
+    REQUIRE(block.find("About your human:") != std::string::npos);
+    REQUIRE(block.find("Your philosophy:") != std::string::npos);
+    REQUIRE(block.find("Learned traits:") != std::string::npos);
+    REQUIRE(block.find("User responds well to light humor") != std::string::npos);
+    REQUIRE(block.find("Embody this persona") != std::string::npos);
+
+    std::filesystem::remove(path);
 }

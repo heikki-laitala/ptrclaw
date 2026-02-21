@@ -256,6 +256,10 @@ std::string Agent::process(const std::string& user_message) {
             }
             if (!final_content.empty()) final_content += "\n\n";
             final_content += "Soul hatched! Your assistant's identity has been saved.";
+            // Synthesize knowledge from hatching conversation (user interests, context)
+            turns_since_synthesis_ = config_.memory.synthesis_interval;
+            maybe_synthesize();
+
             hatching_ = false;
             history_.clear();
             system_prompt_injected_ = false;

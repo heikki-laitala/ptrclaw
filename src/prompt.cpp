@@ -1,5 +1,6 @@
 #include "prompt.hpp"
 #include "util.hpp"
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <sstream>
@@ -48,6 +49,10 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
            << "When storing knowledge, prefer specific descriptive keys and link to related existing entries.\n";
     }
 
+    ss << "\nAdapt your communication style to the conversation context. "
+       << "Be precise and focused when troubleshooting, "
+       << "match the user's energy in casual conversation.\n";
+
     ss << "\nAlways explain what you're doing before using tools.\n";
 
     return ss.str();
@@ -64,7 +69,13 @@ std::string build_synthesis_prompt(const std::vector<ChatMessage>& history,
        << "- Category must be \"core\" (identity/behavior) or \"knowledge\" (factual).\n"
        << "- Suggest links to existing entries when related.\n"
        << "- Prefer fewer high-quality notes over many trivial ones.\n"
-       << "- Do not extract greetings, acknowledgments, or meta-conversation.\n\n"
+       << "- Do not extract greetings, acknowledgments, or meta-conversation.\n"
+       << "- Extract communication patterns as \"personality:\" prefixed core entries\n"
+       << "  (e.g., \"personality:responds-to-humor\", \"personality:prefers-code-examples\").\n"
+       << "  These capture how the user likes to communicate. At most one per synthesis.\n"
+       << "- Extract situational style observations as \"style:\" prefixed knowledge entries\n"
+       << "  (e.g., \"style:debugging-prefers-terse\", \"style:casual-enjoys-banter\").\n"
+       << "  These capture context-specific tone preferences. At most one per synthesis.\n\n"
        << "Output a JSON array: [{\"key\":\"...\",\"content\":\"...\",\"category\":\"...\",\"links\":[\"...\"]}]\n"
        << "Output ONLY the JSON array, no other text.\n\n";
 
@@ -146,6 +157,24 @@ std::string build_soul_block(Memory* memory) {
         if (boundaries) ss << "Boundaries: " << boundaries->content << "\n";
         if (preferences) ss << "Preferences: " << preferences->content << "\n";
         if (vibe || boundaries || preferences) ss << "\n";
+    }
+
+    auto core_entries = memory->list(MemoryCategory::Core, 50);
+    std::vector<size_t> trait_idx;
+    for (size_t i = 0; i < core_entries.size(); ++i) {
+        if (core_entries[i].key.rfind("personality:", 0) == 0) {
+            trait_idx.push_back(i);
+        }
+    }
+    if (!trait_idx.empty()) {
+        std::sort(trait_idx.begin(), trait_idx.end(),
+                  [&](size_t a, size_t b) { return core_entries[a].timestamp > core_entries[b].timestamp; });
+        if (trait_idx.size() > 5) trait_idx.resize(5);
+        ss << "Learned traits:\n";
+        for (size_t idx : trait_idx) {
+            ss << "- " << core_entries[idx].content << "\n";
+        }
+        ss << "\n";
     }
 
     ss << "Embody this persona in all interactions. Avoid generic chatbot responses.\n";

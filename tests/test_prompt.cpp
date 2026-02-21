@@ -64,3 +64,9 @@ TEST_CASE("build_system_prompt: multiple tools listed", "[prompt]") {
     auto second = result.find("- test_tool", first + 1);
     REQUIRE(second != std::string::npos);
 }
+
+TEST_CASE("build_system_prompt: includes style adaptation instruction", "[prompt]") {
+    std::vector<std::unique_ptr<Tool>> tools;
+    auto result = build_system_prompt(tools, false);
+    REQUIRE(result.find("Adapt your communication style") != std::string::npos);
+}
