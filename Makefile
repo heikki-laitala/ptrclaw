@@ -23,7 +23,7 @@ ifeq ($(shell uname),Darwin)
 	brew install meson llvm gcovr
 else
 	sudo apt-get update
-	sudo apt-get install -y g++ meson ninja-build libssl-dev libcurl4-openssl-dev clang-tidy lld gcovr
+	sudo apt-get install -y g++ meson ninja-build libssl-dev clang-tidy lld gcovr
 endif
 
 setup:
