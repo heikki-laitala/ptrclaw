@@ -10,8 +10,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  test:
-    name: Test (${{ matrix.os }})
+  build-test:
+    name: Build & Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -23,13 +23,14 @@ jobs:
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y g++ meson ninja-build libssl-dev libsqlite3-dev clang-tidy lld gcovr
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: g++ meson ninja-build libssl-dev libsqlite3-dev lld
+          version: 1.0
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install meson llvm gcovr sqlite3
+        run: brew install meson sqlite3
 
       - name: Cache build
         uses: actions/cache@v4
@@ -43,30 +44,6 @@ jobs:
 
       - name: Test
         run: make test
-
-      - name: Lint
-        run: make lint
-
-      - name: Coverage
-        if: runner.os == 'Linux'
-        run: |
-          meson setup builddir-cov -Db_coverage=true -Dcatch2:tests=false
-          meson test -C builddir-cov
-          gcovr -x --root . builddir-cov --filter src/ > coverage.xml
-
-      - name: Coverage report
-        if: runner.os == 'Linux'
-        uses: irongut/CodeCoverageSummary@v1.3.0
-        with:
-          filename: coverage.xml
-          format: markdown
-          output: both
-
-      - name: Add coverage to PR
-        if: runner.os == 'Linux' && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          path: code-coverage-results.md
 
       - name: Job summary
         if: always()
@@ -96,3 +73,90 @@ jobs:
         with:
           name: ptrclaw-${{ matrix.os == 'ubuntu-latest' && 'linux-x86_64' || 'macos-aarch64' }}
           path: builddir/ptrclaw
+
+  lint:
+    name: Lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: g++ meson ninja-build libssl-dev libsqlite3-dev clang-tidy lld
+          version: 1.0
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install meson llvm sqlite3
+
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: builddir
+          key: meson-${{ matrix.os }}-${{ hashFiles('meson.build', 'src/**/*.cpp', 'src/**/*.hpp') }}
+          restore-keys: meson-${{ matrix.os }}-
+
+      - name: Build
+        run: make build
+
+      - name: Lint (changed files on PR)
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin main --depth=1
+          CHANGED=$(git diff --name-only --diff-filter=d origin/main...HEAD -- '*.cpp' '*.hpp' | grep -E '^(src|tests)/' | tr '\n' ' ')
+          if [ -n "$CHANGED" ]; then
+            if [ "$(uname)" = "Darwin" ]; then
+              CLANG_TIDY_EXTRA="-extra-arg=-stdlib=libc++ -extra-arg=-isysroot$(xcrun --show-sdk-path)"
+            else
+              CLANG_TIDY_EXTRA=""
+            fi
+            clang-tidy -p builddir $CLANG_TIDY_EXTRA $CHANGED 2>&1 | grep -v 'warnings generated'
+          else
+            echo "No changed src/tests files to lint"
+          fi
+
+      - name: Lint (all files on main)
+        if: github.event_name == 'push'
+        run: make lint
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: g++ meson ninja-build libssl-dev libsqlite3-dev lld gcovr
+          version: 1.0
+
+      - name: Coverage
+        run: |
+          meson setup builddir-cov --native-file meson-native-linux.ini -Db_coverage=true -Dcatch2:tests=false
+          meson test -C builddir-cov
+          gcovr -x --root . builddir-cov --filter src/ > coverage.xml
+
+      - name: Coverage report
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: coverage.xml
+          format: markdown
+          output: both
+
+      - name: Job summary
+        run: |
+          if [ -f code-coverage-results.md ]; then
+            cat code-coverage-results.md >> $GITHUB_STEP_SUMMARY
+          fi
