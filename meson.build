@@ -35,8 +35,26 @@ opt_telegram   = get_option('with_telegram')
 opt_whatsapp   = get_option('with_whatsapp')
 opt_tools      = get_option('with_tools')
 
+# Memory features
+opt_memory        = get_option('with_memory')
+opt_sqlite_memory = get_option('with_sqlite_memory')
+opt_memory_tools  = get_option('with_memory_tools') and opt_memory
+opt_embeddings    = get_option('with_embeddings') and opt_memory
+
 # sse.cpp is shared by anthropic and openai streaming
 opt_sse = opt_anthropic or opt_openai
+
+# ── Optional dependencies ─────────────────────────────────────
+lib_deps = [http_dep]
+
+if opt_sqlite_memory
+  sqlite3_dep = dependency('sqlite3', required: false)
+  if not sqlite3_dep.found()
+    sqlite3_proj = subproject('sqlite3')
+    sqlite3_dep = sqlite3_proj.get_variable('sqlite3_dep')
+  endif
+  lib_deps += sqlite3_dep
+endif
 
 # ── Core sources (always compiled) ─────────────────────────────
 core_sources = files(
@@ -81,11 +99,39 @@ if opt_tools
   )
 endif
 
+# Memory system
+if opt_memory
+  optional_sources += files(
+    'src/memory.cpp',
+    'src/memory/json_memory.cpp',
+    'src/memory/none_memory.cpp',
+  )
+endif
+if opt_memory and get_option('with_memory')
+  optional_sources += files('src/memory/response_cache.cpp')
+endif
+if opt_sqlite_memory
+  optional_sources += files('src/memory/sqlite_memory.cpp')
+endif
+if opt_memory_tools
+  optional_sources += files(
+    'src/tools/memory_store.cpp',
+    'src/tools/memory_recall.cpp',
+    'src/tools/memory_forget.cpp',
+  )
+endif
+if opt_embeddings
+  optional_sources += files(
+    'src/memory/embeddings.cpp',
+    'src/memory/vector.cpp',
+  )
+endif
+
 lib_sources = core_sources + optional_sources
 
 ptrclaw_lib = static_library('ptrclaw_lib', lib_sources,
   include_directories: inc,
-  dependencies: [http_dep])
+  dependencies: lib_deps)
 
 ptrclaw_dep = declare_dependency(
   link_whole: ptrclaw_lib,
@@ -131,6 +177,22 @@ endif
 if opt_anthropic and opt_openai and opt_ollama and opt_openrouter and opt_compatible
   optional_test_sources += files('tests/test_providers.cpp')
 endif
+if opt_memory
+  optional_test_sources += files(
+    'tests/test_memory.cpp',
+    'tests/test_json_memory.cpp',
+    'tests/test_response_cache.cpp',
+  )
+endif
+if opt_sqlite_memory
+  optional_test_sources += files('tests/test_sqlite_memory.cpp')
+endif
+if opt_memory_tools
+  optional_test_sources += files('tests/test_memory_tools.cpp')
+endif
+if opt_embeddings
+  optional_test_sources += files('tests/test_embeddings.cpp')
+endif
 
 test_sources = core_test_sources + optional_test_sources
 
@@ -165,8 +227,21 @@ if opt_whatsapp
   channels += 'whatsapp'
 endif
 
+memory_features = []
+if opt_memory
+  memory_features += 'json, none'
+endif
+if opt_sqlite_memory
+  memory_features += 'sqlite'
+endif
+if opt_embeddings
+  memory_features += 'embeddings'
+endif
+
 summary({
   'Providers': providers.length() > 0 ? ', '.join(providers) : 'none',
   'Channels':  channels.length() > 0  ? ', '.join(channels)  : 'none',
   'Tools':     opt_tools ? 'file_read, file_write, file_edit, shell' : 'none',
+  'Memory':    memory_features.length() > 0 ? ', '.join(memory_features) : 'none',
+  'Memory tools': opt_memory_tools ? 'memory_store, memory_recall, memory_forget' : 'none',
 }, section: 'Features')

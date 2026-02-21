@@ -32,6 +32,27 @@ struct ChannelsConfig {
     std::optional<WhatsAppChannelConfig> whatsapp;
 };
 
+struct EmbeddingConfig {
+    std::string provider = "none";
+    std::string api_key;
+    std::string model = "text-embedding-3-small";
+    uint32_t dimensions = 1536;
+    double vector_weight = 0.7;
+    double keyword_weight = 0.3;
+};
+
+struct MemoryConfig {
+    std::string backend = "none";
+    std::string path;
+    bool auto_save = false;
+    uint32_t recall_limit = 5;
+    uint32_t hygiene_max_age = 604800;  // 7 days
+    bool response_cache = false;
+    uint32_t cache_ttl = 3600;
+    uint32_t cache_max_entries = 100;
+    EmbeddingConfig embeddings;
+};
+
 struct Config {
     // API keys (from config or env vars)
     std::string anthropic_api_key;
@@ -47,6 +68,7 @@ struct Config {
 
     AgentConfig agent;
     ChannelsConfig channels;
+    MemoryConfig memory;
 
     // Load from ~/.ptrclaw/config.json + env vars
     static Config load();

@@ -32,8 +32,11 @@ make test && make lint   # Both must pass
 ```text
 Agent (agentic loop)
 ├── Provider (LLM API) ── Anthropic, OpenAI, OpenRouter, Ollama, Compatible, Reliable
-├── Tool (actions)     ── file_read, file_write, file_edit, shell
+├── Tool (actions)     ── file_read, file_write, file_edit, shell, memory_store, memory_recall, memory_forget
 ├── Dispatcher         ── XML tool call parsing for non-native providers
+├── Memory (pluggable) ── JsonMemory (file-based), SqliteMemory (FTS5), NoneMemory (no-op)
+│   ├── ResponseCache  ── LLM response deduplication (FNV-1a hash, TTL+LRU)
+│   └── Embeddings     ── Optional vector search (OpenAI-compatible API)
 ├── Session            ── Multi-user session management with idle eviction
 └── Channel (I/O)      ── Telegram (long-polling), WhatsApp (webhooks)
 ```
@@ -45,6 +48,7 @@ Extension points:
 - `src/providers/` — add `<name>.hpp/cpp` implementing `Provider`, self-registers via static `ProviderRegistrar`
 - `src/channels/` — add `<name>.hpp/cpp` implementing `Channel`, self-registers via static `ChannelRegistrar`
 - `src/tools/` — add `<name>.hpp/cpp` implementing `Tool`, self-registers via static `ToolRegistrar`
+- `src/memory/` — add `<name>.hpp/cpp` implementing `Memory`, self-registers via static `MemoryRegistrar`
 - `meson_options.txt` — add a `with_<name>` feature flag, gate the source in `meson.build`
 
 ## Engineering Principles
@@ -79,11 +83,16 @@ Never log secrets or tokens. Validate at system boundaries. Keep network/filesys
 
 | Path | Purpose |
 | ---- | ------- |
-| `src/agent.hpp` | Core agentic loop: prompt injection, tool dispatch, history compaction |
+| `src/agent.hpp` | Core agentic loop: prompt injection, tool dispatch, history compaction, memory integration |
 | `src/provider.hpp` | Provider interface + ChatMessage, ChatResponse, ToolCall types |
 | `src/tool.hpp` | Tool interface + ToolSpec, ToolResult types |
+| `src/memory.hpp` | Memory interface, MemoryEntry, MemoryCategory, MemoryAwareTool base class |
+| `src/memory/json_memory.hpp` | JSON file backend (default, zero deps) |
+| `src/memory/sqlite_memory.hpp` | SQLite+FTS5 backend (optional, requires sqlite3) |
+| `src/memory/response_cache.hpp` | LLM response cache (FNV-1a hash, TTL+LRU eviction) |
+| `src/memory/embeddings.hpp` | Embedding provider interface (OpenAI, Noop) |
 | `src/channel.hpp` | Channel interface + ChannelMessage type |
-| `src/config.hpp` | Config loader (~/.ptrclaw/config.json + env vars) |
+| `src/config.hpp` | Config loader (~/.ptrclaw/config.json + env vars), MemoryConfig |
 | `src/dispatcher.hpp` | XML tool call parsing for non-native providers |
 | `src/session.hpp` | Thread-safe multi-session management |
 | `meson.build` | Build config: static lib + executable + tests, feature-flag gating |

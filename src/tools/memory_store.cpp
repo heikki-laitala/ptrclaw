@@ -1,0 +1,55 @@
+#include "memory_store.hpp"
+#include "../plugin.hpp"
+#include <nlohmann/json.hpp>
+
+static ptrclaw::ToolRegistrar reg_memory_store("memory_store",
+    []() { return std::make_unique<ptrclaw::MemoryStoreTool>(); });
+
+namespace ptrclaw {
+
+ToolResult MemoryStoreTool::execute(const std::string& args_json) {
+    if (!memory_) {
+        return ToolResult{false, "Memory system is not enabled"};
+    }
+
+    nlohmann::json args;
+    try {
+        args = nlohmann::json::parse(args_json);
+    } catch (const std::exception& e) {
+        return ToolResult{false, std::string("Failed to parse arguments: ") + e.what()};
+    }
+
+    if (!args.contains("key") || !args["key"].is_string()) {
+        return ToolResult{false, "Missing required parameter: key"};
+    }
+    if (!args.contains("content") || !args["content"].is_string()) {
+        return ToolResult{false, "Missing required parameter: content"};
+    }
+
+    std::string key = args["key"].get<std::string>();
+    std::string content = args["content"].get<std::string>();
+
+    std::string cat_str = "knowledge";
+    if (args.contains("category") && args["category"].is_string()) {
+        cat_str = args["category"].get<std::string>();
+    }
+    MemoryCategory category = category_from_string(cat_str);
+
+    std::string session_id;
+    if (args.contains("session_id") && args["session_id"].is_string()) {
+        session_id = args["session_id"].get<std::string>();
+    }
+
+    std::string id = memory_->store(key, content, category, session_id);
+    return ToolResult{true, "Stored memory '" + key + "' (id: " + id + ")"};
+}
+
+std::string MemoryStoreTool::description() const {
+    return "Store or update a memory entry for later recall";
+}
+
+std::string MemoryStoreTool::parameters_json() const {
+    return R"json({"type":"object","properties":{"key":{"type":"string","description":"Human-readable key for this memory (unique, upserts on conflict)"},"content":{"type":"string","description":"The content to remember"},"category":{"type":"string","enum":["core","knowledge","conversation"],"description":"Memory category (default: knowledge)"},"session_id":{"type":"string","description":"Optional session ID for scoping"}},"required":["key","content"]})json";
+}
+
+} // namespace ptrclaw

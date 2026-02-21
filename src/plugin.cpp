@@ -1,4 +1,5 @@
 #include "plugin.hpp"
+#include "memory.hpp"
 #include <stdexcept>
 #include <algorithm>
 
@@ -22,6 +23,11 @@ void PluginRegistry::register_tool(const std::string& name, ToolFactory factory)
 void PluginRegistry::register_channel(const std::string& name, ChannelFactory factory) {
     std::lock_guard<std::mutex> lock(mutex_);
     channels_[name] = std::move(factory);
+}
+
+void PluginRegistry::register_memory(const std::string& name, MemoryFactory factory) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    memories_[name] = std::move(factory);
 }
 
 std::unique_ptr<Provider> PluginRegistry::create_provider(const std::string& name,
@@ -100,11 +106,27 @@ bool PluginRegistry::has_channel(const std::string& name) const {
     return channels_.count(name) > 0;
 }
 
+std::unique_ptr<Memory> PluginRegistry::create_memory(const std::string& name,
+                                                       const Config& config) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = memories_.find(name);
+    if (it == memories_.end()) {
+        throw std::invalid_argument("Unknown memory backend: " + name);
+    }
+    return it->second(config);
+}
+
+bool PluginRegistry::has_memory(const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return memories_.count(name) > 0;
+}
+
 void PluginRegistry::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     providers_.clear();
     tools_.clear();
     channels_.clear();
+    memories_.clear();
 }
 
 } // namespace ptrclaw

@@ -2,6 +2,7 @@
 #include "provider.hpp"
 #include "tool.hpp"
 #include "agent.hpp"
+#include "memory.hpp"
 #include "http.hpp"
 #include "channel.hpp"
 #include "plugin.hpp"
@@ -9,6 +10,7 @@
 #include "session.hpp"
 #include "stream_relay.hpp"
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <cstring>
 #include <atomic>
@@ -222,14 +224,51 @@ int main(int argc, char* argv[]) try {
                 std::string new_model = line.substr(7);
                 agent.set_model(new_model);
                 std::cout << "Model set to: " << new_model << "\n";
+            } else if (line == "/memory") {
+                auto* mem = agent.memory();
+                if (!mem || mem->backend_name() == "none") {
+                    std::cout << "Memory: disabled\n";
+                } else {
+                    std::cout << "Memory backend: " << mem->backend_name() << "\n"
+                              << "  Core:         " << mem->count(ptrclaw::MemoryCategory::Core) << " entries\n"
+                              << "  Knowledge:    " << mem->count(ptrclaw::MemoryCategory::Knowledge) << " entries\n"
+                              << "  Conversation: " << mem->count(ptrclaw::MemoryCategory::Conversation) << " entries\n"
+                              << "  Total:        " << mem->count(std::nullopt) << " entries\n";
+                }
+            } else if (line == "/memory export") {
+                auto* mem = agent.memory();
+                if (!mem || mem->backend_name() == "none") {
+                    std::cout << "Memory: disabled\n";
+                } else {
+                    std::cout << mem->snapshot_export() << "\n";
+                }
+            } else if (line.substr(0, 15) == "/memory import ") {
+                auto* mem = agent.memory();
+                if (!mem || mem->backend_name() == "none") {
+                    std::cout << "Memory: disabled\n";
+                } else {
+                    std::string path = line.substr(15);
+                    std::ifstream file(path);
+                    if (!file.is_open()) {
+                        std::cout << "Error: cannot open " << path << "\n";
+                    } else {
+                        std::string content((std::istreambuf_iterator<char>(file)),
+                                             std::istreambuf_iterator<char>());
+                        uint32_t n = mem->snapshot_import(content);
+                        std::cout << "Imported " << n << " entries.\n";
+                    }
+                }
             } else if (line == "/help") {
                 std::cout << "Commands:\n"
-                          << "  /status   Show current status\n"
-                          << "  /model X  Switch to model X\n"
-                          << "  /clear    Clear conversation history\n"
-                          << "  /quit     Exit\n"
-                          << "  /exit     Exit\n"
-                          << "  /help     Show this help\n";
+                          << "  /status          Show current status\n"
+                          << "  /model X         Switch to model X\n"
+                          << "  /clear           Clear conversation history\n"
+                          << "  /memory          Show memory status\n"
+                          << "  /memory export   Export memories as JSON\n"
+                          << "  /memory import P Import memories from JSON file\n"
+                          << "  /quit            Exit\n"
+                          << "  /exit            Exit\n"
+                          << "  /help            Show this help\n";
             } else {
                 std::cout << "Unknown command: " << line << "\n";
             }

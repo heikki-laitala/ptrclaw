@@ -1,4 +1,6 @@
 #include "agent.hpp"
+#include "memory.hpp"
+#include "memory/response_cache.hpp"
 #include "event.hpp"
 #include "event_bus.hpp"
 #include "dispatcher.hpp"
@@ -17,11 +19,32 @@ Agent::Agent(std::unique_ptr<Provider> provider,
     , tools_(std::move(tools))
     , config_(config)
     , model_(config.default_model)
-{}
+{
+    // Create memory backend from config
+    memory_ = create_memory(config_);
+
+    // Wire memory pointer into memory-aware tools
+    if (memory_) {
+        for (auto& tool : tools_) {
+            const auto& name = tool->tool_name();
+            if (name == "memory_store" || name == "memory_recall" || name == "memory_forget") {
+                static_cast<MemoryAwareTool*>(tool.get())->set_memory(memory_.get());
+            }
+        }
+
+        // Create response cache if enabled
+        if (config_.memory.response_cache) {
+            std::string cache_path = expand_home("~/.ptrclaw/response_cache.json");
+            response_cache_ = std::make_unique<ResponseCache>(
+                cache_path, config_.memory.cache_ttl, config_.memory.cache_max_entries);
+        }
+    }
+}
 
 void Agent::inject_system_prompt() {
     bool include_tool_desc = !provider_->supports_native_tools();
-    std::string prompt = build_system_prompt(tools_, include_tool_desc);
+    bool has_memory = memory_ && memory_->backend_name() != "none";
+    std::string prompt = build_system_prompt(tools_, include_tool_desc, has_memory);
     history_.insert(history_.begin(), ChatMessage{Role::System, prompt, {}, {}});
     system_prompt_injected_ = true;
 }
@@ -31,8 +54,10 @@ std::string Agent::process(const std::string& user_message) {
         inject_system_prompt();
     }
 
-    // Append user message
-    history_.push_back(ChatMessage{Role::User, user_message, {}, {}});
+    // Enrich user message with recalled memory context
+    std::string enriched_message = memory_enrich(memory_.get(), user_message,
+                                                  config_.memory.recall_limit);
+    history_.push_back(ChatMessage{Role::User, enriched_message, {}, {}});
 
     // Build tool specs
     std::vector<ToolSpec> tool_specs;
@@ -46,6 +71,20 @@ std::string Agent::process(const std::string& user_message) {
     std::string final_content;
     uint32_t iterations = 0;
     bool stream_started = false;
+
+    // Check response cache before calling provider
+    if (response_cache_) {
+        std::string sys_prompt;
+        if (!history_.empty() && history_[0].role == Role::System) {
+            sys_prompt = history_[0].content;
+        }
+        auto cached = response_cache_->get(model_, sys_prompt, user_message);
+        if (cached) {
+            history_.push_back(ChatMessage{Role::Assistant, *cached, {}, {}});
+            compact_history();
+            return *cached;
+        }
+    }
 
     while (iterations < config_.agent.max_tool_iterations) {
         iterations++;
@@ -187,6 +226,25 @@ std::string Agent::process(const std::string& user_message) {
         event_bus_->publish(ev);
     }
 
+    // Auto-save user+assistant messages to memory if enabled
+    if (memory_ && config_.memory.auto_save && memory_->backend_name() != "none") {
+        memory_->store("msg:" + std::to_string(epoch_seconds()),
+                       user_message, MemoryCategory::Conversation, session_id_);
+        if (!final_content.empty() && final_content != "[Max tool iterations reached]") {
+            memory_->store("reply:" + std::to_string(epoch_seconds()),
+                           final_content, MemoryCategory::Conversation, session_id_);
+        }
+    }
+
+    // Populate response cache
+    if (response_cache_ && !final_content.empty()) {
+        std::string sys_prompt;
+        if (!history_.empty() && history_[0].role == Role::System) {
+            sys_prompt = history_[0].content;
+        }
+        response_cache_->put(model_, sys_prompt, user_message, final_content);
+    }
+
     // Auto-compact if needed
     compact_history();
 
@@ -220,6 +278,23 @@ void Agent::set_provider(std::unique_ptr<Provider> provider) {
 
 std::string Agent::provider_name() const {
     return provider_->provider_name();
+}
+
+void Agent::set_memory(std::unique_ptr<Memory> memory) {
+    memory_ = std::move(memory);
+    // Re-wire memory-aware tools
+    if (memory_) {
+        for (auto& tool : tools_) {
+            const auto& name = tool->tool_name();
+            if (name == "memory_store" || name == "memory_recall" || name == "memory_forget") {
+                static_cast<MemoryAwareTool*>(tool.get())->set_memory(memory_.get());
+            }
+        }
+    }
+}
+
+void Agent::set_response_cache(std::unique_ptr<ResponseCache> cache) {
+    response_cache_ = std::move(cache);
 }
 
 void Agent::compact_history() {
@@ -278,6 +353,11 @@ void Agent::compact_history() {
 
     history_ = std::move(compacted);
     std::cerr << "[compact] History compacted to " << history_.size() << " messages\n";
+
+    // Run memory hygiene when compaction triggers
+    if (memory_ && config_.memory.hygiene_max_age > 0) {
+        memory_->hygiene_purge(config_.memory.hygiene_max_age);
+    }
 }
 
 } // namespace ptrclaw
