@@ -458,3 +458,28 @@ TEST_CASE("build_soul_block: learned traits coexist with three soul sections", "
 
     std::filesystem::remove(path);
 }
+
+// ── Auto-hatch via process ──────────────────────────────────────
+
+TEST_CASE("Agent: start_hatch + process produces response while staying in hatching mode", "[hatch]") {
+    auto provider = std::make_unique<HatchMockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "Welcome! Let's create your assistant. What name do you like?";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    std::string path = temp_memory_path("auto_hatch");
+    agent.set_memory(std::make_unique<JsonMemory>(path));
+
+    agent.start_hatch();
+    std::string reply = agent.process("hello");
+
+    REQUIRE_FALSE(reply.empty());
+    REQUIRE(agent.hatching());
+    REQUIRE_FALSE(agent.is_hatched());
+    REQUIRE(mock->chat_call_count == 1);
+
+    std::filesystem::remove(path);
+}
