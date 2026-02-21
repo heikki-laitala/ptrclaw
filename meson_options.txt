@@ -1,0 +1,21 @@
+# Provider features
+option('with_anthropic', type: 'boolean', value: true,
+       description: 'Build the Anthropic (Claude) provider')
+option('with_openai', type: 'boolean', value: true,
+       description: 'Build the OpenAI provider')
+option('with_openrouter', type: 'boolean', value: true,
+       description: 'Build the OpenRouter provider (requires with_openai)')
+option('with_compatible', type: 'boolean', value: true,
+       description: 'Build the OpenAI-compatible provider (requires with_openai)')
+option('with_ollama', type: 'boolean', value: true,
+       description: 'Build the Ollama provider')
+
+# Channel features
+option('with_telegram', type: 'boolean', value: true,
+       description: 'Build the Telegram channel')
+option('with_whatsapp', type: 'boolean', value: true,
+       description: 'Build the WhatsApp channel')
+
+# Tool features
+option('with_tools', type: 'boolean', value: true,
+       description: 'Build all tool implementations (file_read, file_write, file_edit, shell)')

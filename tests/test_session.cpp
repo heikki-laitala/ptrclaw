@@ -1,18 +1,25 @@
 #include <catch2/catch_test_macros.hpp>
 #include "mock_http_client.hpp"
 #include "session.hpp"
+#include "plugin.hpp"
 
 using namespace ptrclaw;
 
-// SessionManager requires valid provider creation, so we need a config
-// with a known provider. We use "ollama" since it doesn't need an API key.
+// SessionManager requires valid provider creation, so we pick the first
+// registered provider (any will do — the HTTP client is mocked).
 
 static MockHttpClient test_http;
 
 static Config make_test_config() {
+    auto names = PluginRegistry::instance().provider_names();
+    REQUIRE_FALSE(names.empty());
+
     Config cfg;
-    cfg.default_provider = "ollama";
+    cfg.default_provider = names.front();
     cfg.ollama_base_url = "http://localhost:11434";
+    cfg.anthropic_api_key = "test-key";
+    cfg.openai_api_key = "test-key";
+    cfg.openrouter_api_key = "test-key";
     cfg.agent.max_tool_iterations = 5;
     cfg.agent.max_history_messages = 50;
     return cfg;

@@ -12,9 +12,10 @@ else
 endif
 
 STATICDIR := builddir-static
+MINDIR := builddir-minimal
 COVDIR := builddir-cov
 
-.PHONY: deps setup build build-static run test coverage coverage-summary lint clean
+.PHONY: deps setup build build-minimal build-static run test coverage coverage-summary lint clean
 
 deps:
 ifeq ($(shell uname),Darwin)
@@ -30,6 +31,12 @@ setup:
 
 build: setup
 	meson compile -C $(BUILDDIR)
+
+build-minimal:
+	@if [ ! -d $(MINDIR) ]; then meson setup $(MINDIR) --native-file $(NATIVE_FILE) -Dcatch2:tests=false \
+		-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false -Dwith_compatible=false \
+		-Dwith_whatsapp=false; fi
+	meson compile -C $(MINDIR)
 
 build-static:
 	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) --native-file $(NATIVE_FILE) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false; fi
@@ -55,4 +62,4 @@ lint: build
 	run-clang-tidy -quiet -p $(BUILDDIR) $(CLANG_TIDY_EXTRA) '^(?!.*subprojects).*(src|tests)/' 2>&1 | grep -v 'warnings generated'
 
 clean:
-	rm -rf $(BUILDDIR) $(STATICDIR) $(COVDIR)
+	rm -rf $(BUILDDIR) $(STATICDIR) $(MINDIR) $(COVDIR)
