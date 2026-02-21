@@ -2,6 +2,7 @@
 build/
 builddir/
 builddir-cov/
+builddir-minimal/
 builddir-static/
 .cache/
 
