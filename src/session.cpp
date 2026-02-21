@@ -88,39 +88,37 @@ void SessionManager::subscribe_events() {
             auto& agent = get_session(ev.session_id);
             std::string chat_id = ev.message.reply_target.value_or("");
 
-            // Handle /start command
-            if (ev.message.content == "/start") {
-                // Unhatched user: start the hatching interview
-                if (agent.memory() && !agent.is_hatched()) {
-                    agent.start_hatch();
-                    std::string response = agent.process(
-                        "The user wants to start hatching. Begin the interview.");
-                    MessageReadyEvent reply;
-                    reply.session_id = ev.session_id;
-                    reply.reply_target = chat_id;
-                    reply.content = response;
-                    event_bus_->publish(reply);
-                    return;
-                }
+            auto send_reply = [&](const std::string& content) {
                 MessageReadyEvent reply;
                 reply.session_id = ev.session_id;
                 reply.reply_target = chat_id;
-                std::string greeting = "Hello";
-                if (ev.message.first_name) greeting += " " + *ev.message.first_name;
-                greeting += "! I'm PtrClaw, an AI assistant. How can I help you?";
-                reply.content = greeting;
+                reply.content = content;
                 event_bus_->publish(reply);
+            };
+
+            auto begin_hatch = [&]() {
+                agent.start_hatch();
+                send_reply(agent.process(
+                    "The user wants to start hatching. Begin the interview."));
+            };
+
+            // Handle /start command
+            if (ev.message.content == "/start") {
+                if (agent.memory() && !agent.is_hatched()) {
+                    begin_hatch();
+                } else {
+                    std::string greeting = "Hello";
+                    if (ev.message.first_name) greeting += " " + *ev.message.first_name;
+                    greeting += "! I'm PtrClaw, an AI assistant. How can I help you?";
+                    send_reply(greeting);
+                }
                 return;
             }
 
             // Handle /new command
             if (ev.message.content == "/new") {
                 agent.clear_history();
-                MessageReadyEvent reply;
-                reply.session_id = ev.session_id;
-                reply.reply_target = chat_id;
-                reply.content = "Conversation cleared. What would you like to discuss?";
-                event_bus_->publish(reply);
+                send_reply("Conversation cleared. What would you like to discuss?");
                 return;
             }
 
@@ -130,27 +128,15 @@ void SessionManager::subscribe_events() {
                 if (agent.memory()) {
                     display = format_soul_display(agent.memory());
                 }
-                MessageReadyEvent reply;
-                reply.session_id = ev.session_id;
-                reply.reply_target = chat_id;
-                reply.content = display.empty()
+                send_reply(display.empty()
                     ? "No soul data yet. Use /hatch to create one."
-                    : display;
-                event_bus_->publish(reply);
+                    : display);
                 return;
             }
 
-            // Handle /hatch command — start hatching and immediately
-            // ask the first interview question via process()
+            // Handle /hatch command
             if (ev.message.content == "/hatch") {
-                agent.start_hatch();
-                std::string response = agent.process(
-                    "The user wants to start hatching. Begin the interview.");
-                MessageReadyEvent reply;
-                reply.session_id = ev.session_id;
-                reply.reply_target = chat_id;
-                reply.content = response;
-                event_bus_->publish(reply);
+                begin_hatch();
                 return;
             }
 
@@ -160,12 +146,7 @@ void SessionManager::subscribe_events() {
                 agent.start_hatch();
             }
 
-            std::string response = agent.process(ev.message.content);
-            MessageReadyEvent reply;
-            reply.session_id = ev.session_id;
-            reply.reply_target = chat_id;
-            reply.content = response;
-            event_bus_->publish(reply);
+            send_reply(agent.process(ev.message.content));
         });
 }
 
