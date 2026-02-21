@@ -69,8 +69,11 @@ jobs:
 
       - name: Rename binaries
         run: |
-          mv ptrclaw-linux-x86_64/ptrclaw ptrclaw-linux-x86_64
-          mv ptrclaw-macos-aarch64/ptrclaw ptrclaw-macos-aarch64
+          mv ptrclaw-linux-x86_64/ptrclaw ptrclaw-linux-x86_64.tmp
+          mv ptrclaw-macos-aarch64/ptrclaw ptrclaw-macos-aarch64.tmp
+          rm -rf ptrclaw-linux-x86_64 ptrclaw-macos-aarch64
+          mv ptrclaw-linux-x86_64.tmp ptrclaw-linux-x86_64
+          mv ptrclaw-macos-aarch64.tmp ptrclaw-macos-aarch64
 
       - name: Create release
         uses: softprops/action-gh-release@v2
