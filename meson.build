@@ -2,7 +2,26 @@ project('ptrclaw', 'cpp',
   version: '0.1.0',
   default_options: ['cpp_std=c++17', 'buildtype=release', 'warning_level=2', 'b_lto=true'])
 
-curl_dep = dependency('libcurl')
+# Linux uses a lightweight POSIX-socket + OpenSSL HTTP backend to avoid
+# the libcurl dependency and reduce static binary size.
+# macOS keeps libcurl (available via the system SDK / Homebrew).
+host_system = host_machine.system()
+if host_system == 'linux'
+  # Try pkg-config / cmake first; fall back to direct library search
+  # (e.g. environments where libssl-dev is present but pkg-config is not).
+  http_dep = dependency('openssl', required: false)
+  if not http_dep.found()
+    cc = meson.get_compiler('cpp')
+    ssl_lib    = cc.find_library('ssl',    required: true)
+    crypto_lib = cc.find_library('crypto', required: true)
+    http_dep   = declare_dependency(dependencies: [ssl_lib, crypto_lib])
+  endif
+  http_impl_source = files('src/http_socket.cpp')
+else
+  http_dep = dependency('libcurl')
+  http_impl_source = files('src/http.cpp')
+endif
+
 inc = include_directories('include', 'src')
 
 # ── Feature flag dependency resolution ─────────────────────────
@@ -22,11 +41,11 @@ opt_sse = opt_anthropic or opt_openai
 # ── Core sources (always compiled) ─────────────────────────────
 core_sources = files(
   'src/agent.cpp', 'src/channel.cpp', 'src/config.cpp', 'src/dispatcher.cpp',
-  'src/event_bus.cpp', 'src/http.cpp', 'src/plugin.cpp', 'src/prompt.cpp',
+  'src/event_bus.cpp', 'src/plugin.cpp', 'src/prompt.cpp',
   'src/provider.cpp', 'src/session.cpp', 'src/stream_relay.cpp',
   'src/tool.cpp', 'src/util.cpp',
   'src/providers/reliable.cpp',
-)
+) + http_impl_source
 
 # ── Optional sources (gated by feature flags) ──────────────────
 optional_sources = []
@@ -66,7 +85,7 @@ lib_sources = core_sources + optional_sources
 
 ptrclaw_lib = static_library('ptrclaw_lib', lib_sources,
   include_directories: inc,
-  dependencies: [curl_dep])
+  dependencies: [http_dep])
 
 ptrclaw_dep = declare_dependency(
   link_whole: ptrclaw_lib,

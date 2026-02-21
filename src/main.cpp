@@ -50,7 +50,7 @@ static void print_usage() {
 
 static int run_channel(const std::string& channel_name,
                        ptrclaw::Config& config,
-                       ptrclaw::CurlHttpClient& http_client) {
+                       ptrclaw::HttpClient& http_client) {
     // Create channel via plugin registry
     std::unique_ptr<ptrclaw::Channel> channel;
     try {
@@ -153,7 +153,7 @@ int main(int argc, char* argv[]) try {
         std::signal(SIGTERM, signal_handler);
         ptrclaw::http_set_abort_flag(&g_shutdown);
 
-        ptrclaw::CurlHttpClient http_client;
+        ptrclaw::PlatformHttpClient http_client;
         int rc = run_channel(channel_name, config, http_client);
 
         ptrclaw::http_cleanup();
@@ -161,7 +161,7 @@ int main(int argc, char* argv[]) try {
     }
 
     // Create HTTP client and provider
-    ptrclaw::CurlHttpClient http_client;
+    ptrclaw::PlatformHttpClient http_client;
     std::unique_ptr<ptrclaw::Provider> provider;
     try {
         provider = ptrclaw::create_provider(

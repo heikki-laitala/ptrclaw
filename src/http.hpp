@@ -7,13 +7,14 @@
 
 namespace ptrclaw {
 
-// Initialize libcurl (call once at startup)
+// Initialize HTTP subsystem (call once at startup).
+// No-op on Linux (OpenSSL 1.1+ auto-initialises); initialises libcurl on macOS.
 void http_init();
 
-// Cleanup libcurl (call once at shutdown)
+// Cleanup HTTP subsystem (call once at shutdown).
 void http_cleanup();
 
-// Set a global abort flag checked by all curl transfers (~1s granularity).
+// Set a global abort flag checked by all in-flight transfers (~1s granularity).
 // When the flag becomes true, in-flight HTTP requests abort promptly.
 void http_set_abort_flag(const std::atomic<bool>* flag);
 
@@ -44,7 +45,23 @@ public:
                                          long timeout_seconds = 300);
 };
 
-// Concrete implementation using libcurl
+// Platform-specific concrete implementations.
+// Only one is compiled per build target (meson.build gates the source file).
+#ifdef __linux__
+
+// Linux: POSIX sockets + OpenSSL (no libcurl dependency)
+class SocketHttpClient : public HttpClient {
+public:
+    HttpResponse post(const std::string& url,
+                      const std::string& body,
+                      const std::vector<Header>& headers,
+                      long timeout_seconds = 120) override;
+};
+using PlatformHttpClient = SocketHttpClient;
+
+#else
+
+// macOS: libcurl
 class CurlHttpClient : public HttpClient {
 public:
     HttpResponse post(const std::string& url,
@@ -52,6 +69,9 @@ public:
                       const std::vector<Header>& headers,
                       long timeout_seconds = 120) override;
 };
+using PlatformHttpClient = CurlHttpClient;
+
+#endif
 
 // HTTP POST with JSON body
 HttpResponse http_post(const std::string& url,
