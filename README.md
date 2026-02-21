@@ -1,23 +1,25 @@
 # PtrClaw
 
-A minimal C++ port of the [nullclaw](https://github.com/nullclaw/nullclaw) agentic loop.
+A lightweight, extensible AI assistant infrastructure in C++17. Run it as a CLI, a Telegram bot, a WhatsApp bot — or plug in your own channel.
 
-Nullclaw is a fully autonomous AI assistant infrastructure written in Zig — 678 KB binary, ~1 MB RAM, 22+ providers, 11+ messaging channels, 18+ tools. PtrClaw ports its core agent loop to C++17: provider abstraction, tool dispatch, history compaction, and a terminal REPL.
-
-**362 KB binary (macOS static). 5 providers. 4 tools. 2 messaging channels. C++17.**
+**~514 KB static binary (macOS), larger on Linux due to libcurl. 5 providers. 4 tools. 2 messaging channels. Compile-time feature flags.**
 
 ## Features
 
 - **Multiple providers** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint
 - **Native tool use** — providers with function calling use it natively; others fall back to XML-based tool parsing
 - **Built-in tools** — `file_read`, `file_write`, `file_edit`, `shell`
+- **LLM streaming** — real-time token streaming with progressive message editing in channels
+- **Event-driven architecture** — publish/subscribe event bus decouples agent, channels, and streaming
+- **Plugin system** — providers, channels, and tools self-register; add new ones without touching core code
+- **Compile-time feature flags** — include only the components you need for smaller binaries
 - **Interactive REPL** with slash commands (`/status`, `/model`, `/clear`, `/help`, `/quit`)
 - **Single-message mode** — pipe a question in and get an answer back
 - **Automatic history compaction** when token usage approaches the context limit
 - **Provider failover** — `reliable` provider wraps multiple backends with automatic fallback
-- **Session management** with idle eviction
-- **Telegram channel** — run as a Telegram bot with long-polling, user allowlists, Markdown-to-HTML conversion, and per-user sessions
-- **WhatsApp channel** — WhatsApp Business Cloud API integration with webhook payload parsing, E.164 phone normalization, and sender allowlists
+- **Multi-session management** with idle eviction
+- **Telegram channel** — long-polling, user allowlists, Markdown-to-HTML, per-user sessions, streaming message edits
+- **WhatsApp channel** — Business Cloud API with webhooks, E.164 phone normalization, sender allowlists
 
 ## Quick start
 
@@ -34,21 +36,23 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 ## Requirements
 
-- C++17 compiler (Clang 15+ or GCC 10+)
+- C++17 compiler (Clang 15+ recommended, GCC 10+ works)
 - [Meson](https://mesonbuild.com/) + Ninja
-- libcurl
+- libcurl + libssl
 
 ### macOS
 
 ```sh
-brew install meson llvm
+brew install meson llvm gcovr
 ```
 
 ### Linux (Debian/Ubuntu)
 
 ```sh
-sudo apt-get install g++ meson ninja-build libcurl4-openssl-dev clang-tidy
+sudo apt-get install g++ meson ninja-build libssl-dev libcurl4-openssl-dev clang-tidy lld gcovr
 ```
+
+Linux builds use `clang++` with the `lld` linker (required for LTO) via `meson-native-linux.ini`.
 
 Or run `make deps` to install everything automatically.
 
@@ -195,22 +199,26 @@ LTO is enabled by default. Static builds (`make build-static`) are slightly larg
 src/
   main.cpp              CLI entry point and REPL
   agent.hpp/cpp         Agentic loop — chat, tool dispatch, history compaction
-  provider.hpp/cpp      Provider interface, role_to_string, factory
-  tool.hpp/cpp          Tool interface, ToolSpec, built-in tool registry
+  provider.hpp/cpp      Provider interface and types (ChatMessage, ChatResponse, ToolCall)
+  tool.hpp/cpp          Tool interface, ToolSpec, ToolResult
+  channel.hpp/cpp       Channel interface, ChannelMessage
   config.hpp/cpp        Config loading (~/.ptrclaw/config.json + env vars)
-  dispatcher.hpp/cpp    XML tool-call parsing and dispatch
-  session.hpp/cpp       Multi-session management
+  plugin.hpp/cpp        Self-registration plugin registry (providers, channels, tools)
+  event.hpp             Event types for the publish/subscribe bus
+  event_bus.hpp/cpp     Thread-safe publish/subscribe event bus
+  stream_relay.hpp/cpp  Bridges stream events to progressive channel message editing
+  dispatcher.hpp/cpp    XML tool-call parsing for non-native providers
+  session.hpp/cpp       Multi-session management with idle eviction
   prompt.hpp/cpp        System prompt builder
-  http.hpp/cpp          HttpClient interface (libcurl implementation)
+  http.hpp/cpp          HttpClient interface (libcurl backend)
   util.hpp/cpp          String/path utilities
-  channel.hpp/cpp       Channel interface, ChannelMessage, ChannelRegistry
   channels/
-    telegram.hpp/cpp    Telegram Bot API (long-polling, Markdown→HTML)
+    telegram.hpp/cpp    Telegram Bot API (long-polling, Markdown→HTML, streaming edits)
     whatsapp.hpp/cpp    WhatsApp Business Cloud API (webhooks)
   providers/
-    anthropic.cpp       Anthropic Messages API
-    openai.cpp          OpenAI Chat Completions API
-    openrouter.cpp      OpenRouter (OpenAI-compatible)
+    anthropic.cpp       Anthropic Messages API (streaming)
+    openai.cpp          OpenAI Chat Completions API (streaming)
+    openrouter.cpp      OpenRouter (inherits OpenAI)
     ollama.cpp          Ollama local inference
     compatible.cpp      Generic OpenAI-compatible endpoint
     reliable.cpp        Failover wrapper over multiple providers
@@ -221,8 +229,9 @@ src/
     file_edit.cpp       Search-and-replace edits
     shell.cpp           Shell command execution
 tests/                  Catch2 unit tests
+meson_options.txt       Compile-time feature flags
 ```
 
 ## Acknowledgements
 
-PtrClaw is a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw), the smallest fully autonomous AI assistant, originally written in Zig.
+PtrClaw started as a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw) and has since diverged into its own architecture with an event bus, plugin system, and streaming pipeline.
