@@ -133,12 +133,59 @@ export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 ## Development
 
 ```sh
-make build      # compile
-make test       # run unit tests (Catch2)
-make lint       # run clang-tidy
-make coverage   # generate HTML coverage report
-make clean      # remove build artifacts
+make build          # compile (all features)
+make build-minimal  # slim build: openai + telegram + tools only (~436 KB)
+make build-static   # static binary for distribution
+make test           # run unit tests (Catch2)
+make lint           # run clang-tidy
+make coverage       # generate HTML coverage report
+make clean          # remove build artifacts
 ```
+
+### Feature flags
+
+Every provider, channel, and tool is a compile-time feature flag in `meson_options.txt` (all default `true`). Disable unused components to reduce binary size:
+
+| Flag | Controls | Default |
+| ---- | -------- | ------- |
+| `with_anthropic` | Anthropic provider | `true` |
+| `with_openai` | OpenAI provider + SSE parser | `true` |
+| `with_openrouter` | OpenRouter provider (implies `with_openai`) | `true` |
+| `with_compatible` | OpenAI-compatible provider (implies `with_openai`) | `true` |
+| `with_ollama` | Ollama provider | `true` |
+| `with_telegram` | Telegram channel | `true` |
+| `with_whatsapp` | WhatsApp channel | `true` |
+| `with_tools` | All built-in tools | `true` |
+
+Pass `-D` flags to `meson setup`:
+
+```sh
+# Anthropic-only CLI (no channels, no tools)
+meson setup build_slim -Dwith_openai=false -Dwith_ollama=false \
+  -Dwith_telegram=false -Dwith_whatsapp=false -Dwith_tools=false
+
+# Local-only with Ollama
+meson setup build_local -Dwith_anthropic=false -Dwith_openai=false \
+  -Dwith_telegram=false -Dwith_whatsapp=false
+
+ninja -C build_slim
+```
+
+Reconfigure an existing build dir:
+
+```sh
+meson configure builddir -Dwith_whatsapp=false
+ninja -C builddir
+```
+
+### Binary size
+
+| Configuration | Size (macOS arm64) |
+| ------------- | ------------------ |
+| Full (all features) | ~514 KB |
+| Minimal (`make build-minimal`) | ~436 KB |
+
+LTO is enabled by default. Static builds (`make build-static`) are slightly larger but fully self-contained.
 
 ## Project structure
 
