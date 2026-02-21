@@ -466,9 +466,9 @@ uint32_t SqliteMemory::hygiene_purge(uint32_t max_age_seconds) {
         StmtGuard lg;
         const char* link_sql =
             "DELETE FROM memory_links WHERE from_key IN "
-            "(SELECT key FROM memories WHERE category = 'conversation' AND timestamp < ?) "
+            "(SELECT key FROM memories WHERE category = 'conversation' AND timestamp <= ?) "
             "OR to_key IN "
-            "(SELECT key FROM memories WHERE category = 'conversation' AND timestamp < ?);";
+            "(SELECT key FROM memories WHERE category = 'conversation' AND timestamp <= ?);";
         if (sqlite3_prepare_v2(db_, link_sql, -1, &lg.stmt, nullptr) == SQLITE_OK) {
             sqlite3_bind_int64(lg.stmt, 1, cutoff);
             sqlite3_bind_int64(lg.stmt, 2, cutoff);
@@ -478,7 +478,7 @@ uint32_t SqliteMemory::hygiene_purge(uint32_t max_age_seconds) {
 
     StmtGuard g;
     const char* sql =
-        "DELETE FROM memories WHERE category = 'conversation' AND timestamp < ?;";
+        "DELETE FROM memories WHERE category = 'conversation' AND timestamp <= ?;";
     if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) {
         return 0;
     }

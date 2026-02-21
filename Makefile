@@ -39,7 +39,7 @@ build-minimal:
 	meson compile -C $(MINDIR)
 
 build-static:
-	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) --native-file $(NATIVE_FILE) -Ddefault_library=static -Dprefer_static=true -Dwith_sqlite_memory=true -Dcatch2:tests=false; fi
+	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) --native-file $(NATIVE_FILE) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false; fi
 	meson compile -C $(STATICDIR)
 
 run: build

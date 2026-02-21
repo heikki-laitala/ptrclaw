@@ -38,15 +38,8 @@ jobs:
           key: meson-${{ matrix.os }}-${{ hashFiles('meson.build', 'src/**/*.cpp', 'src/**/*.hpp') }}
           restore-keys: meson-${{ matrix.os }}-
 
-      - name: Setup
-        run: |
-          if [ ! -d builddir ]; then
-            meson setup builddir --native-file $(if [ "$(uname)" = "Darwin" ]; then echo meson-native-macos.ini; else echo meson-native-linux.ini; fi) \
-              -Dwith_sqlite_memory=true -Dcatch2:tests=false
-          fi
-
       - name: Build
-        run: meson compile -C builddir
+        run: make build
 
       - name: Test
         run: make test
@@ -57,7 +50,7 @@ jobs:
       - name: Coverage
         if: runner.os == 'Linux'
         run: |
-          meson setup builddir-cov -Db_coverage=true -Dwith_sqlite_memory=true -Dcatch2:tests=false
+          meson setup builddir-cov -Db_coverage=true -Dcatch2:tests=false
           meson test -C builddir-cov
           gcovr -x --root . builddir-cov --filter src/ > coverage.xml
 
