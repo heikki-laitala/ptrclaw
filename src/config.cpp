@@ -86,6 +86,42 @@ Config Config::load() {
                         cfg.channels.whatsapp = std::move(wc);
                 }
             }
+            // Memory configuration
+            if (j.contains("memory") && j["memory"].is_object()) {
+                auto& m = j["memory"];
+                if (m.contains("backend") && m["backend"].is_string())
+                    cfg.memory.backend = m["backend"].get<std::string>();
+                if (m.contains("path") && m["path"].is_string())
+                    cfg.memory.path = m["path"].get<std::string>();
+                if (m.contains("auto_save") && m["auto_save"].is_boolean())
+                    cfg.memory.auto_save = m["auto_save"].get<bool>();
+                if (m.contains("recall_limit") && m["recall_limit"].is_number_unsigned())
+                    cfg.memory.recall_limit = m["recall_limit"].get<uint32_t>();
+                if (m.contains("hygiene_max_age") && m["hygiene_max_age"].is_number_unsigned())
+                    cfg.memory.hygiene_max_age = m["hygiene_max_age"].get<uint32_t>();
+                if (m.contains("response_cache") && m["response_cache"].is_boolean())
+                    cfg.memory.response_cache = m["response_cache"].get<bool>();
+                if (m.contains("cache_ttl") && m["cache_ttl"].is_number_unsigned())
+                    cfg.memory.cache_ttl = m["cache_ttl"].get<uint32_t>();
+                if (m.contains("cache_max_entries") && m["cache_max_entries"].is_number_unsigned())
+                    cfg.memory.cache_max_entries = m["cache_max_entries"].get<uint32_t>();
+
+                if (m.contains("embeddings") && m["embeddings"].is_object()) {
+                    auto& e = m["embeddings"];
+                    if (e.contains("provider") && e["provider"].is_string())
+                        cfg.memory.embeddings.provider = e["provider"].get<std::string>();
+                    if (e.contains("api_key") && e["api_key"].is_string())
+                        cfg.memory.embeddings.api_key = e["api_key"].get<std::string>();
+                    if (e.contains("model") && e["model"].is_string())
+                        cfg.memory.embeddings.model = e["model"].get<std::string>();
+                    if (e.contains("dimensions") && e["dimensions"].is_number_unsigned())
+                        cfg.memory.embeddings.dimensions = e["dimensions"].get<uint32_t>();
+                    if (e.contains("vector_weight") && e["vector_weight"].is_number())
+                        cfg.memory.embeddings.vector_weight = e["vector_weight"].get<double>();
+                    if (e.contains("keyword_weight") && e["keyword_weight"].is_number())
+                        cfg.memory.embeddings.keyword_weight = e["keyword_weight"].get<double>();
+                }
+            }
         } catch (...) { // NOLINT(bugprone-empty-catch)
             // Config file is malformed — continue with defaults
         }

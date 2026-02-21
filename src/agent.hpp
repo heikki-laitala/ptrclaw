@@ -1,4 +1,6 @@
 #pragma once
+#include "memory.hpp"
+#include "memory/response_cache.hpp"
 #include "provider.hpp"
 #include "tool.hpp"
 #include "config.hpp"
@@ -40,6 +42,13 @@ public:
     void set_event_bus(EventBus* bus) { event_bus_ = bus; }
     void set_session_id(const std::string& id) { session_id_ = id; }
 
+    // Memory system
+    void set_memory(std::unique_ptr<Memory> memory);
+    Memory* memory() const { return memory_.get(); }
+
+    // Response cache
+    void set_response_cache(std::unique_ptr<ResponseCache> cache);
+
 private:
     void compact_history();
     void inject_system_prompt();
@@ -52,6 +61,8 @@ private:
     bool system_prompt_injected_ = false;
     EventBus* event_bus_ = nullptr;
     std::string session_id_;
+    std::unique_ptr<Memory> memory_;
+    std::unique_ptr<ResponseCache> response_cache_;
 };
 
 } // namespace ptrclaw

@@ -35,7 +35,8 @@ build: setup
 build-minimal:
 	@if [ ! -d $(MINDIR) ]; then meson setup $(MINDIR) --native-file $(NATIVE_FILE) -Dcatch2:tests=false \
 		-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false -Dwith_compatible=false \
-		-Dwith_whatsapp=false; fi
+		-Dwith_whatsapp=false -Dwith_memory=false -Dwith_memory_tools=false -Dwith_sqlite_memory=false \
+		-Dwith_embeddings=false; fi
 	meson compile -C $(MINDIR)
 
 build-static:
