@@ -1,6 +1,7 @@
 #include "session.hpp"
 #include "event.hpp"
 #include "event_bus.hpp"
+#include "prompt.hpp"
 #include "util.hpp"
 
 namespace ptrclaw {
@@ -119,6 +120,22 @@ void SessionManager::subscribe_events() {
                 reply.session_id = ev.session_id;
                 reply.reply_target = chat_id;
                 reply.content = "Conversation cleared. What would you like to discuss?";
+                event_bus_->publish(reply);
+                return;
+            }
+
+            // Handle /soul command — display current soul data
+            if (ev.message.content == "/soul") {
+                std::string display;
+                if (agent.memory()) {
+                    display = format_soul_display(agent.memory());
+                }
+                MessageReadyEvent reply;
+                reply.session_id = ev.session_id;
+                reply.reply_target = chat_id;
+                reply.content = display.empty()
+                    ? "No soul data yet. Use /hatch to create one."
+                    : display;
                 event_bus_->publish(reply);
                 return;
             }

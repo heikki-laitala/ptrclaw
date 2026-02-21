@@ -170,6 +170,28 @@ std::string build_soul_block(Memory* memory) {
     return ss.str();
 }
 
+std::string format_soul_display(Memory* memory) {
+    if (!memory || memory->backend_name() == "none") return "";
+
+    auto identity = memory->get("soul:identity");
+    if (!identity) return "";
+
+    std::ostringstream ss;
+    ss << "Identity:\n" << identity->content << "\n";
+
+    auto user = memory->get("soul:user");
+    if (user) {
+        ss << "\nUser:\n" << user->content << "\n";
+    }
+
+    auto philosophy = memory->get("soul:philosophy");
+    if (philosophy) {
+        ss << "\nPhilosophy:\n" << philosophy->content << "\n";
+    }
+
+    return ss.str();
+}
+
 SoulParseResult parse_soul_json(const std::string& text) {
     SoulParseResult result;
 
