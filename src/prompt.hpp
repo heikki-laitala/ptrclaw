@@ -24,9 +24,16 @@ std::string build_hatch_prompt();
 // Returns empty string if no soul entries exist.
 std::string build_soul_block(Memory* memory);
 
+// Result of parsing <soul>...</soul> tags from text.
+struct SoulParseResult {
+    std::vector<std::pair<std::string, std::string>> entries; // key/content pairs
+    size_t block_start = std::string::npos; // position of '<' in <soul>
+    size_t block_end = std::string::npos;   // position past '>' in </soul>
+    bool found() const { return !entries.empty(); }
+};
+
 // Extract and parse soul entries from a response containing <soul>...</soul> tags.
-// Returns key/content pairs, or empty vector if no valid soul block found.
-std::vector<std::pair<std::string, std::string>> parse_soul_json(const std::string& text);
+SoulParseResult parse_soul_json(const std::string& text);
 
 // Build synthesis prompt to extract atomic notes from conversation history.
 std::string build_synthesis_prompt(const std::vector<ChatMessage>& history,

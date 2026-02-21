@@ -64,36 +64,40 @@ TEST_CASE("parse_soul_json: extracts valid soul block", "[hatch]") {
 </soul>
 Done!)";
 
-    auto entries = parse_soul_json(text);
-    REQUIRE(entries.size() == 2);
-    REQUIRE(entries[0].first == "soul:identity");
-    REQUIRE(entries[0].second == "Name: Aria. Nature: AI assistant.");
-    REQUIRE(entries[1].first == "soul:vibe");
-    REQUIRE(entries[1].second == "Warm and concise.");
+    auto result = parse_soul_json(text);
+    REQUIRE(result.found());
+    REQUIRE(result.entries.size() == 2);
+    REQUIRE(result.entries[0].first == "soul:identity");
+    REQUIRE(result.entries[0].second == "Name: Aria. Nature: AI assistant.");
+    REQUIRE(result.entries[1].first == "soul:vibe");
+    REQUIRE(result.entries[1].second == "Warm and concise.");
+    REQUIRE(result.block_start == text.find("<soul>"));
+    REQUIRE(result.block_end == text.find("</soul>") + 7);
 }
 
 TEST_CASE("parse_soul_json: returns empty on no tags", "[hatch]") {
-    auto entries = parse_soul_json("Just a regular response.");
-    REQUIRE(entries.empty());
+    auto result = parse_soul_json("Just a regular response.");
+    REQUIRE_FALSE(result.found());
 }
 
 TEST_CASE("parse_soul_json: returns empty on malformed JSON", "[hatch]") {
     std::string text = "<soul>not json</soul>";
-    auto entries = parse_soul_json(text);
-    REQUIRE(entries.empty());
+    auto result = parse_soul_json(text);
+    REQUIRE_FALSE(result.found());
 }
 
 TEST_CASE("parse_soul_json: skips entries without key or content", "[hatch]") {
     std::string text = R"(<soul>[{"key":"soul:x"},{"content":"y"},{"key":"soul:z","content":"ok"}]</soul>)";
-    auto entries = parse_soul_json(text);
-    REQUIRE(entries.size() == 1);
-    REQUIRE(entries[0].first == "soul:z");
+    auto result = parse_soul_json(text);
+    REQUIRE(result.found());
+    REQUIRE(result.entries.size() == 1);
+    REQUIRE(result.entries[0].first == "soul:z");
 }
 
 TEST_CASE("parse_soul_json: returns empty on mismatched tags", "[hatch]") {
     std::string text = "<soul>[{\"key\":\"a\",\"content\":\"b\"}]";
-    auto entries = parse_soul_json(text);
-    REQUIRE(entries.empty());
+    auto result = parse_soul_json(text);
+    REQUIRE_FALSE(result.found());
 }
 
 // ── build_soul_block ────────────────────────────────────────────

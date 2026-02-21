@@ -69,9 +69,9 @@ std::string Agent::process(const std::string& user_message) {
     }
     history_.push_back(ChatMessage{Role::User, enriched_message, {}, {}});
 
-    // Build tool specs
+    // Build tool specs (skip during hatching — no tools needed for interview)
     std::vector<ToolSpec> tool_specs;
-    if (provider_->supports_native_tools()) {
+    if (!hatching_ && provider_->supports_native_tools()) {
         tool_specs.reserve(tools_.size());
         for (const auto& tool : tools_) {
             tool_specs.push_back(tool->spec());
@@ -238,17 +238,14 @@ std::string Agent::process(const std::string& user_message) {
 
     // Soul extraction during hatching
     if (hatching_ && !final_content.empty()) {
-        auto soul_entries = parse_soul_json(final_content);
-        if (!soul_entries.empty() && memory_) {
-            for (const auto& entry : soul_entries) {
+        auto parsed = parse_soul_json(final_content);
+        if (parsed.found() && memory_) {
+            for (const auto& entry : parsed.entries) {
                 memory_->store(entry.first, entry.second, MemoryCategory::Core, "");
             }
             // Strip <soul> block from visible response
-            auto soul_start = final_content.find("<soul>");
-            auto soul_end = final_content.find("</soul>");
-            if (soul_start != std::string::npos && soul_end != std::string::npos) {
-                final_content.erase(soul_start, soul_end + 7 - soul_start);
-            }
+            final_content.erase(parsed.block_start,
+                                parsed.block_end - parsed.block_start);
             while (!final_content.empty() &&
                    (final_content.back() == '\n' || final_content.back() == ' ')) {
                 final_content.pop_back();
