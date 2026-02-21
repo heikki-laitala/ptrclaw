@@ -89,6 +89,18 @@ void SessionManager::subscribe_events() {
 
             // Handle /start command
             if (ev.message.content == "/start") {
+                // Unhatched user: start the hatching interview
+                if (agent.memory() && !agent.is_hatched()) {
+                    agent.start_hatch();
+                    std::string response = agent.process(
+                        "The user wants to start hatching. Begin the interview.");
+                    MessageReadyEvent reply;
+                    reply.session_id = ev.session_id;
+                    reply.reply_target = chat_id;
+                    reply.content = response;
+                    event_bus_->publish(reply);
+                    return;
+                }
                 MessageReadyEvent reply;
                 reply.session_id = ev.session_id;
                 reply.reply_target = chat_id;
@@ -111,15 +123,24 @@ void SessionManager::subscribe_events() {
                 return;
             }
 
-            // Handle /hatch command
+            // Handle /hatch command — start hatching and immediately
+            // ask the first interview question via process()
             if (ev.message.content == "/hatch") {
                 agent.start_hatch();
+                std::string response = agent.process(
+                    "The user wants to start hatching. Begin the interview.");
                 MessageReadyEvent reply;
                 reply.session_id = ev.session_id;
                 reply.reply_target = chat_id;
-                reply.content = "Entering hatching mode...";
+                reply.content = response;
                 event_bus_->publish(reply);
                 return;
+            }
+
+            // Auto-hatch: if memory exists but no soul, enter hatching
+            // so the user's first message kicks off the interview
+            if (agent.memory() && !agent.is_hatched() && !agent.hatching()) {
+                agent.start_hatch();
             }
 
             std::string response = agent.process(ev.message.content);
