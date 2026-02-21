@@ -243,15 +243,10 @@ std::string Agent::process(const std::string& user_message) {
             for (const auto& entry : parsed.entries) {
                 memory_->store(entry.first, entry.second, MemoryCategory::Core, "");
             }
-            // Strip <soul> block from visible response
-            final_content.erase(parsed.block_start,
-                                parsed.block_end - parsed.block_start);
-            while (!final_content.empty() &&
-                   (final_content.back() == '\n' || final_content.back() == ' ')) {
-                final_content.pop_back();
-            }
-            if (!final_content.empty()) final_content += "\n\n";
-            final_content += "Soul hatched! Your assistant's identity has been saved.";
+            // Replace entire response — the LLM's lead-in text before
+            // the <soul> block often references the JSON and reads oddly
+            // once the block is stripped.
+            final_content = "Soul hatched! Your assistant's identity has been saved.";
             // Synthesize knowledge from hatching conversation (user interests, context)
             turns_since_synthesis_ = config_.memory.synthesis_interval;
             maybe_synthesize();
