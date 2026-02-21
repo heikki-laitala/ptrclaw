@@ -1,0 +1,48 @@
+services:
+  # Interactive CLI — runs ptrclaw REPL with a mounted config directory.
+  ptrclaw:
+    build: .
+    image: ptrclaw:latest
+    stdin_open: true
+    tty: true
+    volumes:
+      # Mount your host config directory into the container.
+      # Alternatively, remove this and set all values via environment variables.
+      - "${PTRCLAW_CONFIG_DIR:-${HOME}/.ptrclaw}:/home/ptrclaw/.ptrclaw:ro"
+    environment:
+      # Provider API keys — override or replace the config file values.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      - COMPATIBLE_BASE_URL=${COMPATIBLE_BASE_URL:-}
+      # Channel tokens
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN:-}
+      - WHATSAPP_PHONE_ID=${WHATSAPP_PHONE_ID:-}
+      - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN:-}
+
+  # Telegram bot — long-running service mode.
+  telegram:
+    build: .
+    image: ptrclaw:latest
+    command: ["--channel", "telegram"]
+    restart: unless-stopped
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+
+  # WhatsApp bot — requires a publicly reachable webhook endpoint.
+  whatsapp:
+    build: .
+    image: ptrclaw:latest
+    command: ["--channel", "whatsapp"]
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - WHATSAPP_ACCESS_TOKEN=${WHATSAPP_ACCESS_TOKEN}
+      - WHATSAPP_PHONE_ID=${WHATSAPP_PHONE_ID}
+      - WHATSAPP_VERIFY_TOKEN=${WHATSAPP_VERIFY_TOKEN}
