@@ -53,6 +53,7 @@ bool TelegramChannel::set_my_commands() {
         {{"command", "start"}, {"description", "Start conversation"}},
         {{"command", "new"},   {"description", "New conversation"}},
         {{"command", "hatch"}, {"description", "Create or recreate assistant identity"}},
+        {{"command", "soul"},  {"description", "Show current identity"}},
         {{"command", "help"},  {"description", "Show help"}},
     });
     nlohmann::json body = {{"commands", commands}};

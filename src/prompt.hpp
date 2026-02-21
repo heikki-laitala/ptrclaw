@@ -24,6 +24,10 @@ std::string build_hatch_prompt();
 // Returns empty string if no soul entries exist.
 std::string build_soul_block(Memory* memory);
 
+// Format soul data for user-facing display (e.g. /soul command).
+// Returns empty string if no soul entries exist.
+std::string format_soul_display(Memory* memory);
+
 // Result of parsing <soul>...</soul> tags from text.
 struct SoulParseResult {
     std::vector<std::pair<std::string, std::string>> entries; // key/content pairs

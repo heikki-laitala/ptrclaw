@@ -3,6 +3,7 @@
 #include "tool.hpp"
 #include "agent.hpp"
 #include "memory.hpp"
+#include "prompt.hpp"
 #include "http.hpp"
 #include "channel.hpp"
 #include "plugin.hpp"
@@ -264,6 +265,16 @@ int main(int argc, char* argv[]) try {
                         std::cout << "Imported " << n << " entries.\n";
                     }
                 }
+            } else if (line == "/soul") {
+                std::string display;
+                if (agent.memory()) {
+                    display = format_soul_display(agent.memory());
+                }
+                if (display.empty()) {
+                    std::cout << "No soul data yet. Use /hatch to create one.\n";
+                } else {
+                    std::cout << display;
+                }
             } else if (line == "/hatch") {
                 agent.start_hatch();
                 std::cout << "Entering hatching mode...\n";
@@ -275,6 +286,7 @@ int main(int argc, char* argv[]) try {
                           << "  /memory          Show memory status\n"
                           << "  /memory export   Export memories as JSON\n"
                           << "  /memory import P Import memories from JSON file\n"
+                          << "  /soul            Show current soul/identity data\n"
                           << "  /hatch           Create or re-create assistant identity\n"
                           << "  /quit            Exit\n"
                           << "  /exit            Exit\n"
