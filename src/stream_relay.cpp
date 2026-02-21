@@ -15,8 +15,18 @@ void StreamRelay::subscribe_events() {
             auto it = stream_states_.find(ev.session_id);
             if (it != stream_states_.end()) {
                 bool delivered = it->second.delivered;
+                auto chat_id = it->second.chat_id;
+                auto msg_id = it->second.message_id;
+                auto accumulated = it->second.accumulated;
                 stream_states_.erase(it);
-                if (delivered) return;
+                if (delivered) {
+                    // Content was replaced after streaming (e.g. soul extraction) —
+                    // edit the streamed message with the final content
+                    if (msg_id != 0 && ev.content != accumulated) {
+                        channel_.edit_message(chat_id, msg_id, ev.content);
+                    }
+                    return;
+                }
             }
             if (!ev.reply_target.empty()) {
                 channel_.send_message(ev.reply_target, ev.content);
