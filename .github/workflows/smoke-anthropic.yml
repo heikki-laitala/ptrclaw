@@ -13,7 +13,7 @@ jobs:
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       # Override if needed in workflow dispatch by editing file or using repo vars later
-      SMOKE_MODEL: claude-3-5-haiku-latest
+      SMOKE_MODEL: claude-3-5-haiku-20241022
     steps:
       - name: Checkout
         uses: actions/checkout@v4
