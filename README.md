@@ -2,7 +2,7 @@
 
 A lightweight, extensible AI assistant infrastructure in C++17. Run it as a CLI, a Telegram bot, a WhatsApp bot — or plug in your own channel.
 
-**~514 KB static binary (macOS), larger on Linux due to libcurl. 5 providers. 4 tools. 2 messaging channels. Compile-time feature flags.**
+**~514 KB static binary (macOS). Linux uses a socket+OpenSSL HTTP backend (no libcurl). 5 providers. 4 tools. 2 messaging channels. Compile-time feature flags.**
 
 ## Features
 
@@ -27,7 +27,7 @@ A lightweight, extensible AI assistant infrastructure in C++17. Run it as a CLI,
 
 ```sh
 git clone <repo-url> && cd ptrclaw
-make deps    # install meson, llvm, libcurl
+make deps    # install meson, llvm, ssl deps
 make build   # compile (output: builddir/ptrclaw)
 
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -38,7 +38,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 - C++17 compiler (Clang 15+ recommended, GCC 10+ works)
 - [Meson](https://mesonbuild.com/) + Ninja
-- libcurl + libssl
+- libssl (Linux) / libcurl + libssl (macOS path)
 
 ### macOS
 
@@ -49,7 +49,7 @@ brew install meson llvm gcovr
 ### Linux (Debian/Ubuntu)
 
 ```sh
-sudo apt-get install g++ meson ninja-build libssl-dev libcurl4-openssl-dev clang-tidy lld gcovr
+sudo apt-get install g++ meson ninja-build libssl-dev clang-tidy lld gcovr
 ```
 
 Linux builds use `clang++` with the `lld` linker (required for LTO) via `meson-native-linux.ini`.
@@ -210,7 +210,9 @@ src/
   dispatcher.hpp/cpp    XML tool-call parsing for non-native providers
   session.hpp/cpp       Multi-session management with idle eviction
   prompt.hpp/cpp        System prompt builder
-  http.hpp/cpp          HttpClient interface (libcurl backend)
+  http.hpp              HttpClient interface
+  http_socket.cpp       Linux HTTP backend (POSIX sockets + OpenSSL)
+  http.cpp              macOS HTTP backend (libcurl)
   util.hpp/cpp          String/path utilities
   channels/
     telegram.hpp/cpp    Telegram Bot API (long-polling, Markdown→HTML, streaming edits)
