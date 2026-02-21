@@ -1,7 +1,6 @@
 #include "memory_recall.hpp"
 #include "../plugin.hpp"
 #include <nlohmann/json.hpp>
-#include <algorithm>
 #include <sstream>
 
 static ptrclaw::ToolRegistrar reg_memory_recall("memory_recall",
@@ -50,21 +49,7 @@ ToolResult MemoryRecallTool::execute(const std::string& args_json) {
     // Follow links if depth > 0
     std::vector<MemoryEntry> neighbor_entries;
     if (depth > 0) {
-        std::vector<std::string> seen_keys;
-        seen_keys.reserve(entries.size());
-        for (const auto& e : entries) {
-            seen_keys.push_back(e.key);
-        }
-        for (const auto& entry : entries) {
-            if (entry.links.empty()) continue;
-            auto neighbors = memory_->neighbors(entry.key, limit);
-            for (auto& n : neighbors) {
-                if (std::find(seen_keys.begin(), seen_keys.end(), n.key) == seen_keys.end()) {
-                    seen_keys.push_back(n.key);
-                    neighbor_entries.push_back(std::move(n));
-                }
-            }
-        }
+        neighbor_entries = collect_neighbors(memory_, entries, limit);
     }
 
     std::ostringstream ss;

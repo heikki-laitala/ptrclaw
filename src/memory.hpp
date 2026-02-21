@@ -88,6 +88,12 @@ MemoryCategory category_from_string(const std::string& s);
 // Enrich a user message with recalled memory context.
 // Returns the enriched message (original message with prepended context),
 // or the original message unchanged if memory is null or recall returns nothing.
+// Follow 1-hop links from the given entries, deduplicating by key.
+// Returns only the neighbor entries not already present in `entries`.
+std::vector<MemoryEntry> collect_neighbors(Memory* memory,
+                                            const std::vector<MemoryEntry>& entries,
+                                            uint32_t limit);
+
 std::string memory_enrich(Memory* memory, const std::string& user_message,
                           uint32_t recall_limit, uint32_t enrich_depth = 0);
 
