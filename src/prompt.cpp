@@ -92,57 +92,63 @@ std::string build_hatch_prompt() {
     return
         "You are conducting a soul-hatching ceremony — a brief identity interview "
         "for a new AI assistant.\n\n"
-        "Your goal is to learn about the user's preferences for their assistant "
-        "through a casual, friendly conversation. Ask 3-5 questions, one at a time, "
-        "covering:\n"
-        "1. What name should the assistant go by?\n"
-        "2. What personality or vibe should it have? (e.g., casual, formal, witty, serious)\n"
-        "3. Communication preferences (e.g., concise vs detailed, tone)\n"
-        "4. Any boundaries or things the assistant should never do?\n"
-        "5. Any other preferences?\n\n"
-        "Keep the conversation natural and brief. Ask one question at a time. "
+        "Your goal is to learn who the assistant should be and who the human is, "
+        "through a casual, friendly conversation. Don't interrogate — just talk. "
+        "Ask 3-5 questions, one at a time, covering:\n"
+        "1. What name should the assistant go by? What vibe or personality?\n"
+        "2. Tell me about yourself — what's your name? Timezone? Interests?\n"
+        "3. Communication style — concise or detailed? Formal or casual?\n"
+        "4. Any core values, boundaries, or things the assistant should always/never do?\n\n"
+        "Keep it natural and brief. One question at a time. "
         "Be warm and welcoming — this is the user's first interaction.\n\n"
         "After enough information is gathered (or the user indicates they're done), "
-        "output a structured summary wrapped in <soul> tags:\n\n"
+        "output a structured summary wrapped in <soul> tags with exactly three entries:\n\n"
         "<soul>\n"
         "[\n"
-        "  {\"key\": \"soul:identity\", \"content\": \"Name: X. Nature: AI assistant.\"},\n"
-        "  {\"key\": \"soul:vibe\", \"content\": \"Direct, concise, ...\"},\n"
-        "  {\"key\": \"soul:boundaries\", \"content\": \"Never share private info...\"},\n"
-        "  {\"key\": \"soul:preferences\", \"content\": \"User prefers...\"}\n"
+        "  {\"key\": \"soul:identity\", \"content\": \"Name: ...\\nNature: ...\\nVibe: ...\\nEmoji: ...\"},\n"
+        "  {\"key\": \"soul:user\", \"content\": \"Name: ...\\nAddress as: ...\\nTimezone: ...\\nInterests: ...\"},\n"
+        "  {\"key\": \"soul:philosophy\", \"content\": \"Core truths: ...\\nBoundaries: ...\\nCommunication: ...\"}\n"
         "]\n"
         "</soul>\n\n"
         "Rules:\n"
         "- The <soul> block must contain valid JSON\n"
-        "- Always include soul:identity at minimum\n"
+        "- Always include all three entries (soul:identity, soul:user, soul:philosophy)\n"
+        "- Fill in reasonable defaults for anything the user didn't mention\n"
         "- Only output the <soul> block when you have enough information\n";
 }
 
 std::string build_soul_block(Memory* memory) {
     if (!memory || memory->backend_name() == "none") return "";
 
-    auto entries = memory->list(MemoryCategory::Core, 100);
+    auto identity = memory->get("soul:identity");
+    if (!identity) return "";
 
     std::ostringstream ss;
-    bool found = false;
-    for (const auto& e : entries) {
-        if (e.key.size() > 5 && e.key.compare(0, 5, "soul:") == 0) {
-            if (!found) {
-                ss << "## Your Identity\n\n"
-                   << "You have a persistent soul that defines who you are:\n\n";
-                found = true;
-            }
-            std::string label = e.key.substr(5);
-            if (!label.empty()) {
-                label[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(label[0])));
-            }
-            ss << "- " << label << ": " << e.content << "\n";
-        }
+    ss << "## Your Identity\n\n";
+
+    ss << "About you (the AI):\n" << identity->content << "\n\n";
+
+    auto user = memory->get("soul:user");
+    if (user) {
+        ss << "About your human:\n" << user->content << "\n\n";
     }
 
-    if (!found) return "";
+    auto philosophy = memory->get("soul:philosophy");
+    if (philosophy) {
+        ss << "Your philosophy:\n" << philosophy->content << "\n\n";
+    } else {
+        // Backward compat: render legacy keys if new format not yet hatched
+        auto vibe = memory->get("soul:vibe");
+        auto boundaries = memory->get("soul:boundaries");
+        auto preferences = memory->get("soul:preferences");
 
-    ss << "\nEmbody this persona in all interactions. Avoid generic chatbot responses.\n";
+        if (vibe) ss << "Vibe: " << vibe->content << "\n";
+        if (boundaries) ss << "Boundaries: " << boundaries->content << "\n";
+        if (preferences) ss << "Preferences: " << preferences->content << "\n";
+        if (vibe || boundaries || preferences) ss << "\n";
+    }
+
+    ss << "Embody this persona in all interactions. Avoid generic chatbot responses.\n";
     return ss.str();
 }
 
