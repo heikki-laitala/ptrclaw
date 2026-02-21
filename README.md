@@ -65,6 +65,7 @@ Create `~/.ptrclaw/config.json`:
   "openai_api_key": "sk-...",
   "openrouter_api_key": "sk-or-...",
   "ollama_base_url": "http://localhost:11434",
+  "compatible_base_url": "http://localhost:8080/v1",
   "agent": {
     "max_tool_iterations": 10,
     "max_history_messages": 50,
@@ -94,6 +95,7 @@ Environment variables override the config file:
 | `OPENAI_API_KEY` | OpenAI API key |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 | `OLLAMA_BASE_URL` | Ollama server URL (default `http://localhost:11434`) |
+| `COMPATIBLE_BASE_URL` | Base URL for OpenAI-compatible endpoint |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token (overrides config) |
 | `WHATSAPP_ACCESS_TOKEN` | WhatsApp Business API access token |
 | `WHATSAPP_PHONE_ID` | WhatsApp Business phone number ID |

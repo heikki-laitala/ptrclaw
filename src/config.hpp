@@ -38,6 +38,7 @@ struct Config {
     std::string openai_api_key;
     std::string openrouter_api_key;
     std::string ollama_base_url = "http://localhost:11434";
+    std::string compatible_base_url;
 
     // Defaults
     std::string default_provider = "anthropic";
@@ -52,6 +53,9 @@ struct Config {
 
     // Get API key for a provider name
     std::string api_key_for(const std::string& provider) const;
+
+    // Get base URL for a provider name (empty = use provider default)
+    std::string base_url_for(const std::string& provider) const;
 };
 
 } // namespace ptrclaw
