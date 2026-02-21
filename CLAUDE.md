@@ -32,11 +32,10 @@ make test && make lint   # Both must pass
 ```text
 Agent (agentic loop)
 ├── Provider (LLM API) ── Anthropic, OpenAI, OpenRouter, Ollama, Compatible, Reliable
-├── Tool (actions)     ── file_read, file_write, file_edit, shell, memory_store, memory_recall, memory_forget
+├── Tool (actions)     ── file_read, file_write, file_edit, shell, memory_store, memory_recall, memory_forget, memory_link
 ├── Dispatcher         ── XML tool call parsing for non-native providers
-├── Memory (pluggable) ── JsonMemory (file-based), SqliteMemory (FTS5), NoneMemory (no-op)
-│   ├── ResponseCache  ── LLM response deduplication (FNV-1a hash, TTL+LRU)
-│   └── Embeddings     ── Optional vector search (OpenAI-compatible API)
+├── Memory (pluggable) ── JsonMemory (file-based, knowledge graph), SqliteMemory (FTS5), NoneMemory (no-op)
+│   └── ResponseCache  ── LLM response deduplication (FNV-1a hash, TTL+LRU)
 ├── Session            ── Multi-user session management with idle eviction
 └── Channel (I/O)      ── Telegram (long-polling), WhatsApp (webhooks)
 ```
@@ -90,7 +89,6 @@ Never log secrets or tokens. Validate at system boundaries. Keep network/filesys
 | `src/memory/json_memory.hpp` | JSON file backend (default, zero deps) |
 | `src/memory/sqlite_memory.hpp` | SQLite+FTS5 backend (optional, requires sqlite3) |
 | `src/memory/response_cache.hpp` | LLM response cache (FNV-1a hash, TTL+LRU eviction) |
-| `src/memory/embeddings.hpp` | Embedding provider interface (OpenAI, Noop) |
 | `src/channel.hpp` | Channel interface + ChannelMessage type |
 | `src/config.hpp` | Config loader (~/.ptrclaw/config.json + env vars), MemoryConfig |
 | `src/dispatcher.hpp` | XML tool call parsing for non-native providers |
