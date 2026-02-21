@@ -2,7 +2,7 @@
 
 A lightweight, extensible AI assistant infrastructure in C++17. Run it as a CLI, a Telegram bot, a WhatsApp bot — or plug in your own channel.
 
-**~514 KB static binary (macOS). Lightweight Linux backend for smaller binaries. 5 providers, 8 tools, 2 messaging channels, and compile-time feature flags.**
+**~663 KB static binary (macOS arm64). Lightweight Linux backend using POSIX sockets. 6 providers, 8 tools, 2 messaging channels, and compile-time feature flags.**
 
 ## Features
 
@@ -79,8 +79,8 @@ Create `~/.ptrclaw/config.json`:
     "token_limit": 128000
   },
   "memory": {
-    "backend": "json",
-    "path": "~/.ptrclaw/memory.json",
+    "backend": "sqlite",
+    "path": "~/.ptrclaw/memory.db",
     "enrich_depth": 1,
     "synthesis": false,
     "synthesis_interval": 5
@@ -194,7 +194,7 @@ export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 
 ```sh
 make build          # compile (all features)
-make build-minimal  # slim build: openai + telegram + tools + json memory (~436 KB)
+make build-minimal  # slim build: openai + telegram + tools + json memory (~562 KB)
 make build-static   # static binary with all features including SQLite memory
 make test           # run unit tests (Catch2)
 make lint           # run clang-tidy
@@ -245,10 +245,11 @@ ninja -C builddir
 
 | Configuration | Size (macOS arm64) |
 | ------------- | ------------------ |
-| Full (all features) | ~514 KB |
-| Minimal (`make build-minimal`) | ~436 KB |
+| Full (all features) | ~663 KB |
+| Minimal (`make build-minimal`) | ~562 KB |
+| Static (`make build-static`) | ~663 KB |
 
-LTO is enabled by default. Static builds (`make build-static`) are slightly larger but fully self-contained.
+LTO is enabled by default.
 
 ## Project structure
 
