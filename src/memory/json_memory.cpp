@@ -314,6 +314,7 @@ bool JsonMemory::link(const std::string& from_key, const std::string& to_key) {
     for (auto& e : entries_) {
         if (e.key == from_key) from_entry = &e;
         if (e.key == to_key) to_entry = &e;
+        if (from_entry && to_entry) break;
     }
     if (!from_entry || !to_entry) return false;
 
@@ -338,6 +339,7 @@ bool JsonMemory::unlink(const std::string& from_key, const std::string& to_key) 
     for (auto& e : entries_) {
         if (e.key == from_key) from_entry = &e;
         if (e.key == to_key) to_entry = &e;
+        if (from_entry && to_entry) break;
     }
     if (!from_entry || !to_entry) return false;
 

@@ -2,13 +2,13 @@
 
 A lightweight, extensible AI assistant infrastructure in C++17. Run it as a CLI, a Telegram bot, a WhatsApp bot — or plug in your own channel.
 
-**~514 KB static binary (macOS). Lightweight Linux backend for smaller binaries. 5 providers, 4 tools, 2 messaging channels, and compile-time feature flags.**
+**~514 KB static binary (macOS). Lightweight Linux backend for smaller binaries. 5 providers, 8 tools, 2 messaging channels, and compile-time feature flags.**
 
 ## Features
 
 - **Multiple providers** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint
 - **Native tool use** — providers with function calling use it natively; others fall back to XML-based tool parsing
-- **Built-in tools** — `file_read`, `file_write`, `file_edit`, `shell`
+- **Built-in tools** — `file_read`, `file_write`, `file_edit`, `shell`, `memory_store`, `memory_recall`, `memory_forget`, `memory_link`
 - **LLM streaming** — real-time token streaming with progressive message editing in channels
 - **Event-driven architecture** — publish/subscribe event bus decouples agent, channels, and streaming
 - **Plugin system** — providers, channels, and tools self-register; add new ones without touching core code
@@ -16,6 +16,7 @@ A lightweight, extensible AI assistant infrastructure in C++17. Run it as a CLI,
 - **Interactive REPL** with slash commands (`/status`, `/model`, `/clear`, `/help`, `/quit`)
 - **Single-message mode** — pipe a question in and get an answer back
 - **Automatic history compaction** when token usage approaches the context limit
+- **Persistent memory** — knowledge graph with bidirectional links, three-space semantics (core/knowledge/conversation), graph-aware context enrichment, automatic conversation synthesis
 - **Provider failover** — `reliable` provider wraps multiple backends with automatic fallback
 - **Multi-session management** with idle eviction
 - **Telegram channel** — long-polling, user allowlists, Markdown-to-HTML, per-user sessions, streaming message edits
@@ -74,6 +75,13 @@ Create `~/.ptrclaw/config.json`:
     "max_tool_iterations": 10,
     "max_history_messages": 50,
     "token_limit": 128000
+  },
+  "memory": {
+    "backend": "json",
+    "path": "~/.ptrclaw/memory.json",
+    "enrich_depth": 1,
+    "synthesis": false,
+    "synthesis_interval": 5
   },
   "channels": {
     "telegram": {
@@ -206,6 +214,9 @@ Every provider, channel, and tool is a compile-time feature flag in `meson_optio
 | `with_telegram` | Telegram channel | `true` |
 | `with_whatsapp` | WhatsApp channel | `true` |
 | `with_tools` | All built-in tools | `true` |
+| `with_memory` | Memory system (JsonMemory) | `true` |
+| `with_sqlite_memory` | SQLite+FTS5 memory backend | `true` |
+| `with_memory_tools` | Memory tools (store, recall, forget, link) | `true` |
 
 Pass `-D` flags to `meson setup`:
 
@@ -269,11 +280,20 @@ src/
     compatible.cpp      Generic OpenAI-compatible endpoint
     reliable.cpp        Failover wrapper over multiple providers
     sse.cpp             Server-Sent Events parser
+  memory/
+    json_memory.cpp     JSON file backend with knowledge graph links
+    sqlite_memory.cpp   SQLite+FTS5 backend (optional)
+    none_memory.cpp     No-op backend
+    response_cache.cpp  LLM response deduplication cache
   tools/
     file_read.cpp       Read file contents
     file_write.cpp      Write/create files
     file_edit.cpp       Search-and-replace edits
     shell.cpp           Shell command execution
+    memory_store.cpp    Store/upsert memory entries with optional links
+    memory_recall.cpp   Search memories with graph traversal
+    memory_forget.cpp   Delete memory entries
+    memory_link.cpp     Create/remove bidirectional links between entries
 tests/                  Catch2 unit tests
 meson_options.txt       Compile-time feature flags
 ```
