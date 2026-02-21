@@ -8,6 +8,7 @@
 
 namespace ptrclaw {
 
+// Keep in sync with struct defaults in config.hpp
 static nlohmann::json build_defaults_json() {
     return {
         {"default_provider", "anthropic"},

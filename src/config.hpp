@@ -6,6 +6,7 @@
 
 namespace ptrclaw {
 
+// Keep defaults in sync with build_defaults_json() in config.cpp
 struct AgentConfig {
     uint32_t max_tool_iterations = 10;
     uint32_t max_history_messages = 50;
@@ -32,6 +33,7 @@ struct ChannelsConfig {
     std::optional<WhatsAppChannelConfig> whatsapp;
 };
 
+// Keep defaults in sync with build_defaults_json() in config.cpp
 struct MemoryConfig {
     std::string backend = "json";
     std::string path;
@@ -54,7 +56,7 @@ struct Config {
     std::string ollama_base_url = "http://localhost:11434";
     std::string compatible_base_url;
 
-    // Defaults
+    // Defaults — keep in sync with build_defaults_json() in config.cpp
     std::string default_provider = "anthropic";
     std::string default_model = "claude-sonnet-4-20250514";
     double default_temperature = 0.7;
