@@ -2,7 +2,7 @@
 
 A lightweight, extensible AI assistant infrastructure in C++17. Run it as a CLI, a Telegram bot, a WhatsApp bot — or plug in your own channel.
 
-**~514 KB static binary (macOS). Lightweight Linux backend for smaller binaries. 5 providers, 4 tools, 2 messaging channels, and compile-time feature flags.**
+**~514 KB static binary. Single POSIX-socket + OpenSSL HTTP backend on Linux and macOS. 5 providers, 4 tools, 2 messaging channels, and compile-time feature flags.**
 
 ## Features
 
@@ -38,12 +38,12 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 - C++17 compiler (Clang 15+ recommended, GCC 10+ works)
 - [Meson](https://mesonbuild.com/) + Ninja
-- libssl (Linux) / libcurl + libssl (macOS path)
+- OpenSSL (Linux: `libssl-dev`; macOS: Homebrew `openssl@3`)
 
 ### macOS
 
 ```sh
-brew install meson llvm gcovr
+brew install meson llvm gcovr openssl@3
 ```
 
 ### Linux (Debian/Ubuntu)
@@ -255,8 +255,7 @@ src/
   session.hpp/cpp       Multi-session management with idle eviction
   prompt.hpp/cpp        System prompt builder
   http.hpp              HttpClient interface
-  http_socket.cpp       Linux HTTP backend (POSIX sockets + OpenSSL)
-  http.cpp              macOS HTTP backend (libcurl)
+  http_socket.cpp       HTTP backend (POSIX sockets + OpenSSL; Linux and macOS)
   util.hpp/cpp          String/path utilities
   channels/
     telegram.hpp/cpp    Telegram Bot API (long-polling, Markdown→HTML, streaming edits)

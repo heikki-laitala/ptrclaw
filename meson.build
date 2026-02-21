@@ -2,25 +2,18 @@ project('ptrclaw', 'cpp',
   version: '0.1.0',
   default_options: ['cpp_std=c++17', 'buildtype=release', 'warning_level=2', 'b_lto=true'])
 
-# Linux uses a lightweight POSIX-socket + OpenSSL HTTP backend to avoid
-# the libcurl dependency and reduce static binary size.
-# macOS keeps libcurl (available via the system SDK / Homebrew).
-host_system = host_machine.system()
-if host_system == 'linux'
-  # Try pkg-config / cmake first; fall back to direct library search
-  # (e.g. environments where libssl-dev is present but pkg-config is not).
-  http_dep = dependency('openssl', required: false)
-  if not http_dep.found()
-    cc = meson.get_compiler('cpp')
-    ssl_lib    = cc.find_library('ssl',    required: true)
-    crypto_lib = cc.find_library('crypto', required: true)
-    http_dep   = declare_dependency(dependencies: [ssl_lib, crypto_lib])
-  endif
-  http_impl_source = files('src/http_socket.cpp')
-else
-  http_dep = dependency('libcurl')
-  http_impl_source = files('src/http.cpp')
+# Both Linux and macOS use the POSIX-socket + OpenSSL HTTP backend.
+# Try pkg-config / cmake first; fall back to direct library search
+# (e.g. environments where libssl-dev is present but pkg-config is not,
+# or Homebrew openssl@3 without PKG_CONFIG_PATH set).
+http_dep = dependency('openssl', required: false)
+if not http_dep.found()
+  cc = meson.get_compiler('cpp')
+  ssl_lib    = cc.find_library('ssl',    required: true)
+  crypto_lib = cc.find_library('crypto', required: true)
+  http_dep   = declare_dependency(dependencies: [ssl_lib, crypto_lib])
 endif
+http_impl_source = files('src/http_socket.cpp')
 
 inc = include_directories('include', 'src')
 

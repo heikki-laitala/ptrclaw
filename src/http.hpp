@@ -8,7 +8,7 @@
 namespace ptrclaw {
 
 // Initialize HTTP subsystem (call once at startup).
-// No-op on Linux (OpenSSL 1.1+ auto-initialises); initialises libcurl on macOS.
+// No-op: OpenSSL 1.1+ auto-initialises on all platforms.
 void http_init();
 
 // Cleanup HTTP subsystem (call once at shutdown).
@@ -45,11 +45,7 @@ public:
                                          long timeout_seconds = 300);
 };
 
-// Platform-specific concrete implementations.
-// Only one is compiled per build target (meson.build gates the source file).
-#ifdef __linux__
-
-// Linux: POSIX sockets + OpenSSL (no libcurl dependency)
+// Concrete HTTP client: POSIX sockets + OpenSSL (Linux and macOS).
 class SocketHttpClient : public HttpClient {
 public:
     HttpResponse post(const std::string& url,
@@ -58,20 +54,6 @@ public:
                       long timeout_seconds = 120) override;
 };
 using PlatformHttpClient = SocketHttpClient;
-
-#else
-
-// macOS: libcurl
-class CurlHttpClient : public HttpClient {
-public:
-    HttpResponse post(const std::string& url,
-                      const std::string& body,
-                      const std::vector<Header>& headers,
-                      long timeout_seconds = 120) override;
-};
-using PlatformHttpClient = CurlHttpClient;
-
-#endif
 
 // HTTP POST with JSON body
 HttpResponse http_post(const std::string& url,

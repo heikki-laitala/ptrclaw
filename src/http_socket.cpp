@@ -1,7 +1,6 @@
-// Linux HTTP/HTTPS client using POSIX sockets + OpenSSL.
-// Implements the same public API as http.cpp (libcurl) with identical
-// interface behaviour: http_init/cleanup are no-ops (OpenSSL 1.1+ auto-inits).
-#ifdef __linux__
+// Cross-platform HTTP/HTTPS client using POSIX sockets + OpenSSL.
+// Works on Linux and macOS (POSIX/BSD sockets, OpenSSL or Homebrew openssl@3).
+// http_init/cleanup are no-ops (OpenSSL 1.1+ auto-initialises).
 
 #include "http.hpp"
 
@@ -511,5 +510,3 @@ HttpResponse http_stream_post_raw(const std::string& url,
 }
 
 } // namespace ptrclaw
-
-#endif // __linux__

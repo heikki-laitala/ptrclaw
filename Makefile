@@ -6,6 +6,11 @@ ifeq ($(shell uname),Darwin)
   ifeq ($(shell xcode-select -p 2>/dev/null),)
     $(error Xcode Command Line Tools required. Install with: xcode-select --install)
   endif
+  # Expose Homebrew openssl@3 to pkg-config so meson's dependency('openssl') finds it.
+  _OPENSSL_PREFIX := $(shell brew --prefix openssl@3 2>/dev/null)
+  ifneq ($(_OPENSSL_PREFIX),)
+    export PKG_CONFIG_PATH := $(_OPENSSL_PREFIX)/lib/pkgconfig:$(PKG_CONFIG_PATH)
+  endif
 else
   NATIVE_FILE := meson-native-linux.ini
   CLANG_TIDY_EXTRA :=
@@ -20,7 +25,7 @@ COVDIR := builddir-cov
 deps:
 ifeq ($(shell uname),Darwin)
 	@command -v brew >/dev/null || { echo "Error: Homebrew is required. Install from https://brew.sh"; exit 1; }
-	brew install meson llvm gcovr
+	brew install meson llvm gcovr openssl@3
 else
 	sudo apt-get update
 	sudo apt-get install -y g++ meson ninja-build libssl-dev clang-tidy lld gcovr
