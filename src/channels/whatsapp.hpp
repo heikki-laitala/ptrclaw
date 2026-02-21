@@ -1,8 +1,13 @@
 #pragma once
 #include "../channel.hpp"
 #include "../http.hpp"
+#include "whatsapp_server.hpp"
 #include <string>
 #include <vector>
+#include <memory>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
 
 namespace ptrclaw {
 
@@ -12,6 +17,10 @@ struct WhatsAppConfig {
     std::string verify_token;
     std::string app_secret; // optional, for webhook signature verification
     std::vector<std::string> allow_from; // E.164 phone numbers
+    // Built-in webhook server (for reverse-proxy ingestion)
+    std::string webhook_listen;           // "host:port"; empty = server disabled
+    std::string webhook_secret;           // X-Webhook-Secret header for proxy→local trust
+    uint32_t    webhook_max_body = 65536; // max POST body size in bytes
 };
 
 struct WhatsAppParsedMessage {
@@ -29,6 +38,14 @@ public:
     std::string channel_name() const override { return "whatsapp"; }
     bool health_check() override { return true; }
     void send_message(const std::string& target, const std::string& message) override;
+
+    // Webhook server mode: active when webhook_listen is configured.
+    bool supports_polling() const override;
+    void initialize() override;
+    std::vector<ChannelMessage> poll_updates() override;
+
+    // Handle one inbound HTTP request (public for testing).
+    WebhookResponse handle_webhook_request(const WebhookRequest& req);
 
     // Parse incoming webhook payload into messages
     std::vector<WhatsAppParsedMessage> parse_webhook_payload(const std::string& payload) const;
@@ -49,6 +66,12 @@ public:
 private:
     WhatsAppConfig config_;
     HttpClient& http_;
+
+    // Webhook server (null when webhook_listen is empty)
+    std::unique_ptr<WhatsAppWebhookServer> server_;
+    std::mutex queue_mutex_;
+    std::condition_variable queue_cv_;
+    std::vector<ChannelMessage> message_queue_;
 };
 
 } // namespace ptrclaw
