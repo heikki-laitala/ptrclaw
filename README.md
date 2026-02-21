@@ -2,7 +2,7 @@
 
 A lightweight, extensible AI assistant infrastructure in C++17. Run it as a CLI, a Telegram bot, a WhatsApp bot — or plug in your own channel.
 
-**~514 KB static binary (macOS). Linux uses a socket+OpenSSL HTTP backend (no libcurl). 5 providers. 4 tools. 2 messaging channels. Compile-time feature flags.**
+**~514 KB static binary (macOS). Lightweight Linux backend for smaller binaries. 5 providers, 4 tools, 2 messaging channels, and compile-time feature flags.**
 
 ## Features
 
@@ -104,6 +104,50 @@ Environment variables override the config file:
 | `WHATSAPP_ACCESS_TOKEN` | WhatsApp Business API access token |
 | `WHATSAPP_PHONE_ID` | WhatsApp Business phone number ID |
 | `WHATSAPP_VERIFY_TOKEN` | WhatsApp webhook verification token |
+
+### How to get a Telegram bot token
+
+1. Open Telegram and start a chat with [@BotFather](https://t.me/BotFather).
+2. Send `/newbot` and follow the prompts:
+   - Bot display name (can contain spaces)
+   - Bot username (must end with `bot`, e.g. `ptrclaw_helper_bot`)
+3. BotFather returns an HTTP API token in this format:
+   - `123456789:AA...`
+4. Add it to config or env:
+
+```sh
+export TELEGRAM_BOT_TOKEN="123456789:AA..."
+```
+
+Optional hardening:
+- In BotFather, run `/setprivacy` for your bot.
+  - **Enable** privacy mode for group chats where you only want commands/mentions.
+  - **Disable** privacy mode if your bot needs to read all group messages.
+
+### How to get WhatsApp Cloud API credentials
+
+Use Meta's WhatsApp Business Platform (Cloud API).
+
+1. Go to [Meta for Developers](https://developers.facebook.com/), create/select an app.
+2. Add the **WhatsApp** product to the app.
+3. In **WhatsApp > API Setup**, copy:
+   - **Temporary access token** (for testing) or create a **system user permanent token**
+   - **Phone number ID**
+4. Configure webhook in **WhatsApp > Configuration**:
+   - Callback URL: your public webhook endpoint
+   - Verify token: choose a secret string (you define this)
+   - Subscribe to `messages` (and other events you need)
+5. Add values to env/config:
+
+```sh
+export WHATSAPP_ACCESS_TOKEN="EAA..."
+export WHATSAPP_PHONE_ID="123456789"
+export WHATSAPP_VERIFY_TOKEN="your-verify-secret"
+```
+
+Notes:
+- Temporary tokens expire; use a long-lived token for production.
+- Your webhook URL must be publicly reachable over HTTPS.
 
 ## Usage
 
