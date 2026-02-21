@@ -25,11 +25,11 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++ meson ninja-build libssl-dev clang-tidy lld gcovr
+          sudo apt-get install -y g++ meson ninja-build libssl-dev libsqlite3-dev clang-tidy lld gcovr
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install meson llvm gcovr
+        run: brew install meson llvm gcovr sqlite3
 
       - name: Cache build
         uses: actions/cache@v4
@@ -38,8 +38,15 @@ jobs:
           key: meson-${{ matrix.os }}-${{ hashFiles('meson.build', 'src/**/*.cpp', 'src/**/*.hpp') }}
           restore-keys: meson-${{ matrix.os }}-
 
+      - name: Setup
+        run: |
+          if [ ! -d builddir ]; then
+            meson setup builddir --native-file $(if [ "$(uname)" = "Darwin" ]; then echo meson-native-macos.ini; else echo meson-native-linux.ini; fi) \
+              -Dwith_sqlite_memory=true -Dcatch2:tests=false
+          fi
+
       - name: Build
-        run: make build
+        run: meson compile -C builddir
 
       - name: Test
         run: make test
@@ -50,7 +57,7 @@ jobs:
       - name: Coverage
         if: runner.os == 'Linux'
         run: |
-          meson setup builddir-cov -Db_coverage=true -Dcatch2:tests=false
+          meson setup builddir-cov -Db_coverage=true -Dwith_sqlite_memory=true -Dcatch2:tests=false
           meson test -C builddir-cov
           gcovr -x --root . builddir-cov --filter src/ > coverage.xml
 

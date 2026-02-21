@@ -20,10 +20,10 @@ COVDIR := builddir-cov
 deps:
 ifeq ($(shell uname),Darwin)
 	@command -v brew >/dev/null || { echo "Error: Homebrew is required. Install from https://brew.sh"; exit 1; }
-	brew install meson llvm gcovr
+	brew install meson llvm gcovr sqlite3
 else
 	sudo apt-get update
-	sudo apt-get install -y g++ meson ninja-build libssl-dev clang-tidy lld gcovr
+	sudo apt-get install -y g++ meson ninja-build libssl-dev libsqlite3-dev clang-tidy lld gcovr
 endif
 
 setup:
@@ -35,12 +35,11 @@ build: setup
 build-minimal:
 	@if [ ! -d $(MINDIR) ]; then meson setup $(MINDIR) --native-file $(NATIVE_FILE) -Dcatch2:tests=false \
 		-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false -Dwith_compatible=false \
-		-Dwith_whatsapp=false -Dwith_memory=false -Dwith_memory_tools=false -Dwith_sqlite_memory=false \
-		-Dwith_embeddings=false; fi
+		-Dwith_whatsapp=false -Dwith_sqlite_memory=false; fi
 	meson compile -C $(MINDIR)
 
 build-static:
-	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) --native-file $(NATIVE_FILE) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false; fi
+	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) --native-file $(NATIVE_FILE) -Ddefault_library=static -Dprefer_static=true -Dwith_sqlite_memory=true -Dcatch2:tests=false; fi
 	meson compile -C $(STATICDIR)
 
 run: build
