@@ -52,6 +52,7 @@ public:
 private:
     void compact_history();
     void inject_system_prompt();
+    void wire_memory_tools();
 
     std::unique_ptr<Provider> provider_;
     std::vector<std::unique_ptr<Tool>> tools_;
