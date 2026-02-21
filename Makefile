@@ -15,7 +15,7 @@ STATICDIR := builddir-static
 MINDIR := builddir-minimal
 COVDIR := builddir-cov
 
-.PHONY: deps setup build build-minimal build-static run test coverage coverage-summary lint clean
+.PHONY: deps setup build build-minimal build-static run test coverage coverage-summary lint clean clear-memory
 
 deps:
 ifeq ($(shell uname),Darwin)
@@ -60,6 +60,10 @@ coverage-summary:
 
 lint: build
 	run-clang-tidy -quiet -p $(BUILDDIR) $(CLANG_TIDY_EXTRA) '^(?!.*subprojects).*(src|tests)/' 2>&1 | grep -v 'warnings generated'
+
+clear-memory:
+	rm -f ~/.ptrclaw/memory.json ~/.ptrclaw/memory.db
+	@echo "Memory cleared"
 
 clean:
 	rm -rf $(BUILDDIR) $(STATICDIR) $(MINDIR) $(COVDIR)
