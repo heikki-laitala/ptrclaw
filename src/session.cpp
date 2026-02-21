@@ -23,7 +23,7 @@ Agent& SessionManager::get_session(const std::string& session_id) {
         config_.default_provider,
         config_.api_key_for(config_.default_provider),
         http_,
-        config_.ollama_base_url);
+        config_.base_url_for(config_.default_provider));
 
     auto tools = create_builtin_tools();
 

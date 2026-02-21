@@ -24,6 +24,8 @@ Config Config::load() {
                 cfg.openrouter_api_key = j["openrouter_api_key"].get<std::string>();
             if (j.contains("ollama_base_url") && j["ollama_base_url"].is_string())
                 cfg.ollama_base_url = j["ollama_base_url"].get<std::string>();
+            if (j.contains("compatible_base_url") && j["compatible_base_url"].is_string())
+                cfg.compatible_base_url = j["compatible_base_url"].get<std::string>();
 
             if (j.contains("default_provider") && j["default_provider"].is_string())
                 cfg.default_provider = j["default_provider"].get<std::string>();
@@ -98,6 +100,8 @@ Config Config::load() {
         cfg.openrouter_api_key = v;
     if (const char* v = std::getenv("OLLAMA_BASE_URL"))
         cfg.ollama_base_url = v;
+    if (const char* v = std::getenv("COMPATIBLE_BASE_URL"))
+        cfg.compatible_base_url = v;
 
     // Channel env var overrides
     if (const char* v = std::getenv("TELEGRAM_BOT_TOKEN")) {
@@ -128,6 +132,12 @@ std::string Config::api_key_for(const std::string& provider) const {
     if (provider == "anthropic") return anthropic_api_key;
     if (provider == "openai")    return openai_api_key;
     if (provider == "openrouter") return openrouter_api_key;
+    return {};
+}
+
+std::string Config::base_url_for(const std::string& provider) const {
+    if (provider == "ollama")     return ollama_base_url;
+    if (provider == "compatible") return compatible_base_url;
     return {};
 }
 

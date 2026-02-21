@@ -168,7 +168,7 @@ int main(int argc, char* argv[]) try {
             config.default_provider,
             config.api_key_for(config.default_provider),
             http_client,
-            config.ollama_base_url);
+            config.base_url_for(config.default_provider));
     } catch (const std::exception& e) {
         std::cerr << "Error creating provider: " << e.what() << "\n";
         ptrclaw::http_cleanup();

@@ -47,6 +47,26 @@ TEST_CASE("Config::api_key_for: unknown provider returns empty", "[config]") {
     REQUIRE(cfg.api_key_for("").empty());
 }
 
+// ── base_url_for ─────────────────────────────────────────────────
+
+TEST_CASE("Config::base_url_for: returns correct URL per provider", "[config]") {
+    Config cfg;
+    cfg.ollama_base_url = "http://ollama:11434";
+    cfg.compatible_base_url = "http://local:8080/v1";
+
+    REQUIRE(cfg.base_url_for("ollama") == "http://ollama:11434");
+    REQUIRE(cfg.base_url_for("compatible") == "http://local:8080/v1");
+}
+
+TEST_CASE("Config::base_url_for: other providers return empty", "[config]") {
+    Config cfg;
+    cfg.ollama_base_url = "http://ollama:11434";
+    REQUIRE(cfg.base_url_for("anthropic").empty());
+    REQUIRE(cfg.base_url_for("openai").empty());
+    REQUIRE(cfg.base_url_for("openrouter").empty());
+    REQUIRE(cfg.base_url_for("unknown").empty());
+}
+
 // ── Config::load ────────────────────────────────────────────────
 
 // Helper: create a temp directory
