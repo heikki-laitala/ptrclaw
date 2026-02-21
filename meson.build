@@ -53,6 +53,7 @@ if opt_sqlite_memory
     sqlite3_dep = sqlite3_proj.get_variable('sqlite3_dep')
   endif
   lib_deps += sqlite3_dep
+  add_project_arguments('-DPTRCLAW_HAS_SQLITE_MEMORY', language: 'cpp')
 endif
 
 # ── Core sources (always compiled) ─────────────────────────────

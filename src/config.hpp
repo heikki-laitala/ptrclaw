@@ -35,7 +35,11 @@ struct ChannelsConfig {
 
 // Keep defaults in sync with build_defaults_json() in config.cpp
 struct MemoryConfig {
+#ifdef PTRCLAW_HAS_SQLITE_MEMORY
+    std::string backend = "sqlite";
+#else
     std::string backend = "json";
+#endif
     std::string path;
     bool auto_save = false;
     uint32_t recall_limit = 5;

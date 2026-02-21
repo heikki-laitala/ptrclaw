@@ -249,7 +249,11 @@ TEST_CASE("Config::load: creates default config when missing", "[config]") {
     REQUIRE(j["agent"].contains("max_tool_iterations"));
     REQUIRE(j.contains("memory"));
     REQUIRE(j["memory"].contains("backend"));
+#ifdef PTRCLAW_HAS_SQLITE_MEMORY
+    REQUIRE(j["memory"]["backend"] == "sqlite");
+#else
     REQUIRE(j["memory"]["backend"] == "json");
+#endif
 
     // Must not contain API keys or channels
     REQUIRE_FALSE(j.contains("anthropic_api_key"));
@@ -290,7 +294,11 @@ TEST_CASE("Config::load: migrates existing config with missing keys", "[config]"
     REQUIRE(j["anthropic_api_key"] == "sk-test");
     REQUIRE(j["default_model"] == "gpt-4o");
     REQUIRE(j.contains("memory"));
+#ifdef PTRCLAW_HAS_SQLITE_MEMORY
+    REQUIRE(j["memory"]["backend"] == "sqlite");
+#else
     REQUIRE(j["memory"]["backend"] == "json");
+#endif
     REQUIRE(j.contains("agent"));
     REQUIRE(j["agent"]["max_tool_iterations"] == 10);
 
@@ -314,7 +322,11 @@ TEST_CASE("Config::load: does not rewrite complete config", "[config]") {
             {"token_limit", 128000}
         }},
         {"memory", {
+#ifdef PTRCLAW_HAS_SQLITE_MEMORY
+            {"backend", "sqlite"},
+#else
             {"backend", "json"},
+#endif
             {"auto_save", false},
             {"recall_limit", 5},
             {"hygiene_max_age", 604800},

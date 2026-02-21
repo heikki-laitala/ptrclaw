@@ -21,7 +21,11 @@ static nlohmann::json build_defaults_json() {
             {"token_limit", 128000}
         }},
         {"memory", {
+#ifdef PTRCLAW_HAS_SQLITE_MEMORY
+            {"backend", "sqlite"},
+#else
             {"backend", "json"},
+#endif
             {"auto_save", false},
             {"recall_limit", 5},
             {"hygiene_max_age", 604800},
