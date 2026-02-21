@@ -49,6 +49,11 @@ public:
     // Response cache
     void set_response_cache(std::unique_ptr<ResponseCache> cache);
 
+    // Soul hatching
+    bool is_hatched() const;
+    void start_hatch();
+    bool hatching() const { return hatching_; }
+
 private:
     void compact_history();
     void inject_system_prompt();
@@ -66,6 +71,7 @@ private:
     std::unique_ptr<Memory> memory_;
     std::unique_ptr<ResponseCache> response_cache_;
     uint32_t turns_since_synthesis_ = 0;
+    bool hatching_ = false;
 };
 
 } // namespace ptrclaw

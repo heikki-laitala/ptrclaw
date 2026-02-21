@@ -5,14 +5,28 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <utility>
 
 namespace ptrclaw {
 
 // Build the system prompt, including tool descriptions for XML-based providers.
 // When has_memory is true, includes instructions about memory tools and context format.
+// When memory is non-null, injects soul identity block if soul entries exist.
 std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
                                 bool include_tool_descriptions,
-                                bool has_memory = false);
+                                bool has_memory = false,
+                                Memory* memory = nullptr);
+
+// Build the hatching bootstrap system prompt for soul creation.
+std::string build_hatch_prompt();
+
+// Build a soul injection block from core memory entries for the system prompt.
+// Returns empty string if no soul entries exist.
+std::string build_soul_block(Memory* memory);
+
+// Extract and parse soul entries from a response containing <soul>...</soul> tags.
+// Returns key/content pairs, or empty vector if no valid soul block found.
+std::vector<std::pair<std::string, std::string>> parse_soul_json(const std::string& text);
 
 // Build synthesis prompt to extract atomic notes from conversation history.
 std::string build_synthesis_prompt(const std::vector<ChatMessage>& history,

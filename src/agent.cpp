@@ -33,11 +33,26 @@ Agent::Agent(std::unique_ptr<Provider> provider,
 }
 
 void Agent::inject_system_prompt() {
-    bool include_tool_desc = !provider_->supports_native_tools();
-    bool has_memory = memory_ && memory_->backend_name() != "none";
-    std::string prompt = build_system_prompt(tools_, include_tool_desc, has_memory);
+    std::string prompt;
+    if (hatching_) {
+        prompt = build_hatch_prompt();
+    } else {
+        bool include_tool_desc = !provider_->supports_native_tools();
+        bool has_memory = memory_ && memory_->backend_name() != "none";
+        prompt = build_system_prompt(tools_, include_tool_desc, has_memory, memory_.get());
+    }
     history_.insert(history_.begin(), ChatMessage{Role::System, prompt, {}, {}});
     system_prompt_injected_ = true;
+}
+
+bool Agent::is_hatched() const {
+    return memory_ && memory_->get("soul:identity").has_value();
+}
+
+void Agent::start_hatch() {
+    hatching_ = true;
+    history_.clear();
+    system_prompt_injected_ = false;
 }
 
 std::string Agent::process(const std::string& user_message) {
@@ -45,10 +60,13 @@ std::string Agent::process(const std::string& user_message) {
         inject_system_prompt();
     }
 
-    // Enrich user message with recalled memory context
-    std::string enriched_message = memory_enrich(memory_.get(), user_message,
-                                                  config_.memory.recall_limit,
-                                                  config_.memory.enrich_depth);
+    // Enrich user message with recalled memory context (skip during hatching)
+    std::string enriched_message = user_message;
+    if (!hatching_) {
+        enriched_message = memory_enrich(memory_.get(), user_message,
+                                          config_.memory.recall_limit,
+                                          config_.memory.enrich_depth);
+    }
     history_.push_back(ChatMessage{Role::User, enriched_message, {}, {}});
 
     // Build tool specs
@@ -216,6 +234,32 @@ std::string Agent::process(const std::string& user_message) {
         StreamEndEvent ev;
         ev.session_id = session_id_;
         event_bus_->publish(ev);
+    }
+
+    // Soul extraction during hatching
+    if (hatching_ && !final_content.empty()) {
+        auto soul_entries = parse_soul_json(final_content);
+        if (!soul_entries.empty() && memory_) {
+            for (const auto& entry : soul_entries) {
+                memory_->store(entry.first, entry.second, MemoryCategory::Core, "");
+            }
+            // Strip <soul> block from visible response
+            auto soul_start = final_content.find("<soul>");
+            auto soul_end = final_content.find("</soul>");
+            if (soul_start != std::string::npos && soul_end != std::string::npos) {
+                final_content.erase(soul_start, soul_end + 7 - soul_start);
+            }
+            while (!final_content.empty() &&
+                   (final_content.back() == '\n' || final_content.back() == ' ')) {
+                final_content.pop_back();
+            }
+            if (!final_content.empty()) final_content += "\n\n";
+            final_content += "Soul hatched! Your assistant's identity has been saved.";
+            hatching_ = false;
+            history_.clear();
+            system_prompt_injected_ = false;
+            return final_content;
+        }
     }
 
     // Auto-save user+assistant messages to memory if enabled

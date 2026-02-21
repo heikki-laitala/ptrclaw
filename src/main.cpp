@@ -195,6 +195,12 @@ int main(int argc, char* argv[]) try {
               << " | Model: " << agent.model() << "\n"
               << "Type /help for commands, /quit to exit.\n\n";
 
+    // Auto-detect unhatched agent
+    if (agent.memory() && !agent.is_hatched()) {
+        std::cout << "Your assistant doesn't have an identity yet. Starting hatching...\n\n";
+        agent.start_hatch();
+    }
+
     std::string line;
     while (true) {
         std::cout << "ptrclaw> " << std::flush;
@@ -258,6 +264,9 @@ int main(int argc, char* argv[]) try {
                         std::cout << "Imported " << n << " entries.\n";
                     }
                 }
+            } else if (line == "/hatch") {
+                agent.start_hatch();
+                std::cout << "Entering hatching mode...\n";
             } else if (line == "/help") {
                 std::cout << "Commands:\n"
                           << "  /status          Show current status\n"
@@ -266,6 +275,7 @@ int main(int argc, char* argv[]) try {
                           << "  /memory          Show memory status\n"
                           << "  /memory export   Export memories as JSON\n"
                           << "  /memory import P Import memories from JSON file\n"
+                          << "  /hatch           Create or re-create assistant identity\n"
                           << "  /quit            Exit\n"
                           << "  /exit            Exit\n"
                           << "  /help            Show this help\n";
