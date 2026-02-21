@@ -21,7 +21,7 @@ jobs:
             target: macos
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      SMOKE_MODEL: openai/gpt-4o-mini
+      SMOKE_MODEL: openrouter/auto
     steps:
       - name: Checkout
         uses: actions/checkout@v4
