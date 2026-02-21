@@ -30,7 +30,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++ meson ninja-build libssl-dev
+          # Keep libcurl for main-branch compatibility; harmless on libcurl-free branches.
+          sudo apt-get install -y g++ meson ninja-build libssl-dev libcurl4-openssl-dev
 
       - name: Build (Linux backend path)
         run: |
