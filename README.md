@@ -20,7 +20,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 
 - **LLM streaming** — real-time token streaming with progressive message editing in channels
 - **Event-driven architecture** — publish/subscribe event bus decouples agent, channels, and streaming
-- **Interactive REPL** with slash commands (`/status`, `/model`, `/clear`, `/help`, `/quit`)
+- **Interactive REPL** with slash commands (`/status`, `/model`, `/clear`, `/memory`, `/soul`, `/hatch`, `/help`, `/quit`)
 - **Single-message mode** — pipe a question in and get an answer back
 - **Automatic history compaction** when token usage approaches the context limit
 - **Persistent memory** — knowledge graph with bidirectional links, three-space semantics (core/knowledge/conversation), graph-aware context enrichment, automatic conversation synthesis
@@ -49,7 +49,7 @@ That's it. No virtual environments, no package managers at runtime.
 - [Meson](https://mesonbuild.com/) + Ninja
 - libssl (OpenSSL)
 - libcurl (macOS only; Linux uses a built-in socket HTTP backend)
-- libsqlite3 (for SQLite memory backend)
+- libsqlite3 (optional — for SQLite memory backend; the default JSON file backend has zero dependencies)
 
 ### macOS
 
