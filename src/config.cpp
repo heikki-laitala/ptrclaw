@@ -26,6 +26,10 @@ nlohmann::json Config::defaults_json() {
             {"max_history_messages", 50},
             {"token_limit", 128000}
         }},
+        {"channels", {
+            {"telegram", {{"bot_token", ""}, {"allow_from", nlohmann::json::array()}, {"reply_in_private", true}, {"proxy", ""}}},
+            {"whatsapp", {{"access_token", ""}, {"phone_number_id", ""}, {"verify_token", ""}, {"app_secret", ""}, {"allow_from", nlohmann::json::array()}}}
+        }},
         {"memory", {
 #ifdef PTRCLAW_HAS_SQLITE_MEMORY
             {"backend", "sqlite"},
@@ -93,6 +97,9 @@ Config Config::load() {
     if (j.contains("temperature") && j["temperature"].is_number())
         cfg.temperature = j["temperature"].get<double>();
 
+    if (j.contains("base_url") && j["base_url"].is_string())
+        cfg.base_url = j["base_url"].get<std::string>();
+
     if (j.contains("providers") && j["providers"].is_object()) {
         for (auto& [name, obj] : j["providers"].items()) {
             if (!obj.is_object()) continue;
@@ -115,46 +122,11 @@ Config Config::load() {
             cfg.agent.token_limit = a["token_limit"].get<uint32_t>();
     }
 
-    // Channel configurations
+    // Channel configurations — store raw JSON per channel name
     if (j.contains("channels") && j["channels"].is_object()) {
-        auto& ch = j["channels"];
-
-        if (ch.contains("telegram") && ch["telegram"].is_object()) {
-            auto& t = ch["telegram"];
-            TelegramChannelConfig tc;
-            if (t.contains("bot_token") && t["bot_token"].is_string())
-                tc.bot_token = t["bot_token"].get<std::string>();
-            if (t.contains("reply_in_private") && t["reply_in_private"].is_boolean())
-                tc.reply_in_private = t["reply_in_private"].get<bool>();
-            if (t.contains("proxy") && t["proxy"].is_string())
-                tc.proxy = t["proxy"].get<std::string>();
-            if (t.contains("allow_from") && t["allow_from"].is_array()) {
-                for (const auto& u : t["allow_from"]) {
-                    if (u.is_string()) tc.allow_from.push_back(u.get<std::string>());
-                }
-            }
-            if (!tc.bot_token.empty())
-                cfg.channels.telegram = std::move(tc);
-        }
-
-        if (ch.contains("whatsapp") && ch["whatsapp"].is_object()) {
-            auto& w = ch["whatsapp"];
-            WhatsAppChannelConfig wc;
-            if (w.contains("access_token") && w["access_token"].is_string())
-                wc.access_token = w["access_token"].get<std::string>();
-            if (w.contains("phone_number_id") && w["phone_number_id"].is_string())
-                wc.phone_number_id = w["phone_number_id"].get<std::string>();
-            if (w.contains("verify_token") && w["verify_token"].is_string())
-                wc.verify_token = w["verify_token"].get<std::string>();
-            if (w.contains("app_secret") && w["app_secret"].is_string())
-                wc.app_secret = w["app_secret"].get<std::string>();
-            if (w.contains("allow_from") && w["allow_from"].is_array()) {
-                for (const auto& p : w["allow_from"]) {
-                    if (p.is_string()) wc.allow_from.push_back(p.get<std::string>());
-                }
-            }
-            if (!wc.access_token.empty() && !wc.phone_number_id.empty())
-                cfg.channels.whatsapp = std::move(wc);
+        for (auto& [name, obj] : j["channels"].items()) {
+            if (obj.is_object())
+                cfg.channels[name] = obj;
         }
     }
 
@@ -185,9 +157,6 @@ Config Config::load() {
             cfg.memory.synthesis_interval = m["synthesis_interval"].get<uint32_t>();
     }
 
-    if (j.contains("base_url") && j["base_url"].is_string())
-        cfg.base_url = j["base_url"].get<std::string>();
-
     // Environment variables always override config file
     if (const char* v = std::getenv("ANTHROPIC_API_KEY"))
         cfg.providers["anthropic"].api_key = v;
@@ -203,26 +172,14 @@ Config Config::load() {
         cfg.providers["compatible"].base_url = v;
 
     // Channel env var overrides
-    if (const char* v = std::getenv("TELEGRAM_BOT_TOKEN")) {
-        if (!cfg.channels.telegram)
-            cfg.channels.telegram = TelegramChannelConfig{};
-        cfg.channels.telegram->bot_token = v;
-    }
-    if (const char* v = std::getenv("WHATSAPP_ACCESS_TOKEN")) {
-        if (!cfg.channels.whatsapp)
-            cfg.channels.whatsapp = WhatsAppChannelConfig{};
-        cfg.channels.whatsapp->access_token = v;
-    }
-    if (const char* v = std::getenv("WHATSAPP_PHONE_ID")) {
-        if (!cfg.channels.whatsapp)
-            cfg.channels.whatsapp = WhatsAppChannelConfig{};
-        cfg.channels.whatsapp->phone_number_id = v;
-    }
-    if (const char* v = std::getenv("WHATSAPP_VERIFY_TOKEN")) {
-        if (!cfg.channels.whatsapp)
-            cfg.channels.whatsapp = WhatsAppChannelConfig{};
-        cfg.channels.whatsapp->verify_token = v;
-    }
+    if (const char* v = std::getenv("TELEGRAM_BOT_TOKEN"))
+        cfg.channels["telegram"]["bot_token"] = v;
+    if (const char* v = std::getenv("WHATSAPP_ACCESS_TOKEN"))
+        cfg.channels["whatsapp"]["access_token"] = v;
+    if (const char* v = std::getenv("WHATSAPP_PHONE_ID"))
+        cfg.channels["whatsapp"]["phone_number_id"] = v;
+    if (const char* v = std::getenv("WHATSAPP_VERIFY_TOKEN"))
+        cfg.channels["whatsapp"]["verify_token"] = v;
 
     return cfg;
 }
@@ -238,6 +195,12 @@ std::string Config::base_url_for(const std::string& prov) const {
     auto it = providers.find(prov);
     if (it != providers.end()) return it->second.base_url;
     return {};
+}
+
+nlohmann::json Config::channel_config(const std::string& name) const {
+    auto it = channels.find(name);
+    if (it != channels.end()) return it->second;
+    return nlohmann::json::object();
 }
 
 } // namespace ptrclaw

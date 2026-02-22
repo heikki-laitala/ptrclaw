@@ -224,8 +224,12 @@ TEST_CASE("Config::load: creates default config when missing", "[config]") {
     REQUIRE(j["memory"]["backend"] == "json");
 #endif
 
-    // Must not contain channels
-    REQUIRE_FALSE(j.contains("channels"));
+    // Channels section present with empty defaults
+    REQUIRE(j.contains("channels"));
+    REQUIRE(j["channels"].contains("telegram"));
+    REQUIRE(j["channels"]["telegram"]["bot_token"] == "");
+    REQUIRE(j["channels"].contains("whatsapp"));
+    REQUIRE(j["channels"]["whatsapp"]["access_token"] == "");
 }
 
 TEST_CASE("Config::load: migrates existing config with missing keys", "[config]") {
