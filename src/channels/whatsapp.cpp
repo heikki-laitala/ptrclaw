@@ -6,16 +6,18 @@
 static ptrclaw::ChannelRegistrar reg_whatsapp("whatsapp",
     [](const ptrclaw::Config& config, ptrclaw::HttpClient& http)
         -> std::unique_ptr<ptrclaw::Channel> {
-        if (!config.channels.whatsapp || config.channels.whatsapp->access_token.empty()) {
+        auto ch = config.channel_config("whatsapp");
+        if (!ch.contains("access_token") || ch["access_token"].get<std::string>().empty()) {
             throw std::runtime_error("WhatsApp access_token not configured");
         }
-        auto& wc = *config.channels.whatsapp;
         ptrclaw::WhatsAppConfig wa_cfg;
-        wa_cfg.access_token = wc.access_token;
-        wa_cfg.phone_number_id = wc.phone_number_id;
-        wa_cfg.verify_token = wc.verify_token;
-        wa_cfg.app_secret = wc.app_secret;
-        wa_cfg.allow_from = wc.allow_from;
+        wa_cfg.access_token = ch["access_token"].get<std::string>();
+        wa_cfg.phone_number_id = ch.value("phone_number_id", std::string{});
+        wa_cfg.verify_token = ch.value("verify_token", std::string{});
+        wa_cfg.app_secret = ch.value("app_secret", std::string{});
+        if (ch.contains("allow_from") && ch["allow_from"].is_array())
+            for (const auto& p : ch["allow_from"])
+                if (p.is_string()) wa_cfg.allow_from.push_back(p.get<std::string>());
         return std::make_unique<ptrclaw::WhatsAppChannel>(wa_cfg, http);
     });
 

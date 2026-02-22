@@ -1,7 +1,5 @@
 #pragma once
 #include <string>
-#include <vector>
-#include <optional>
 #include <cstdint>
 #include <unordered_map>
 #include <nlohmann/json.hpp>
@@ -17,26 +15,6 @@ struct AgentConfig {
     uint32_t max_tool_iterations = 10;
     uint32_t max_history_messages = 50;
     uint32_t token_limit = 128000;
-};
-
-struct TelegramChannelConfig {
-    std::string bot_token;
-    std::vector<std::string> allow_from;
-    bool reply_in_private = true;
-    std::string proxy;
-};
-
-struct WhatsAppChannelConfig {
-    std::string access_token;
-    std::string phone_number_id;
-    std::string verify_token;
-    std::string app_secret;
-    std::vector<std::string> allow_from;
-};
-
-struct ChannelsConfig {
-    std::optional<TelegramChannelConfig> telegram;
-    std::optional<WhatsAppChannelConfig> whatsapp;
 };
 
 struct MemoryConfig {
@@ -66,7 +44,7 @@ struct Config {
     std::unordered_map<std::string, ProviderEntry> providers;
 
     AgentConfig agent;
-    ChannelsConfig channels;
+    std::unordered_map<std::string, nlohmann::json> channels;
     MemoryConfig memory;
 
     // Load from ~/.ptrclaw/config.json + env vars
@@ -80,6 +58,9 @@ struct Config {
 
     // Get base URL for a provider name (empty = use provider default)
     std::string base_url_for(const std::string& provider) const;
+
+    // Get JSON config for a channel name (empty object if absent)
+    nlohmann::json channel_config(const std::string& name) const;
 };
 
 } // namespace ptrclaw

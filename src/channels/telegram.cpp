@@ -9,15 +9,17 @@
 static ptrclaw::ChannelRegistrar reg_telegram("telegram",
     [](const ptrclaw::Config& config, ptrclaw::HttpClient& http)
         -> std::unique_ptr<ptrclaw::Channel> {
-        if (!config.channels.telegram || config.channels.telegram->bot_token.empty()) {
+        auto ch = config.channel_config("telegram");
+        if (!ch.contains("bot_token") || ch["bot_token"].get<std::string>().empty()) {
             throw std::runtime_error("Telegram bot_token not configured");
         }
-        auto& tc = *config.channels.telegram;
         ptrclaw::TelegramConfig tg_cfg;
-        tg_cfg.bot_token = tc.bot_token;
-        tg_cfg.allow_from = tc.allow_from;
-        tg_cfg.reply_in_private = tc.reply_in_private;
-        tg_cfg.proxy = tc.proxy;
+        tg_cfg.bot_token = ch["bot_token"].get<std::string>();
+        tg_cfg.reply_in_private = ch.value("reply_in_private", true);
+        tg_cfg.proxy = ch.value("proxy", std::string{});
+        if (ch.contains("allow_from") && ch["allow_from"].is_array())
+            for (const auto& u : ch["allow_from"])
+                if (u.is_string()) tg_cfg.allow_from.push_back(u.get<std::string>());
         return std::make_unique<ptrclaw::TelegramChannel>(tg_cfg, http);
     });
 
