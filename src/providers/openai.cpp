@@ -8,8 +8,6 @@
 
 static ptrclaw::ProviderRegistrar reg_openai("openai",
     [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url) {
-        if (base_url.empty())
-            return std::make_unique<ptrclaw::OpenAIProvider>(key, http);
         return std::make_unique<ptrclaw::OpenAIProvider>(key, http, base_url);
     });
 
@@ -18,7 +16,8 @@ using json = nlohmann::json;
 namespace ptrclaw {
 
 OpenAIProvider::OpenAIProvider(const std::string& api_key, HttpClient& http, const std::string& base_url)
-    : api_key_(api_key), http_(http), base_url_(base_url) {}
+    : api_key_(api_key), http_(http),
+      base_url_(base_url.empty() ? "https://api.openai.com/v1" : base_url) {}
 
 json OpenAIProvider::build_request(const std::vector<ChatMessage>& messages,
                                     const std::vector<ToolSpec>& tools,

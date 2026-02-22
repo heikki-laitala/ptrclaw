@@ -32,7 +32,7 @@ TEST_CASE("AnthropicProvider: chat sends correct request", "[providers][anthropi
         "usage": {"input_tokens": 10, "output_tokens": 5}
     })"};
 
-    AnthropicProvider provider("test-key", mock);
+    AnthropicProvider provider("test-key", mock, "");
 
     std::vector<ChatMessage> messages = {
         {Role::User, "Hi", std::nullopt, std::nullopt}
@@ -72,7 +72,7 @@ TEST_CASE("AnthropicProvider: chat extracts system messages", "[providers][anthr
         "usage": {"input_tokens": 5, "output_tokens": 2}
     })"};
 
-    AnthropicProvider provider("key", mock);
+    AnthropicProvider provider("key", mock, "");
 
     std::vector<ChatMessage> messages = {
         {Role::System, "Be helpful", std::nullopt, std::nullopt},
@@ -98,7 +98,7 @@ TEST_CASE("AnthropicProvider: chat parses tool calls", "[providers][anthropic]")
         "usage": {"input_tokens": 10, "output_tokens": 20}
     })"};
 
-    AnthropicProvider provider("key", mock);
+    AnthropicProvider provider("key", mock, "");
 
     std::vector<ChatMessage> messages = {
         {Role::User, "Read file", std::nullopt, std::nullopt}
@@ -122,7 +122,7 @@ TEST_CASE("AnthropicProvider: chat sends tools in request", "[providers][anthrop
         "usage": {"input_tokens": 5, "output_tokens": 2}
     })"};
 
-    AnthropicProvider provider("key", mock);
+    AnthropicProvider provider("key", mock, "");
 
     std::vector<ToolSpec> tools = {
         {"file_read", "Read a file", R"({"type":"object","properties":{"path":{"type":"string"}}})"}
@@ -141,7 +141,7 @@ TEST_CASE("AnthropicProvider: chat throws on HTTP error", "[providers][anthropic
     MockHttpClient mock;
     mock.next_response = {429, R"({"error": "rate limited"})"};
 
-    AnthropicProvider provider("key", mock);
+    AnthropicProvider provider("key", mock, "");
 
     REQUIRE_THROWS_AS(
         provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "model", 0.5),
@@ -156,7 +156,7 @@ TEST_CASE("AnthropicProvider: chat_simple returns text", "[providers][anthropic]
         "usage": {"input_tokens": 5, "output_tokens": 3}
     })"};
 
-    AnthropicProvider provider("key", mock);
+    AnthropicProvider provider("key", mock, "");
     auto result = provider.chat_simple("Be brief", "What is 2+2?", "claude-3-haiku-20240307", 0.5);
     REQUIRE(result == "Simple answer");
 
@@ -172,7 +172,7 @@ TEST_CASE("AnthropicProvider: chat_simple with empty system prompt", "[providers
         "usage": {"input_tokens": 5, "output_tokens": 2}
     })"};
 
-    AnthropicProvider provider("key", mock);
+    AnthropicProvider provider("key", mock, "");
     provider.chat_simple("", "question", "model", 0.5);
 
     auto body = json::parse(mock.last_body);
@@ -191,7 +191,7 @@ TEST_CASE("OpenAIProvider: chat sends correct request", "[providers][openai]") {
         "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
     })"};
 
-    OpenAIProvider provider("test-key", mock);
+    OpenAIProvider provider("test-key", mock, "");
 
     std::vector<ChatMessage> messages = {
         {Role::System, "Be helpful", std::nullopt, std::nullopt},
@@ -242,7 +242,7 @@ TEST_CASE("OpenAIProvider: chat parses tool calls", "[providers][openai]") {
         "usage": {"prompt_tokens": 10, "completion_tokens": 15, "total_tokens": 25}
     })"};
 
-    OpenAIProvider provider("key", mock);
+    OpenAIProvider provider("key", mock, "");
     auto result = provider.chat({{Role::User, "Read file", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5);
 
     REQUIRE_FALSE(result.content.has_value());
@@ -262,7 +262,7 @@ TEST_CASE("OpenAIProvider: chat sends tools in request", "[providers][openai]") 
         "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
     })"};
 
-    OpenAIProvider provider("key", mock);
+    OpenAIProvider provider("key", mock, "");
 
     std::vector<ToolSpec> tools = {
         {"file_read", "Read a file", R"({"type":"object","properties":{"path":{"type":"string"}}})"}
@@ -280,7 +280,7 @@ TEST_CASE("OpenAIProvider: chat throws on HTTP error", "[providers][openai]") {
     MockHttpClient mock;
     mock.next_response = {500, "Internal Server Error"};
 
-    OpenAIProvider provider("key", mock);
+    OpenAIProvider provider("key", mock, "");
 
     REQUIRE_THROWS_AS(
         provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5),
@@ -309,7 +309,7 @@ TEST_CASE("OpenAIProvider: chat_simple returns text", "[providers][openai]") {
         "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
     })"};
 
-    OpenAIProvider provider("key", mock);
+    OpenAIProvider provider("key", mock, "");
     auto result = provider.chat_simple("Be brief", "What is 6*7?", "gpt-4", 0.5);
     REQUIRE(result == "42");
 }
@@ -402,7 +402,7 @@ TEST_CASE("OpenRouterProvider: chat sends correct request with extra headers", "
         "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
     })"};
 
-    OpenRouterProvider provider("or-key", mock);
+    OpenRouterProvider provider("or-key", mock, "");
 
     std::vector<ChatMessage> messages = {
         {Role::User, "Hi", std::nullopt, std::nullopt}
@@ -439,7 +439,7 @@ TEST_CASE("OpenRouterProvider: chat parses tool calls", "[providers][openrouter]
         "usage": {"prompt_tokens": 5, "completion_tokens": 10, "total_tokens": 15}
     })"};
 
-    OpenRouterProvider provider("key", mock);
+    OpenRouterProvider provider("key", mock, "");
     auto result = provider.chat({{Role::User, "Run ls", std::nullopt, std::nullopt}}, {}, "model", 0.5);
 
     REQUIRE(result.has_tool_calls());
@@ -454,7 +454,7 @@ TEST_CASE("OpenRouterProvider: chat_simple returns text", "[providers][openroute
         "usage": {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
     })"};
 
-    OpenRouterProvider provider("key", mock);
+    OpenRouterProvider provider("key", mock, "");
     auto result = provider.chat_simple("Be brief", "What is 6*7?", "model", 0.5);
     REQUIRE(result == "42");
 
@@ -471,7 +471,7 @@ TEST_CASE("OpenRouterProvider: chat sends tools in request", "[providers][openro
         "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
     })"};
 
-    OpenRouterProvider provider("key", mock);
+    OpenRouterProvider provider("key", mock, "");
 
     std::vector<ToolSpec> tools = {
         {"shell", "Run a shell command", R"({"type":"object","properties":{"command":{"type":"string"}}})"}
@@ -493,7 +493,7 @@ TEST_CASE("OpenRouterProvider: chat round-trips assistant tool calls", "[provide
         "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
     })"};
 
-    OpenRouterProvider provider("key", mock);
+    OpenRouterProvider provider("key", mock, "");
 
     // Simulate an assistant message with tool calls serialized in name field
     std::string tool_calls_json = R"([{"id":"call_1","name":"shell","arguments":"{\"command\":\"ls\"}"}])";
@@ -527,7 +527,7 @@ TEST_CASE("OpenRouterProvider: chat throws on HTTP error", "[providers][openrout
     MockHttpClient mock;
     mock.next_response = {502, "Bad Gateway"};
 
-    OpenRouterProvider provider("key", mock);
+    OpenRouterProvider provider("key", mock, "");
 
     REQUIRE_THROWS_AS(
         provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "model", 0.5),
@@ -570,7 +570,7 @@ TEST_CASE("AnthropicProvider: sends tool results as user message", "[providers][
         "usage": {"input_tokens": 5, "output_tokens": 2}
     })"};
 
-    AnthropicProvider provider("key", mock);
+    AnthropicProvider provider("key", mock, "");
 
     std::vector<ChatMessage> messages = {
         {Role::User, "Read file", std::nullopt, std::nullopt},
@@ -607,7 +607,7 @@ TEST_CASE("OpenAIProvider: sends tool results with tool_call_id", "[providers][o
         "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
     })"};
 
-    OpenAIProvider provider("key", mock);
+    OpenAIProvider provider("key", mock, "");
 
     std::vector<ChatMessage> messages = {
         {Role::User, "Read file", std::nullopt, std::nullopt},
@@ -639,7 +639,7 @@ TEST_CASE("AnthropicProvider: empty content array returns no content", "[provide
         "usage": {"input_tokens": 5, "output_tokens": 0}
     })"};
 
-    AnthropicProvider provider("key", mock);
+    AnthropicProvider provider("key", mock, "");
     auto result = provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "model", 0.5);
 
     REQUIRE_FALSE(result.content.has_value());
@@ -654,7 +654,7 @@ TEST_CASE("OpenAIProvider: empty choices returns no content", "[providers][opena
         "usage": {"prompt_tokens": 5, "completion_tokens": 0, "total_tokens": 5}
     })"};
 
-    OpenAIProvider provider("key", mock);
+    OpenAIProvider provider("key", mock, "");
     auto result = provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5);
 
     REQUIRE_FALSE(result.content.has_value());

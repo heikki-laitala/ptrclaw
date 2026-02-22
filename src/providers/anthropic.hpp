@@ -9,7 +9,7 @@ namespace ptrclaw {
 class AnthropicProvider : public Provider {
 public:
     AnthropicProvider(const std::string& api_key, HttpClient& http,
-                      const std::string& base_url = "https://api.anthropic.com/v1");
+                      const std::string& base_url);
 
     ChatResponse chat(const std::vector<ChatMessage>& messages,
                       const std::vector<ToolSpec>& tools,
