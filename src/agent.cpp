@@ -439,8 +439,13 @@ void Agent::compact_history() {
     // Add summary
     compacted.push_back(ChatMessage{Role::User, summary.str(), {}, {}});
 
-    // Keep last 10 messages
-    for (size_t i = history_.size() - 10; i < history_.size(); i++) {
+    // Keep last 10 messages, but adjust cut point to avoid orphaning tool responses
+    size_t keep_from = history_.size() - 10;
+    // Walk back if we'd start on a Tool message — include the preceding assistant+tool group
+    while (keep_from > 0 && history_[keep_from].role == Role::Tool) {
+        keep_from--;
+    }
+    for (size_t i = keep_from; i < history_.size(); i++) {
         compacted.push_back(std::move(history_[i]));
     }
 
