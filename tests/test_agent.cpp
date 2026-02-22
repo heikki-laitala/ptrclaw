@@ -427,6 +427,58 @@ TEST_CASE("Agent: compact_history triggers on large history", "[agent]") {
     REQUIRE(agent.history_size() < 21);
 }
 
+TEST_CASE("Agent: compaction does not orphan tool response messages", "[agent]") {
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+
+    // Alternate: tool call response, then plain response
+    ChatResponse tool_resp;
+    tool_resp.content = "Let me check.";
+    tool_resp.tool_calls = {{"call_1", "mock_tool", "{}"}};
+
+    ChatResponse plain_resp;
+    plain_resp.content = "Done.";
+
+    // Queue: each process() call triggers tool_resp -> plain_resp (2 chat calls),
+    // except we need the mock to alternate properly.
+    // After tool call: provider gets called again for the follow-up.
+    // So for each process(): call 1 = tool_resp, call 2 = plain_resp
+    // For 8 rounds: 16 responses total
+    for (int i = 0; i < 8; i++) {
+        mock->responses.push_back(tool_resp);
+        mock->responses.push_back(plain_resp);
+    }
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<MockTool>());
+    Config cfg;
+    cfg.agent.max_tool_iterations = 5;
+    cfg.agent.max_history_messages = 10; // Low threshold to trigger compaction
+
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    // Generate enough messages with tool calls to trigger compaction
+    for (int i = 0; i < 8; i++) {
+        agent.process("request " + std::to_string(i));
+    }
+
+    // Verify: in the last messages sent to the provider, no Tool message
+    // appears without a preceding Assistant message with tool_calls
+    for (size_t i = 0; i < mock->last_messages.size(); i++) {
+        if (mock->last_messages[i].role == Role::Tool) {
+            REQUIRE(i > 0);
+            // Walk back to find the assistant message (could be multiple tool results)
+            size_t j = i - 1;
+            while (j > 0 && mock->last_messages[j].role == Role::Tool) {
+                j--;
+            }
+            REQUIRE(mock->last_messages[j].role == Role::Assistant);
+            // Assistant message must carry tool_calls (stored in name field)
+            REQUIRE(mock->last_messages[j].name.has_value());
+        }
+    }
+}
+
 TEST_CASE("Agent: clear then re-process re-injects system prompt", "[agent]") {
     auto [agent, mock] = make_agent();
     mock->next_response.content = "ok";
