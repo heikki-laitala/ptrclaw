@@ -46,8 +46,16 @@ build-minimal:
 	meson compile -C $(MINDIR)
 
 build-static:
+ifeq ($(shell uname),Linux)
+	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) $(NATIVE_ARGS) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false \
+		-Dcpp_args='-ffunction-sections -fdata-sections -fvisibility=hidden' \
+		-Dcpp_link_args='-Wl,--gc-sections -Wl,--strip-all'; fi
+	meson compile -C $(STATICDIR)
+	strip --strip-unneeded $(STATICDIR)/ptrclaw 2>/dev/null || true
+else
 	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) $(NATIVE_ARGS) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false; fi
 	meson compile -C $(STATICDIR)
+endif
 
 run: build
 	./$(BUILDDIR)/ptrclaw
