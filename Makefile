@@ -11,7 +11,7 @@ ifeq ($(shell uname),Darwin)
   endif
 else
   CLANG_TIDY_EXTRA :=
-  SIZE_FLAGS := -Dcpp_args='-ffunction-sections -fdata-sections -fvisibility=hidden' \
+  SIZE_FLAGS := -Dcpp_args='-ffunction-sections -fdata-sections' \
     -Dcpp_link_args='-Wl,--gc-sections -Wl,--strip-all'
   STRIP_CMD = strip --strip-unneeded $1
   ifeq ($(shell command -v clang++ >/dev/null 2>&1; echo $$?),0)
