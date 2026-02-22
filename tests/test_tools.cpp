@@ -274,6 +274,34 @@ TEST_CASE("ShellTool: tool_name is shell", "[tools]") {
     REQUIRE(tool.parameters_json().find("command") != std::string::npos);
 }
 
+TEST_CASE("ShellTool: stdin data passed to command", "[tools]") {
+    ShellTool tool;
+    auto result = tool.execute(R"({"command":"cat","stdin":"hello from stdin"})");
+    REQUIRE(result.success);
+    REQUIRE(result.output == "hello from stdin");
+}
+
+TEST_CASE("ShellTool: command without stdin still works", "[tools]") {
+    ShellTool tool;
+    auto result = tool.execute(R"({"command":"echo no stdin"})");
+    REQUIRE(result.success);
+    REQUIRE(result.output.find("no stdin") != std::string::npos);
+}
+
+TEST_CASE("ShellTool: multiline stdin with wc -l", "[tools]") {
+    ShellTool tool;
+    auto result = tool.execute(R"({"command":"wc -l","stdin":"line1\nline2\nline3\n"})");
+    REQUIRE(result.success);
+    REQUIRE(result.output.find('3') != std::string::npos);
+}
+
+TEST_CASE("ShellTool: empty stdin does not hang", "[tools]") {
+    ShellTool tool;
+    auto result = tool.execute(R"({"command":"cat","stdin":""})");
+    REQUIRE(result.success);
+    REQUIRE(result.output.empty());
+}
+
 // ═══ Tool spec ═══════════════════════════════════════════════════
 
 TEST_CASE("Tool::spec builds ToolSpec correctly", "[tools]") {
