@@ -49,14 +49,8 @@ lib_deps = [http_dep]
 if opt_sqlite_memory
   sqlite3_dep = dependency('sqlite3', required: false)
   if not sqlite3_dep.found()
-    cc = meson.get_compiler('cpp')
-    sqlite3_lib = cc.find_library('sqlite3', required: false)
-    if sqlite3_lib.found()
-      sqlite3_dep = declare_dependency(dependencies: [sqlite3_lib])
-    else
-      sqlite3_proj = subproject('sqlite3')
-      sqlite3_dep = sqlite3_proj.get_variable('sqlite3_dep')
-    endif
+    sqlite3_proj = subproject('sqlite3')
+    sqlite3_dep = sqlite3_proj.get_variable('sqlite3_dep')
   endif
   lib_deps += sqlite3_dep
   add_project_arguments('-DPTRCLAW_HAS_SQLITE_MEMORY', language: 'cpp')
