@@ -27,7 +27,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Provider failover** — `reliable` provider wraps multiple backends with automatic fallback
 - **Multi-session management** with idle eviction
 - **Telegram channel** — long-polling, user allowlists, Markdown-to-HTML, per-user sessions, streaming message edits
-- **WhatsApp channel** — Business Cloud API with built-in webhook server, E.164 phone normalization, sender allowlists, reverse-proxy ready
+- **WhatsApp channel** — Business Cloud API with built-in webhook server (reverse-proxy ready), E.164 phone normalization, sender allowlists
 - **Soul hatching** — dynamic personality development through onboarding conversations
 
 ## Quick start
@@ -167,7 +167,7 @@ export WHATSAPP_PHONE_ID="123456789"
 export WHATSAPP_VERIFY_TOKEN="your-verify-secret"
 ```
 
-6. Set up the built-in webhook server:
+6. Configure the webhook server (required — WhatsApp delivers messages via webhooks):
 
 ```sh
 export WHATSAPP_WEBHOOK_LISTEN="127.0.0.1:8080"
@@ -175,12 +175,13 @@ export WHATSAPP_WEBHOOK_SECRET="$(openssl rand -hex 32)"
 ./builddir/ptrclaw --channel whatsapp
 ```
 
-Place a reverse proxy (nginx, Caddy) in front for TLS and rate-limiting.
-See [`docs/reverse-proxy.md`](docs/reverse-proxy.md) for full setup instructions.
+PtrClaw includes a built-in HTTP server that receives webhook calls from Meta.
+It binds to localhost and must sit behind a reverse proxy (nginx, Caddy) that
+handles TLS and rate-limiting. See [`docs/reverse-proxy.md`](docs/reverse-proxy.md) for full setup.
 
 Notes:
 - Temporary tokens expire; use a long-lived token for production.
-- The built-in webhook server binds to localhost and is designed to sit behind a reverse proxy.
+- Point Meta's webhook callback URL at your reverse proxy's public HTTPS endpoint.
 
 ## Usage
 
