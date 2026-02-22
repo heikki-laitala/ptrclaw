@@ -43,7 +43,7 @@ jobs:
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install meson
+        run: brew install meson coreutils
 
       - name: Build
         run: |
@@ -54,7 +54,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          OUT=$(timeout 120s ./builddir/ptrclaw \
+          TIMEOUT=$(command -v timeout || command -v gtimeout)
+          OUT=$($TIMEOUT 120s ./builddir/ptrclaw \
             --provider openai \
             --model "${SMOKE_MODEL}" \
             -m "Reply with exactly: SMOKE_OK" 2>&1 || true)
