@@ -7,8 +7,10 @@
 #include <map>
 
 static ptrclaw::ProviderRegistrar reg_openai("openai",
-    [](const std::string& key, ptrclaw::HttpClient& http, const std::string&) {
-        return std::make_unique<ptrclaw::OpenAIProvider>(key, http);
+    [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url) {
+        if (base_url.empty())
+            return std::make_unique<ptrclaw::OpenAIProvider>(key, http);
+        return std::make_unique<ptrclaw::OpenAIProvider>(key, http, base_url);
     });
 
 using json = nlohmann::json;
