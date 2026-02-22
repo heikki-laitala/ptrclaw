@@ -11,7 +11,7 @@ ifeq ($(shell uname),Darwin)
   endif
 else
   CLANG_TIDY_EXTRA :=
-  SIZE_FLAGS := -Dcpp_args='-ffunction-sections -fdata-sections' \
+  SIZE_FLAGS := -Dcpp_args='-ffunction-sections -fdata-sections -fvisibility=hidden' \
     -Dcpp_link_args='-Wl,--gc-sections -Wl,--strip-all'
   STRIP_CMD = strip --strip-unneeded $1
   ifeq ($(shell command -v clang++ >/dev/null 2>&1; echo $$?),0)
@@ -48,12 +48,12 @@ build-minimal:
 	@if [ ! -d $(MINDIR) ]; then meson setup $(MINDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
 		-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false -Dwith_compatible=false \
 		-Dwith_whatsapp=false -Dwith_sqlite_memory=false $(SIZE_FLAGS); fi
-	meson compile -C $(MINDIR)
+	meson compile -C $(MINDIR) ptrclaw
 	$(call STRIP_CMD,$(MINDIR)/ptrclaw) 2>/dev/null || true
 
 build-static:
 	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) $(NATIVE_ARGS) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false $(SIZE_FLAGS); fi
-	meson compile -C $(STATICDIR)
+	meson compile -C $(STATICDIR) ptrclaw
 	$(call STRIP_CMD,$(STATICDIR)/ptrclaw) 2>/dev/null || true
 
 run: build
