@@ -1,18 +1,25 @@
 # PtrClaw
 
-A lightweight, extensible AI assistant infrastructure in C++17. Run it as a CLI, a Telegram bot, a WhatsApp bot — or plug in your own channel.
+An AI assistant you can actually deploy anywhere. Single static binary, no runtime dependencies, no containers needed. Run it as a CLI tool, a Telegram bot, a WhatsApp bot — or plug in your own channel.
 
-**~663 KB static binary (macOS arm64). Lightweight Linux backend using POSIX sockets. 6 providers, 8 tools, 2 messaging channels, and compile-time feature flags.**
+Built in C++17 because infrastructure should be small, fast, and boring to operate.
+
+**~517 KB static binary (macOS arm64), ~6.9 MB (Linux x86_64, statically linked with OpenSSL + sqlite3). 6 LLM providers. 8 built-in tools. 2 messaging channels. Persistent memory with knowledge graph. Compile-time feature flags to strip what you don't need.**
+
+## Why PtrClaw?
+
+Most AI agent frameworks are Python packages with deep dependency trees, virtual environments, and careful version management just to get running. PtrClaw is a single binary that you `scp` to a server and run. It compiles in seconds, starts instantly, and uses minimal memory. You *can* containerize it (Docker support coming soon), but you don't *have* to.
+
+- **Deploy anywhere** — one static binary, no runtime deps, runs on any Linux box or Mac
+- **Swap providers freely** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Switch with a config change, no code modifications
+- **Real tool use** — file I/O, shell execution (with stdin piping), and a persistent knowledge graph memory system. Providers with native function calling use it directly; others fall back to XML-based parsing
+- **Extend without forking** — providers, channels, tools, and memory backends self-register via a plugin system. Add a new one by implementing an interface and dropping in a `.cpp` file
+- **Build only what you need** — 11 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~452 KB)
 
 ## Features
 
-- **Multiple providers** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint
-- **Native tool use** — providers with function calling use it natively; others fall back to XML-based tool parsing
-- **Built-in tools** — `file_read`, `file_write`, `file_edit`, `shell`, `memory_store`, `memory_recall`, `memory_forget`, `memory_link`
 - **LLM streaming** — real-time token streaming with progressive message editing in channels
 - **Event-driven architecture** — publish/subscribe event bus decouples agent, channels, and streaming
-- **Plugin system** — providers, channels, and tools self-register; add new ones without touching core code
-- **Compile-time feature flags** — include only the components you need for smaller binaries
 - **Interactive REPL** with slash commands (`/status`, `/model`, `/clear`, `/help`, `/quit`)
 - **Single-message mode** — pipe a question in and get an answer back
 - **Automatic history compaction** when token usage approaches the context limit
@@ -21,19 +28,20 @@ A lightweight, extensible AI assistant infrastructure in C++17. Run it as a CLI,
 - **Multi-session management** with idle eviction
 - **Telegram channel** — long-polling, user allowlists, Markdown-to-HTML, per-user sessions, streaming message edits
 - **WhatsApp channel** — Business Cloud API with webhooks, E.164 phone normalization, sender allowlists
+- **Soul hatching** — dynamic personality development through onboarding conversations
 
 ## Quick start
 
-> Dev workflow: pull latest `main`, create a feature branch, push, and open a PR.
-
 ```sh
-git clone <repo-url> && cd ptrclaw
+git clone https://github.com/heikki-laitala/ptrclaw.git && cd ptrclaw
 make deps    # install build dependencies
 make build   # compile (output: builddir/ptrclaw)
 
 export ANTHROPIC_API_KEY=sk-ant-...
 ./builddir/ptrclaw
 ```
+
+That's it. No virtual environments, no package managers at runtime.
 
 ## Requirements
 
@@ -55,7 +63,7 @@ brew install meson llvm gcovr sqlite3
 sudo apt-get install g++ meson ninja-build libssl-dev libsqlite3-dev clang-tidy lld gcovr
 ```
 
-Linux builds use `clang++` with the `lld` linker (required for LTO) via `meson-native-linux.ini`.
+Linux builds use `clang++` with the `lld` linker (required for LTO) via `meson-native-linux.ini`. If `clang++` is not available, the build falls back to the default system compiler.
 
 Or run `make deps` to install everything automatically.
 
@@ -194,13 +202,15 @@ export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 
 ```sh
 make build          # compile (all features)
-make build-minimal  # slim build: openai + telegram + tools + json memory (~562 KB)
-make build-static   # static binary with all features including SQLite memory
+make build-minimal  # slim build: openai + telegram + tools + json memory
+make build-static   # size-optimized static binary for distribution
 make test           # run unit tests (Catch2)
 make lint           # run clang-tidy
 make coverage       # generate HTML coverage report
 make clean          # remove build artifacts
 ```
+
+Distribution builds (`build-static`, `build-minimal`) compile only the main binary with size optimizations. On Linux: `-ffunction-sections`, `-fdata-sections`, `-fvisibility=hidden`, `--gc-sections`, `--strip-all`, plus `strip --strip-unneeded`. On macOS: `strip -x` (Apple's linker handles dead stripping with LTO).
 
 ### Feature flags
 
@@ -243,13 +253,13 @@ ninja -C builddir
 
 ### Binary size
 
-| Configuration | Size (macOS arm64) |
-| ------------- | ------------------ |
-| Full (all features) | ~663 KB |
-| Minimal (`make build-minimal`) | ~562 KB |
-| Static (`make build-static`) | ~663 KB |
+| Configuration | macOS arm64 | Linux x86_64 |
+| ------------- | ----------- | ------------ |
+| Full (all features) | ~717 KB | ~717 KB |
+| Static (`make build-static`, stripped) | ~517 KB | ~6.9 MB |
+| Minimal (`make build-minimal`, stripped) | ~452 KB | — |
 
-LTO is enabled by default.
+Linux static binaries are larger because they bundle OpenSSL and sqlite3. The dynamically linked build is the same size as macOS. LTO is enabled by default. Distribution builds are stripped and size-optimized.
 
 ## Project structure
 
@@ -292,7 +302,7 @@ src/
     file_read.cpp       Read file contents
     file_write.cpp      Write/create files
     file_edit.cpp       Search-and-replace edits
-    shell.cpp           Shell command execution
+    shell.cpp           Shell command execution (with stdin support)
     memory_store.cpp    Store/upsert memory entries with optional links
     memory_recall.cpp   Search memories with graph traversal
     memory_forget.cpp   Delete memory entries
@@ -303,4 +313,4 @@ meson_options.txt       Compile-time feature flags
 
 ## Acknowledgements
 
-PtrClaw started as a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw) and has since diverged into its own architecture with an event bus, plugin system, and streaming pipeline.
+PtrClaw started as a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw) and has since diverged into its own architecture with an event bus, plugin system, and streaming pipeline. Nullclaw is a far more feature-rich project — if you need a battle-tested assistant with a broader tool ecosystem, check it out. PtrClaw trades breadth for a smaller footprint: our dynamically linked binary is ~717 KB vs nullclaw's ~1.9 MB, with the goal of staying minimal and easy to embed or deploy on constrained environments.
