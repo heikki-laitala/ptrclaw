@@ -54,7 +54,8 @@ nlohmann::json Config::defaults_json() {
             {"cache_max_entries", 100},
             {"enrich_depth", 1},
             {"synthesis", true},
-            {"synthesis_interval", 5}
+            {"synthesis_interval", 5},
+            {"sqlite_trusted_schema", false}
         }}
     };
 }
@@ -183,6 +184,8 @@ Config Config::load() {
             cfg.memory.synthesis = m["synthesis"].get<bool>();
         if (m.contains("synthesis_interval") && m["synthesis_interval"].is_number_unsigned())
             cfg.memory.synthesis_interval = m["synthesis_interval"].get<uint32_t>();
+        if (m.contains("sqlite_trusted_schema") && m["sqlite_trusted_schema"].is_boolean())
+            cfg.memory.sqlite_trusted_schema = m["sqlite_trusted_schema"].get<bool>();
     }
 
     // Environment variables always override config file
