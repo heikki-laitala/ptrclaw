@@ -3,10 +3,10 @@
 #include <vector>
 #include <optional>
 #include <cstdint>
+#include <nlohmann/json.hpp>
 
 namespace ptrclaw {
 
-// Keep defaults in sync with build_defaults_json() in config.cpp
 struct AgentConfig {
     uint32_t max_tool_iterations = 10;
     uint32_t max_history_messages = 50;
@@ -33,7 +33,6 @@ struct ChannelsConfig {
     std::optional<WhatsAppChannelConfig> whatsapp;
 };
 
-// Keep defaults in sync with build_defaults_json() in config.cpp
 struct MemoryConfig {
 #ifdef PTRCLAW_HAS_SQLITE_MEMORY
     std::string backend = "sqlite";
@@ -61,7 +60,6 @@ struct Config {
     std::string compatible_base_url;
     std::string base_url;  // Global override — applies to the active provider
 
-    // Defaults — keep in sync with build_defaults_json() in config.cpp
     std::string default_provider = "anthropic";
     std::string default_model = "claude-sonnet-4-20250514";
     double default_temperature = 0.7;
@@ -72,6 +70,9 @@ struct Config {
 
     // Load from ~/.ptrclaw/config.json + env vars
     static Config load();
+
+    // Default config JSON (used by load() and tests)
+    static nlohmann::json defaults_json();
 
     // Get API key for a provider name
     std::string api_key_for(const std::string& provider) const;

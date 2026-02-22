@@ -8,8 +8,7 @@
 
 namespace ptrclaw {
 
-// Keep in sync with struct defaults in config.hpp
-static nlohmann::json build_defaults_json() {
+nlohmann::json Config::defaults_json() {
     return {
         {"default_provider", "anthropic"},
         {"default_model", "claude-sonnet-4-20250514"},
@@ -64,7 +63,7 @@ Config Config::load() {
         try {
             nlohmann::json original = nlohmann::json::parse(file);
             file.close();
-            j = merge_defaults(original, build_defaults_json());
+            j = merge_defaults(original, defaults_json());
             if (j != original) {
                 atomic_write_file(config_path, j.dump(4) + "\n");
                 std::cerr << "[config] Migrated config with new defaults: "
@@ -72,10 +71,10 @@ Config Config::load() {
             }
         } catch (...) {
             // Config file is malformed — fall back to defaults
-            j = build_defaults_json();
+            j = defaults_json();
         }
     } else {
-        j = build_defaults_json();
+        j = defaults_json();
         atomic_write_file(config_path, j.dump(4) + "\n");
         std::cerr << "[config] Created default config: " << config_path << "\n";
     }
