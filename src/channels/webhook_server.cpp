@@ -1,4 +1,4 @@
-#include "channels/whatsapp_server.hpp"
+#include "channels/webhook_server.hpp"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -63,9 +63,8 @@ static std::map<std::string, std::string> parse_query_string(const std::string& 
 }
 
 std::string WebhookRequest::query_param(const std::string& key) const {
-    auto params = parse_query_string(query);
-    auto it = params.find(key);
-    return it != params.end() ? it->second : "";
+    auto it = query_params.find(key);
+    return it != query_params.end() ? it->second : "";
 }
 
 // ── Address parsing ───────────────────────────────────────────────────────────
@@ -85,9 +84,9 @@ bool parse_listen_addr(const std::string& addr, std::string& host, uint16_t& por
     return true;
 }
 
-// ── WhatsAppWebhookServer ─────────────────────────────────────────────────────
+// ── WebhookServer ─────────────────────────────────────────────────────
 
-WhatsAppWebhookServer::WhatsAppWebhookServer(std::string listen_addr,
+WebhookServer::WebhookServer(std::string listen_addr,
                                              uint32_t max_body,
                                              Handler handler)
     : listen_addr_(std::move(listen_addr))
@@ -95,11 +94,11 @@ WhatsAppWebhookServer::WhatsAppWebhookServer(std::string listen_addr,
     , handler_(std::move(handler))
 {}
 
-WhatsAppWebhookServer::~WhatsAppWebhookServer() {
+WebhookServer::~WebhookServer() {
     stop();
 }
 
-bool WhatsAppWebhookServer::start(std::string& error) {
+bool WebhookServer::start(std::string& error) {
     std::string host;
     uint16_t port;
     if (!parse_listen_addr(listen_addr_, host, port)) {
@@ -156,7 +155,7 @@ bool WhatsAppWebhookServer::start(std::string& error) {
     return true;
 }
 
-void WhatsAppWebhookServer::stop() {
+void WebhookServer::stop() {
     if (!running_.exchange(false)) return;
     char b = 0;
     if (shutdown_pipe_[1] >= 0) ::write(shutdown_pipe_[1], &b, 1);
@@ -166,7 +165,7 @@ void WhatsAppWebhookServer::stop() {
     if (shutdown_pipe_[1] >= 0)  { ::close(shutdown_pipe_[1]);  shutdown_pipe_[1] = -1; }
 }
 
-void WhatsAppWebhookServer::accept_loop() {
+void WebhookServer::accept_loop() {
     while (running_.load()) {
         struct pollfd fds[2];
         fds[0].fd = server_fd_;         fds[0].events = POLLIN;
@@ -181,6 +180,8 @@ void WhatsAppWebhookServer::accept_loop() {
         socklen_t plen = sizeof(peer);
         int cfd = ::accept(server_fd_, reinterpret_cast<sockaddr*>(&peer), &plen);
         if (cfd >= 0) {
+            struct timeval tv{10, 0};  // 10s recv timeout
+            ::setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
             handle_connection(cfd);
             ::close(cfd);
         }
@@ -221,7 +222,7 @@ static void send_http_response(int fd, int status, const std::string& content_ty
     ::send(fd, resp.c_str(), resp.size(), MSG_NOSIGNAL);
 }
 
-void WhatsAppWebhookServer::handle_connection(int fd) const {
+void WebhookServer::handle_connection(int fd) const {
     // Read until end-of-headers (CRLFCRLF), cap at 16 KB.
     std::string buf;
     buf.reserve(4096);
@@ -252,8 +253,8 @@ void WhatsAppWebhookServer::handle_connection(int fd) const {
         if (!(ss >> req.method >> pq >> ver)) return;
         auto q = pq.find('?');
         if (q != std::string::npos) {
-            req.path  = pq.substr(0, q);
-            req.query = pq.substr(q + 1);
+            req.path         = pq.substr(0, q);
+            req.query_params = parse_query_string(pq.substr(q + 1));
         } else {
             req.path = pq;
         }

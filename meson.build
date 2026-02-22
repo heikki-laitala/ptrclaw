@@ -92,7 +92,7 @@ endif
 if opt_whatsapp
   optional_sources += files(
     'src/channels/whatsapp.cpp',
-    'src/channels/whatsapp_server.cpp',
+    'src/channels/webhook_server.cpp',
   )
 endif
 if opt_tools

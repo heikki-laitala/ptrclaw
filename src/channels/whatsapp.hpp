@@ -1,7 +1,7 @@
 #pragma once
 #include "../channel.hpp"
 #include "../http.hpp"
-#include "whatsapp_server.hpp"
+#include "webhook_server.hpp"
 #include <string>
 #include <vector>
 #include <memory>
@@ -68,7 +68,7 @@ private:
     HttpClient& http_;
 
     // Webhook server (null when webhook_listen is empty)
-    std::unique_ptr<WhatsAppWebhookServer> server_;
+    std::unique_ptr<WebhookServer> server_;
     std::mutex queue_mutex_;
     std::condition_variable queue_cv_;
     std::vector<ChannelMessage> message_queue_;
