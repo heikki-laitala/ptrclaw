@@ -4,7 +4,6 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <algorithm>
-#include <cctype>
 
 static ptrclaw::MemoryRegistrar reg_json("json",
     [](const ptrclaw::Config& config) {
@@ -76,13 +75,6 @@ void JsonMemory::save() {
         j.push_back(entry_to_json(entry));
     }
     atomic_write_file(path_, j.dump(2));
-}
-
-static std::string to_lower(const std::string& s) {
-    std::string result = s;
-    std::transform(result.begin(), result.end(), result.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return result;
 }
 
 static std::vector<std::string> tokenize(const std::string& s) {

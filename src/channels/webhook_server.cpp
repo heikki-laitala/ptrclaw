@@ -1,4 +1,5 @@
 #include "channels/webhook_server.hpp"
+#include "util.hpp"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -6,8 +7,6 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <algorithm>
-#include <cctype>
 #include <cerrno>
 #include <cstring>
 #include <sstream>
@@ -189,20 +188,6 @@ void WebhookServer::accept_loop() {
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
-
-static std::string to_lower(std::string s) {
-    for (auto& c : s)
-        c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
-    return s;
-}
-
-static std::string trim(const std::string& s) {
-    const char* ws = " \t\r\n";
-    auto a = s.find_first_not_of(ws);
-    if (a == std::string::npos) return {};
-    auto b = s.find_last_not_of(ws);
-    return s.substr(a, b - a + 1);
-}
 
 static void send_http_response(int fd, int status, const std::string& content_type,
                                const std::string& body) {
