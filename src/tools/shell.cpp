@@ -2,6 +2,7 @@
 #include "../plugin.hpp"
 #include <nlohmann/json.hpp>
 #include <array>
+#include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -65,23 +66,61 @@ ToolResult ShellTool::execute(const std::string& args_json) {
     close(stdin_pipe[0]);
     close(stdout_pipe[1]);
 
-    if (has_stdin && !stdin_data.empty()) {
-        // Write all stdin data; ignore partial-write edge cases for typical payloads
-        size_t written = 0;
-        while (written < stdin_data.size()) {
-            ssize_t n = write(stdin_pipe[1], stdin_data.data() + written,
-                              stdin_data.size() - written);
-            if (n <= 0) break;
-            written += static_cast<size_t>(n);
-        }
-    }
-    close(stdin_pipe[1]); // Send EOF to child
-
+    // Interleave stdin writes and stdout reads via poll() to avoid deadlock
+    // when both pipe buffers fill simultaneously.
     std::string output;
     std::array<char, 4096> buffer;
-    ssize_t n;
-    while ((n = read(stdout_pipe[0], buffer.data(), buffer.size())) > 0) {
-        output.append(buffer.data(), static_cast<size_t>(n));
+    size_t written = 0;
+    bool stdin_open = has_stdin && !stdin_data.empty();
+
+    // If no stdin data, close write end immediately so child gets EOF
+    if (!stdin_open) {
+        close(stdin_pipe[1]);
+    }
+
+    while (stdin_open || true) {
+        struct pollfd fds[2];
+        nfds_t nfds = 0;
+
+        // Always poll stdout for reading
+        fds[nfds].fd = stdout_pipe[0];
+        fds[nfds].events = POLLIN;
+        nfds_t stdout_idx = nfds++;
+
+        // Poll stdin for writing only if we still have data
+        nfds_t stdin_idx = nfds;
+        if (stdin_open) {
+            fds[nfds].fd = stdin_pipe[1];
+            fds[nfds].events = POLLOUT;
+            nfds++;
+        }
+
+        if (poll(fds, nfds, -1) < 0) break;
+
+        // Write stdin data when pipe is ready
+        if (stdin_open && (fds[stdin_idx].revents & (POLLOUT | POLLERR | POLLHUP)) != 0) {
+            ssize_t n = write(stdin_pipe[1], stdin_data.data() + written,
+                              stdin_data.size() - written);
+            if (n > 0) {
+                written += static_cast<size_t>(n);
+            }
+            if (n <= 0 || written >= stdin_data.size()) {
+                close(stdin_pipe[1]);
+                stdin_open = false;
+            }
+        }
+
+        // Read stdout data when available
+        if ((fds[stdout_idx].revents & POLLIN) != 0) {
+            ssize_t n = read(stdout_pipe[0], buffer.data(), buffer.size());
+            if (n > 0) {
+                output.append(buffer.data(), static_cast<size_t>(n));
+            } else {
+                break; // EOF or error
+            }
+        } else if ((fds[stdout_idx].revents & (POLLHUP | POLLERR)) != 0) {
+            break;
+        }
     }
     close(stdout_pipe[0]);
 
