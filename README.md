@@ -27,7 +27,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Provider failover** — `reliable` provider wraps multiple backends with automatic fallback
 - **Multi-session management** with idle eviction
 - **Telegram channel** — long-polling, user allowlists, Markdown-to-HTML, per-user sessions, streaming message edits
-- **WhatsApp channel** — Business Cloud API with webhooks, E.164 phone normalization, sender allowlists
+- **WhatsApp channel** — Business Cloud API with built-in webhook server, E.164 phone normalization, sender allowlists, reverse-proxy ready
 - **Soul hatching** — dynamic personality development through onboarding conversations
 
 ## Quick start
@@ -103,7 +103,9 @@ Create `~/.ptrclaw/config.json`:
       "access_token": "EAA...",
       "phone_number_id": "123456789",
       "verify_token": "my-verify-secret",
-      "allow_from": ["+1234567890"]
+      "allow_from": ["+1234567890"],
+      "webhook_listen": "127.0.0.1:8080",
+      "webhook_secret": "a-strong-random-secret"
     }
   }
 }
@@ -122,6 +124,8 @@ Environment variables override the config file:
 | `WHATSAPP_ACCESS_TOKEN` | WhatsApp Business API access token |
 | `WHATSAPP_PHONE_ID` | WhatsApp Business phone number ID |
 | `WHATSAPP_VERIFY_TOKEN` | WhatsApp webhook verification token |
+| `WHATSAPP_WEBHOOK_LISTEN` | Bind address for built-in webhook server (e.g. `127.0.0.1:8080`) |
+| `WHATSAPP_WEBHOOK_SECRET` | Shared secret for proxy→local trust (`X-Webhook-Secret` header) |
 
 ### How to get a Telegram bot token
 
@@ -163,9 +167,20 @@ export WHATSAPP_PHONE_ID="123456789"
 export WHATSAPP_VERIFY_TOKEN="your-verify-secret"
 ```
 
+6. Set up the built-in webhook server:
+
+```sh
+export WHATSAPP_WEBHOOK_LISTEN="127.0.0.1:8080"
+export WHATSAPP_WEBHOOK_SECRET="$(openssl rand -hex 32)"
+./builddir/ptrclaw --channel whatsapp
+```
+
+Place a reverse proxy (nginx, Caddy) in front for TLS and rate-limiting.
+See [`docs/reverse-proxy.md`](docs/reverse-proxy.md) for full setup instructions.
+
 Notes:
 - Temporary tokens expire; use a long-lived token for production.
-- Your webhook URL must be publicly reachable over HTTPS.
+- The built-in webhook server binds to localhost and is designed to sit behind a reverse proxy.
 
 ## Usage
 
@@ -284,7 +299,8 @@ src/
   util.hpp/cpp          String/path utilities
   channels/
     telegram.hpp/cpp    Telegram Bot API (long-polling, Markdown→HTML, streaming edits)
-    whatsapp.hpp/cpp    WhatsApp Business Cloud API (webhooks)
+    whatsapp.hpp/cpp    WhatsApp Business Cloud API (webhook server, message parsing)
+    webhook_server.hpp/cpp  Minimal HTTP server for receiving webhooks behind a reverse proxy
   providers/
     anthropic.cpp       Anthropic Messages API (streaming)
     openai.cpp          OpenAI Chat Completions API (streaming)
@@ -308,6 +324,8 @@ src/
     memory_forget.cpp   Delete memory entries
     memory_link.cpp     Create/remove bidirectional links between entries
 tests/                  Catch2 unit tests
+docs/
+  reverse-proxy.md      Reverse-proxy setup for WhatsApp webhooks (nginx, Caddy, Docker)
 meson_options.txt       Compile-time feature flags
 ```
 
