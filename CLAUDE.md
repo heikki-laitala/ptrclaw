@@ -13,7 +13,7 @@ Optimized for:
 ```bash
 make build          # Build with meson/ninja (clang++, LTO)
 make build-minimal  # Slim build: openai + telegram + tools only
-make build-static   # Static binary for distribution
+make build-static   # Size-optimized static binary for distribution
 make test           # Run Catch2 unit tests
 make lint           # Run clang-tidy
 make coverage       # Generate coverage report
@@ -111,9 +111,9 @@ clang-tidy is configured via `.clang-tidy`. The Makefile filters subproject warn
 
 ## Platform Notes
 
-- **Linux**: Uses `clang++` with `lld` linker (required for LTO). See `meson-native-linux.ini`.
+- **Linux**: Uses `clang++` with `lld` linker (required for LTO) via `meson-native-linux.ini`. Falls back to default compiler if `clang++` is not available.
 - **macOS**: Uses system `clang++`. Lint needs extra args for stdlib/sysroot (handled by Makefile).
-- **Static builds**: `make build-static` — works on macOS; Linux needs OpenSSL and sqlite3 transitive deps.
+- **Distribution builds**: `build-static` and `build-minimal` compile only the `ptrclaw` binary (no tests) with size optimization flags. Linux: `-ffunction-sections`, `-fdata-sections`, `-fvisibility=hidden`, `--gc-sections`, `--strip-all`. macOS: `strip -x`.
 
 ## Anti-Patterns (Do Not)
 
