@@ -2,13 +2,20 @@ BUILDDIR := builddir
 
 ifeq ($(shell uname),Darwin)
   NATIVE_FILE := meson-native-macos.ini
+  NATIVE_ARGS := --native-file $(NATIVE_FILE)
   CLANG_TIDY_EXTRA := -extra-arg=-stdlib=libc++ -extra-arg=-isysroot$(shell xcrun --show-sdk-path)
   ifeq ($(shell xcode-select -p 2>/dev/null),)
     $(error Xcode Command Line Tools required. Install with: xcode-select --install)
   endif
 else
-  NATIVE_FILE := meson-native-linux.ini
   CLANG_TIDY_EXTRA :=
+  ifeq ($(shell command -v clang++ >/dev/null 2>&1; echo $$?),0)
+    NATIVE_FILE := meson-native-linux.ini
+    NATIVE_ARGS := --native-file $(NATIVE_FILE)
+  else
+    NATIVE_FILE :=
+    NATIVE_ARGS :=
+  endif
 endif
 
 STATICDIR := builddir-static
@@ -27,19 +34,19 @@ else
 endif
 
 setup:
-	@if [ ! -d $(BUILDDIR) ]; then meson setup $(BUILDDIR) --native-file $(NATIVE_FILE) -Dcatch2:tests=false; fi
+	@if [ ! -d $(BUILDDIR) ]; then meson setup $(BUILDDIR) $(NATIVE_ARGS) -Dcatch2:tests=false; fi
 
 build: setup
 	meson compile -C $(BUILDDIR)
 
 build-minimal:
-	@if [ ! -d $(MINDIR) ]; then meson setup $(MINDIR) --native-file $(NATIVE_FILE) -Dcatch2:tests=false \
+	@if [ ! -d $(MINDIR) ]; then meson setup $(MINDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
 		-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false -Dwith_compatible=false \
 		-Dwith_whatsapp=false -Dwith_sqlite_memory=false; fi
 	meson compile -C $(MINDIR)
 
 build-static:
-	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) --native-file $(NATIVE_FILE) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false; fi
+	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) $(NATIVE_ARGS) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false; fi
 	meson compile -C $(STATICDIR)
 
 run: build
@@ -49,7 +56,7 @@ test: build
 	meson test -C $(BUILDDIR)
 
 coverage:
-	@if [ ! -d $(COVDIR) ]; then meson setup $(COVDIR) --native-file $(NATIVE_FILE) -Db_coverage=true -Dcatch2:tests=false; fi
+	@if [ ! -d $(COVDIR) ]; then meson setup $(COVDIR) $(NATIVE_ARGS) -Db_coverage=true -Dcatch2:tests=false; fi
 	meson test -C $(COVDIR)
 	gcovr --root . $(COVDIR) --filter src/ --html-details $(COVDIR)/coverage.html
 	@echo "Coverage report: $(COVDIR)/coverage.html"
