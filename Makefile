@@ -4,11 +4,16 @@ ifeq ($(shell uname),Darwin)
   NATIVE_FILE := meson-native-macos.ini
   NATIVE_ARGS := --native-file $(NATIVE_FILE)
   CLANG_TIDY_EXTRA := -extra-arg=-stdlib=libc++ -extra-arg=-isysroot$(shell xcrun --show-sdk-path)
+  SIZE_FLAGS :=
+  STRIP_CMD = strip -x $1
   ifeq ($(shell xcode-select -p 2>/dev/null),)
     $(error Xcode Command Line Tools required. Install with: xcode-select --install)
   endif
 else
   CLANG_TIDY_EXTRA :=
+  SIZE_FLAGS := -Dcpp_args='-ffunction-sections -fdata-sections -fvisibility=hidden' \
+    -Dcpp_link_args='-Wl,--gc-sections -Wl,--strip-all'
+  STRIP_CMD = strip --strip-unneeded $1
   ifeq ($(shell command -v clang++ >/dev/null 2>&1; echo $$?),0)
     NATIVE_FILE := meson-native-linux.ini
     NATIVE_ARGS := --native-file $(NATIVE_FILE)
@@ -42,20 +47,14 @@ build: setup
 build-minimal:
 	@if [ ! -d $(MINDIR) ]; then meson setup $(MINDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
 		-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false -Dwith_compatible=false \
-		-Dwith_whatsapp=false -Dwith_sqlite_memory=false; fi
+		-Dwith_whatsapp=false -Dwith_sqlite_memory=false $(SIZE_FLAGS); fi
 	meson compile -C $(MINDIR)
+	$(call STRIP_CMD,$(MINDIR)/ptrclaw) 2>/dev/null || true
 
 build-static:
-ifeq ($(shell uname),Linux)
-	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) $(NATIVE_ARGS) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false \
-		-Dcpp_args='-ffunction-sections -fdata-sections -fvisibility=hidden' \
-		-Dcpp_link_args='-Wl,--gc-sections -Wl,--strip-all'; fi
+	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) $(NATIVE_ARGS) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false $(SIZE_FLAGS); fi
 	meson compile -C $(STATICDIR)
-	strip --strip-unneeded $(STATICDIR)/ptrclaw 2>/dev/null || true
-else
-	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) $(NATIVE_ARGS) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false; fi
-	meson compile -C $(STATICDIR)
-endif
+	$(call STRIP_CMD,$(STATICDIR)/ptrclaw) 2>/dev/null || true
 
 run: build
 	./$(BUILDDIR)/ptrclaw
