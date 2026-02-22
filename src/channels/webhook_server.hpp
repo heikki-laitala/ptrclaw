@@ -12,11 +12,11 @@ namespace ptrclaw {
 struct WebhookRequest {
     std::string method;   // "GET" or "POST"
     std::string path;     // e.g. "/webhook"
-    std::string query;    // raw query string (without leading '?')
-    std::map<std::string, std::string> headers;  // header names lowercased
+    std::map<std::string, std::string> query_params;  // URL-decoded query parameters
+    std::map<std::string, std::string> headers;        // header names lowercased
     std::string body;
 
-    // Return a URL-decoded query parameter value, or "" if absent.
+    // Return a query parameter value, or "" if absent.
     std::string query_param(const std::string& key) const;
 };
 
@@ -30,14 +30,14 @@ struct WebhookResponse {
 // local reverse proxy. Designed to sit behind nginx/Caddy; not exposed to the
 // internet directly. Handles one connection at a time (reverse proxy queues
 // concurrent requests). Runs its accept loop in a background thread.
-class WhatsAppWebhookServer {
+class WebhookServer {
 public:
     using Handler = std::function<WebhookResponse(const WebhookRequest&)>;
 
     // listen_addr: "host:port", e.g. "127.0.0.1:8080"
     // max_body:    maximum POST body size in bytes; larger bodies get 413
-    WhatsAppWebhookServer(std::string listen_addr, uint32_t max_body, Handler handler);
-    ~WhatsAppWebhookServer();
+    WebhookServer(std::string listen_addr, uint32_t max_body, Handler handler);
+    ~WebhookServer();
 
     // Start background accept thread. Returns false and populates error on failure.
     bool start(std::string& error);

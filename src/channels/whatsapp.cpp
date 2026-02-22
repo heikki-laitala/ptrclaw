@@ -89,7 +89,7 @@ bool WhatsAppChannel::supports_polling() const {
 void WhatsAppChannel::initialize() {
     if (config_.webhook_listen.empty()) return;
 
-    server_ = std::make_unique<WhatsAppWebhookServer>(
+    server_ = std::make_unique<WebhookServer>(
         config_.webhook_listen,
         config_.webhook_max_body,
         [this](const WebhookRequest& req) -> WebhookResponse {
