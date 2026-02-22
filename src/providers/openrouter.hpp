@@ -6,7 +6,8 @@ namespace ptrclaw {
 
 class OpenRouterProvider : public OpenAIProvider {
 public:
-    OpenRouterProvider(const std::string& api_key, HttpClient& http);
+    OpenRouterProvider(const std::string& api_key, HttpClient& http,
+                       const std::string& base_url = "https://openrouter.ai/api/v1");
 
     std::string provider_name() const override { return "openrouter"; }
 

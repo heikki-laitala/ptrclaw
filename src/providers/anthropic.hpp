@@ -8,7 +8,8 @@ namespace ptrclaw {
 
 class AnthropicProvider : public Provider {
 public:
-    AnthropicProvider(const std::string& api_key, HttpClient& http);
+    AnthropicProvider(const std::string& api_key, HttpClient& http,
+                      const std::string& base_url = "https://api.anthropic.com/v1");
 
     ChatResponse chat(const std::vector<ChatMessage>& messages,
                       const std::vector<ToolSpec>& tools,
@@ -37,7 +38,7 @@ private:
                                  double temperature) const;
     std::string api_key_;
     HttpClient& http_;
-    static constexpr const char* BASE_URL = "https://api.anthropic.com/v1/messages";
+    std::string base_url_;
     static constexpr const char* API_VERSION = "2023-06-01";
 };
 

@@ -6,16 +6,19 @@
 #include <stdexcept>
 
 static ptrclaw::ProviderRegistrar reg_anthropic("anthropic",
-    [](const std::string& key, ptrclaw::HttpClient& http, const std::string&) {
-        return std::make_unique<ptrclaw::AnthropicProvider>(key, http);
+    [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url) {
+        if (base_url.empty())
+            return std::make_unique<ptrclaw::AnthropicProvider>(key, http);
+        return std::make_unique<ptrclaw::AnthropicProvider>(key, http, base_url);
     });
 
 using json = nlohmann::json;
 
 namespace ptrclaw {
 
-AnthropicProvider::AnthropicProvider(const std::string& api_key, HttpClient& http)
-    : api_key_(api_key), http_(http) {}
+AnthropicProvider::AnthropicProvider(const std::string& api_key, HttpClient& http,
+                                     const std::string& base_url)
+    : api_key_(api_key), http_(http), base_url_(base_url) {}
 
 json AnthropicProvider::build_request(const std::vector<ChatMessage>& messages,
                                        const std::vector<ToolSpec>& tools,
@@ -120,7 +123,7 @@ ChatResponse AnthropicProvider::chat(const std::vector<ChatMessage>& messages,
         {"content-type", "application/json"}
     };
 
-    auto response = http_.post(BASE_URL, request.dump(), headers);
+    auto response = http_.post(base_url_ + "/messages", request.dump(), headers);
 
     if (response.status_code < 200 || response.status_code >= 300) {
         throw std::runtime_error("Anthropic API error (HTTP " +
@@ -194,7 +197,7 @@ ChatResponse AnthropicProvider::chat_stream(const std::vector<ChatMessage>& mess
     std::string error_body;
 
     auto http_response = http_.stream_post_raw(
-        BASE_URL, request.dump(), headers,
+        base_url_ + "/messages", request.dump(), headers,
         [&](const char* data, size_t len) -> bool {
             std::string chunk(data, len);
             parser.feed(chunk, [&](const SSEEvent& sse) -> bool {
@@ -316,7 +319,7 @@ std::string AnthropicProvider::chat_simple(const std::string& system_prompt,
         {"content-type", "application/json"}
     };
 
-    auto response = http_.post(BASE_URL, request.dump(), headers);
+    auto response = http_.post(base_url_ + "/messages", request.dump(), headers);
 
     if (response.status_code < 200 || response.status_code >= 300) {
         throw std::runtime_error("Anthropic API error (HTTP " +

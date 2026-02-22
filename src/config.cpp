@@ -178,6 +178,9 @@ Config Config::load() {
             cfg.memory.synthesis_interval = m["synthesis_interval"].get<uint32_t>();
     }
 
+    if (j.contains("base_url") && j["base_url"].is_string())
+        cfg.base_url = j["base_url"].get<std::string>();
+
     // Environment variables always override config file
     if (const char* v = std::getenv("ANTHROPIC_API_KEY"))
         cfg.anthropic_api_key = v;
@@ -185,6 +188,8 @@ Config Config::load() {
         cfg.openai_api_key = v;
     if (const char* v = std::getenv("OPENROUTER_API_KEY"))
         cfg.openrouter_api_key = v;
+    if (const char* v = std::getenv("BASE_URL"))
+        cfg.base_url = v;
     if (const char* v = std::getenv("OLLAMA_BASE_URL"))
         cfg.ollama_base_url = v;
     if (const char* v = std::getenv("COMPATIBLE_BASE_URL"))
@@ -223,6 +228,7 @@ std::string Config::api_key_for(const std::string& provider) const {
 }
 
 std::string Config::base_url_for(const std::string& provider) const {
+    if (!base_url.empty())        return base_url;
     if (provider == "ollama")     return ollama_base_url;
     if (provider == "compatible") return compatible_base_url;
     return {};

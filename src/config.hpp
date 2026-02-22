@@ -59,6 +59,7 @@ struct Config {
     std::string openrouter_api_key;
     std::string ollama_base_url = "http://localhost:11434";
     std::string compatible_base_url;
+    std::string base_url;  // Global override — applies to the active provider
 
     // Defaults — keep in sync with build_defaults_json() in config.cpp
     std::string default_provider = "anthropic";
