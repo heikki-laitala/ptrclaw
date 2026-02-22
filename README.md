@@ -194,8 +194,10 @@ export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 
 ```sh
 make build          # compile (all features)
-make build-minimal  # slim build: openai + telegram + tools + json memory (~562 KB)
+make build-minimal  # slim build: openai + telegram + tools + json memory
 make build-static   # static binary with all features including SQLite memory
+make build-size     # Linux size profile (minsize + LTO + section GC + stripped)
+make size-compare   # compare build-static vs build-size binary sizes
 make test           # run unit tests (Catch2)
 make lint           # run clang-tidy
 make coverage       # generate HTML coverage report
@@ -243,11 +245,14 @@ ninja -C builddir
 
 ### Binary size
 
-| Configuration | Size (macOS arm64) |
-| ------------- | ------------------ |
-| Full (all features) | ~663 KB |
-| Minimal (`make build-minimal`) | ~562 KB |
-| Static (`make build-static`) | ~663 KB |
+Use these targets to optimize and compare Linux binary sizes:
+
+- `make build-static` (baseline static-lean build)
+- `make build-size` (size-optimized build)
+- `make size-compare` (prints byte + percent difference)
+
+`build-size` uses: `buildtype=minsize`, LTO, `-ffunction-sections -fdata-sections`,
+`--gc-sections`, and symbol stripping.
 
 LTO is enabled by default.
 
