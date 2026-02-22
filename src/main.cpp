@@ -144,10 +144,10 @@ int main(int argc, char* argv[]) try {
 
     // Override config with CLI args
     if (!provider_name.empty()) {
-        config.default_provider = provider_name;
+        config.provider = provider_name;
     }
     if (!model_name.empty()) {
-        config.default_model = model_name;
+        config.model = model_name;
     }
 
     // Channel mode
@@ -168,10 +168,10 @@ int main(int argc, char* argv[]) try {
     std::unique_ptr<ptrclaw::Provider> provider;
     try {
         provider = ptrclaw::create_provider(
-            config.default_provider,
-            config.api_key_for(config.default_provider),
+            config.provider,
+            config.api_key_for(config.provider),
             http_client,
-            config.base_url_for(config.default_provider));
+            config.base_url_for(config.provider));
     } catch (const std::exception& e) {
         std::cerr << "Error creating provider: " << e.what() << "\n";
         ptrclaw::http_cleanup();

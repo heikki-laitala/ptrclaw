@@ -18,7 +18,7 @@ Agent::Agent(std::unique_ptr<Provider> provider,
     : provider_(std::move(provider))
     , tools_(std::move(tools))
     , config_(config)
-    , model_(config.default_model)
+    , model_(config.model)
 {
     // Create memory backend from config
     memory_ = create_memory(config_);
@@ -113,7 +113,7 @@ std::string Agent::process(const std::string& user_message) {
         try {
             if (provider_->supports_streaming()) {
                 response = provider_->chat_stream(
-                    history_, tool_specs, model_, config_.default_temperature,
+                    history_, tool_specs, model_, config_.temperature,
                     [this, &stream_started](const std::string& delta) -> bool {
                         if (event_bus_) {
                             if (!stream_started) {
@@ -132,7 +132,7 @@ std::string Agent::process(const std::string& user_message) {
                     });
             } else {
                 response = provider_->chat(history_, tool_specs, model_,
-                                           config_.default_temperature);
+                                           config_.temperature);
             }
         } catch (const std::exception& e) {
             return std::string("Error calling provider: ") + e.what();

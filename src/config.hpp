@@ -3,9 +3,15 @@
 #include <vector>
 #include <optional>
 #include <cstdint>
+#include <unordered_map>
 #include <nlohmann/json.hpp>
 
 namespace ptrclaw {
+
+struct ProviderEntry {
+    std::string api_key;
+    std::string base_url;
+};
 
 struct AgentConfig {
     uint32_t max_tool_iterations = 10;
@@ -52,17 +58,12 @@ struct MemoryConfig {
 };
 
 struct Config {
-    // API keys (from config or env vars)
-    std::string anthropic_api_key;
-    std::string openai_api_key;
-    std::string openrouter_api_key;
-    std::string ollama_base_url = "http://localhost:11434";
-    std::string compatible_base_url;
+    std::string provider = "anthropic";
+    std::string model = "claude-sonnet-4-20250514";
+    double temperature = 0.7;
     std::string base_url;  // Global override — applies to the active provider
 
-    std::string default_provider = "anthropic";
-    std::string default_model = "claude-sonnet-4-20250514";
-    double default_temperature = 0.7;
+    std::unordered_map<std::string, ProviderEntry> providers;
 
     AgentConfig agent;
     ChannelsConfig channels;

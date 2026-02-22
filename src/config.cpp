@@ -10,11 +10,17 @@ namespace ptrclaw {
 
 nlohmann::json Config::defaults_json() {
     return {
-        {"default_provider", "anthropic"},
-        {"default_model", "claude-sonnet-4-20250514"},
-        {"default_temperature", 0.7},
+        {"provider", "anthropic"},
+        {"model", "claude-sonnet-4-20250514"},
+        {"temperature", 0.7},
         {"base_url", ""},
-        {"ollama_base_url", "http://localhost:11434"},
+        {"providers", {
+            {"anthropic", {{"api_key", ""}}},
+            {"openai", {{"api_key", ""}}},
+            {"openrouter", {{"api_key", ""}}},
+            {"ollama", {{"base_url", "http://localhost:11434"}}},
+            {"compatible", {{"base_url", ""}}}
+        }},
         {"agent", {
             {"max_tool_iterations", 10},
             {"max_history_messages", 50},
@@ -80,23 +86,24 @@ Config Config::load() {
     }
 
     // Parse JSON into Config struct
-    if (j.contains("anthropic_api_key") && j["anthropic_api_key"].is_string())
-        cfg.anthropic_api_key = j["anthropic_api_key"].get<std::string>();
-    if (j.contains("openai_api_key") && j["openai_api_key"].is_string())
-        cfg.openai_api_key = j["openai_api_key"].get<std::string>();
-    if (j.contains("openrouter_api_key") && j["openrouter_api_key"].is_string())
-        cfg.openrouter_api_key = j["openrouter_api_key"].get<std::string>();
-    if (j.contains("ollama_base_url") && j["ollama_base_url"].is_string())
-        cfg.ollama_base_url = j["ollama_base_url"].get<std::string>();
-    if (j.contains("compatible_base_url") && j["compatible_base_url"].is_string())
-        cfg.compatible_base_url = j["compatible_base_url"].get<std::string>();
+    if (j.contains("provider") && j["provider"].is_string())
+        cfg.provider = j["provider"].get<std::string>();
+    if (j.contains("model") && j["model"].is_string())
+        cfg.model = j["model"].get<std::string>();
+    if (j.contains("temperature") && j["temperature"].is_number())
+        cfg.temperature = j["temperature"].get<double>();
 
-    if (j.contains("default_provider") && j["default_provider"].is_string())
-        cfg.default_provider = j["default_provider"].get<std::string>();
-    if (j.contains("default_model") && j["default_model"].is_string())
-        cfg.default_model = j["default_model"].get<std::string>();
-    if (j.contains("default_temperature") && j["default_temperature"].is_number())
-        cfg.default_temperature = j["default_temperature"].get<double>();
+    if (j.contains("providers") && j["providers"].is_object()) {
+        for (auto& [name, obj] : j["providers"].items()) {
+            if (!obj.is_object()) continue;
+            ProviderEntry entry;
+            if (obj.contains("api_key") && obj["api_key"].is_string())
+                entry.api_key = obj["api_key"].get<std::string>();
+            if (obj.contains("base_url") && obj["base_url"].is_string())
+                entry.base_url = obj["base_url"].get<std::string>();
+            cfg.providers[name] = std::move(entry);
+        }
+    }
 
     if (j.contains("agent") && j["agent"].is_object()) {
         auto& a = j["agent"];
@@ -183,17 +190,17 @@ Config Config::load() {
 
     // Environment variables always override config file
     if (const char* v = std::getenv("ANTHROPIC_API_KEY"))
-        cfg.anthropic_api_key = v;
+        cfg.providers["anthropic"].api_key = v;
     if (const char* v = std::getenv("OPENAI_API_KEY"))
-        cfg.openai_api_key = v;
+        cfg.providers["openai"].api_key = v;
     if (const char* v = std::getenv("OPENROUTER_API_KEY"))
-        cfg.openrouter_api_key = v;
+        cfg.providers["openrouter"].api_key = v;
     if (const char* v = std::getenv("BASE_URL"))
         cfg.base_url = v;
     if (const char* v = std::getenv("OLLAMA_BASE_URL"))
-        cfg.ollama_base_url = v;
+        cfg.providers["ollama"].base_url = v;
     if (const char* v = std::getenv("COMPATIBLE_BASE_URL"))
-        cfg.compatible_base_url = v;
+        cfg.providers["compatible"].base_url = v;
 
     // Channel env var overrides
     if (const char* v = std::getenv("TELEGRAM_BOT_TOKEN")) {
@@ -220,17 +227,16 @@ Config Config::load() {
     return cfg;
 }
 
-std::string Config::api_key_for(const std::string& provider) const {
-    if (provider == "anthropic") return anthropic_api_key;
-    if (provider == "openai")    return openai_api_key;
-    if (provider == "openrouter") return openrouter_api_key;
+std::string Config::api_key_for(const std::string& prov) const {
+    auto it = providers.find(prov);
+    if (it != providers.end()) return it->second.api_key;
     return {};
 }
 
-std::string Config::base_url_for(const std::string& provider) const {
-    if (!base_url.empty())        return base_url;
-    if (provider == "ollama")     return ollama_base_url;
-    if (provider == "compatible") return compatible_base_url;
+std::string Config::base_url_for(const std::string& prov) const {
+    if (!base_url.empty()) return base_url;
+    auto it = providers.find(prov);
+    if (it != providers.end()) return it->second.base_url;
     return {};
 }
 
