@@ -14,6 +14,7 @@ static nlohmann::json build_defaults_json() {
         {"default_provider", "anthropic"},
         {"default_model", "claude-sonnet-4-20250514"},
         {"default_temperature", 0.7},
+        {"base_url", ""},
         {"ollama_base_url", "http://localhost:11434"},
         {"agent", {
             {"max_tool_iterations", 10},
