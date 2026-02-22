@@ -360,8 +360,8 @@ void Agent::maybe_synthesize() {
 
     try {
         std::string result = provider_->chat_simple(
-            synthesis_prompt, "You are a knowledge extraction assistant.",
-            model_, 0.3);
+            "You are a knowledge extraction assistant.",
+            synthesis_prompt, model_, 0.3);
 
         // Parse JSON array response
         auto j = nlohmann::json::parse(result);

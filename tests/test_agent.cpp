@@ -39,11 +39,17 @@ public:
         return next_response;
     }
 
-    std::string chat_simple(const std::string&,
-                            const std::string&,
+    std::string last_simple_system;
+    std::string last_simple_message;
+    std::string simple_response = "simple response";
+
+    std::string chat_simple(const std::string& system_prompt,
+                            const std::string& message,
                             const std::string&,
                             double) override {
-        return "simple response";
+        last_simple_system = system_prompt;
+        last_simple_message = message;
+        return simple_response;
     }
 
     bool supports_native_tools() const override { return native_tools; }
@@ -490,6 +496,39 @@ TEST_CASE("Agent: synthesis triggers after configured interval", "[agent]") {
 
     // Agent should still work correctly after synthesis attempt
     REQUIRE(mock->chat_call_count >= 2);
+
+    std::filesystem::remove(mem_path);
+}
+
+TEST_CASE("Agent: synthesis passes system prompt and message correctly", "[agent]") {
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+
+    ChatResponse normal;
+    normal.content = "I understand.";
+    mock->next_response = normal;
+    mock->simple_response = R"([{"key":"test","content":"test","category":"knowledge","links":[]}])";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_tool_iterations = 5;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_args_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    agent.process("Hello world");
+
+    // System prompt should be the short role instruction
+    REQUIRE(mock->last_simple_system.find("knowledge extraction") != std::string::npos);
+    // User message should contain the extraction rules and conversation
+    REQUIRE(mock->last_simple_message.find("Extract atomic knowledge") != std::string::npos);
+    REQUIRE(mock->last_simple_message.find("Hello world") != std::string::npos);
 
     std::filesystem::remove(mem_path);
 }
