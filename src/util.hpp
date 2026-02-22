@@ -20,6 +20,9 @@ uint64_t epoch_seconds();
 // Trim whitespace
 std::string trim(const std::string& s);
 
+// Lowercase a string
+std::string to_lower(const std::string& s);
+
 // Split string by delimiter
 std::vector<std::string> split(const std::string& s, char delim);
 
