@@ -265,6 +265,7 @@ TEST_CASE("Config::load: does not rewrite complete config", "[config]") {
         {"default_provider", "openai"},
         {"default_model", "gpt-4o"},
         {"default_temperature", 0.9},
+        {"base_url", ""},
         {"ollama_base_url", "http://localhost:11434"},
         {"agent", {
             {"max_tool_iterations", 5},
