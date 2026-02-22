@@ -260,35 +260,11 @@ TEST_CASE("Config::load: does not rewrite complete config", "[config]") {
     ConfigTestGuard g;
     REQUIRE_FALSE(g.dir.empty());
 
-    // Write a config containing all default keys (with some custom values)
-    nlohmann::json full = {
-        {"default_provider", "openai"},
-        {"default_model", "gpt-4o"},
-        {"default_temperature", 0.9},
-        {"base_url", ""},
-        {"ollama_base_url", "http://localhost:11434"},
-        {"agent", {
-            {"max_tool_iterations", 5},
-            {"max_history_messages", 50},
-            {"token_limit", 128000}
-        }},
-        {"memory", {
-#ifdef PTRCLAW_HAS_SQLITE_MEMORY
-            {"backend", "sqlite"},
-#else
-            {"backend", "json"},
-#endif
-            {"auto_save", false},
-            {"recall_limit", 5},
-            {"hygiene_max_age", 604800},
-            {"response_cache", false},
-            {"cache_ttl", 3600},
-            {"cache_max_entries", 100},
-            {"enrich_depth", 1},
-            {"synthesis", true},
-            {"synthesis_interval", 5}
-        }}
-    };
+    // Start from actual defaults, override a few values to prove they survive
+    nlohmann::json full = Config::defaults_json();
+    full["default_provider"] = "openai";
+    full["default_model"] = "gpt-4o";
+    full["agent"]["max_tool_iterations"] = 5;
 
     g.write_config(full.dump(4) + "\n");
 
@@ -300,7 +276,12 @@ TEST_CASE("Config::load: does not rewrite complete config", "[config]") {
                       std::istreambuf_iterator<char>());
     }
 
-    Config::load();
+    Config cfg = Config::load();
+
+    // Custom values preserved
+    REQUIRE(cfg.default_provider == "openai");
+    REQUIRE(cfg.default_model == "gpt-4o");
+    REQUIRE(cfg.agent.max_tool_iterations == 5);
 
     // File should be unchanged — no unnecessary rewrite
     std::string after;
@@ -310,4 +291,31 @@ TEST_CASE("Config::load: does not rewrite complete config", "[config]") {
                      std::istreambuf_iterator<char>());
     }
     REQUIRE(before == after);
+}
+
+TEST_CASE("Config::load: defaults roundtrip without re-migration", "[config]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+
+    // First load creates the default config file
+    Config::load();
+
+    // Read the written file
+    std::string first;
+    {
+        std::ifstream f(g.config_path());
+        first.assign(std::istreambuf_iterator<char>(f),
+                     std::istreambuf_iterator<char>());
+    }
+
+    // Second load should find nothing to migrate
+    Config::load();
+
+    std::string second;
+    {
+        std::ifstream f(g.config_path());
+        second.assign(std::istreambuf_iterator<char>(f),
+                      std::istreambuf_iterator<char>());
+    }
+    REQUIRE(first == second);
 }
