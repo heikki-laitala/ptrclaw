@@ -15,11 +15,11 @@ static Config make_test_config() {
     REQUIRE_FALSE(names.empty());
 
     Config cfg;
-    cfg.default_provider = names.front();
-    cfg.ollama_base_url = "http://localhost:11434";
-    cfg.anthropic_api_key = "test-key";
-    cfg.openai_api_key = "test-key";
-    cfg.openrouter_api_key = "test-key";
+    cfg.provider = names.front();
+    cfg.providers["anthropic"].api_key = "test-key";
+    cfg.providers["openai"].api_key = "test-key";
+    cfg.providers["openrouter"].api_key = "test-key";
+    cfg.providers["ollama"].base_url = "http://localhost:11434";
     cfg.agent.max_tool_iterations = 5;
     cfg.agent.max_history_messages = 50;
     return cfg;

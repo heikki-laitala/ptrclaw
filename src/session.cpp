@@ -21,10 +21,10 @@ Agent& SessionManager::get_session(const std::string& session_id) {
 
     // Create new session
     auto provider = create_provider(
-        config_.default_provider,
-        config_.api_key_for(config_.default_provider),
+        config_.provider,
+        config_.api_key_for(config_.provider),
         http_,
-        config_.base_url_for(config_.default_provider));
+        config_.base_url_for(config_.provider));
 
     auto tools = create_builtin_tools();
 

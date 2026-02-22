@@ -12,12 +12,11 @@ using namespace ptrclaw;
 
 TEST_CASE("Config: default values are sensible", "[config]") {
     Config cfg;
-    REQUIRE(cfg.default_provider == "anthropic");
-    REQUIRE(cfg.default_temperature == 0.7);
-    REQUIRE(cfg.ollama_base_url == "http://localhost:11434");
-    REQUIRE(cfg.anthropic_api_key.empty());
-    REQUIRE(cfg.openai_api_key.empty());
-    REQUIRE(cfg.openrouter_api_key.empty());
+    REQUIRE(cfg.provider == "anthropic");
+    REQUIRE(cfg.temperature == 0.7);
+    REQUIRE(cfg.api_key_for("anthropic").empty());
+    REQUIRE(cfg.api_key_for("openai").empty());
+    REQUIRE(cfg.api_key_for("openrouter").empty());
 }
 
 TEST_CASE("AgentConfig: default values", "[config]") {
@@ -31,9 +30,9 @@ TEST_CASE("AgentConfig: default values", "[config]") {
 
 TEST_CASE("Config::api_key_for: returns correct key per provider", "[config]") {
     Config cfg;
-    cfg.anthropic_api_key = "sk-ant-123";
-    cfg.openai_api_key = "sk-oai-456";
-    cfg.openrouter_api_key = "sk-or-789";
+    cfg.providers["anthropic"].api_key = "sk-ant-123";
+    cfg.providers["openai"].api_key = "sk-oai-456";
+    cfg.providers["openrouter"].api_key = "sk-or-789";
 
     REQUIRE(cfg.api_key_for("anthropic") == "sk-ant-123");
     REQUIRE(cfg.api_key_for("openai") == "sk-oai-456");
@@ -42,9 +41,8 @@ TEST_CASE("Config::api_key_for: returns correct key per provider", "[config]") {
 
 TEST_CASE("Config::api_key_for: unknown provider returns empty", "[config]") {
     Config cfg;
-    cfg.anthropic_api_key = "key";
+    cfg.providers["anthropic"].api_key = "key";
     REQUIRE(cfg.api_key_for("unknown").empty());
-    REQUIRE(cfg.api_key_for("ollama").empty());
     REQUIRE(cfg.api_key_for("").empty());
 }
 
@@ -52,8 +50,8 @@ TEST_CASE("Config::api_key_for: unknown provider returns empty", "[config]") {
 
 TEST_CASE("Config::base_url_for: returns correct URL per provider", "[config]") {
     Config cfg;
-    cfg.ollama_base_url = "http://ollama:11434";
-    cfg.compatible_base_url = "http://local:8080/v1";
+    cfg.providers["ollama"].base_url = "http://ollama:11434";
+    cfg.providers["compatible"].base_url = "http://local:8080/v1";
 
     REQUIRE(cfg.base_url_for("ollama") == "http://ollama:11434");
     REQUIRE(cfg.base_url_for("compatible") == "http://local:8080/v1");
@@ -61,7 +59,7 @@ TEST_CASE("Config::base_url_for: returns correct URL per provider", "[config]") 
 
 TEST_CASE("Config::base_url_for: other providers return empty", "[config]") {
     Config cfg;
-    cfg.ollama_base_url = "http://ollama:11434";
+    cfg.providers["ollama"].base_url = "http://ollama:11434";
     REQUIRE(cfg.base_url_for("anthropic").empty());
     REQUIRE(cfg.base_url_for("openai").empty());
     REQUIRE(cfg.base_url_for("openrouter").empty());
@@ -115,13 +113,15 @@ TEST_CASE("Config::load: reads config file", "[config]") {
     REQUIRE_FALSE(g.dir.empty());
 
     g.write_config(R"({
-        "anthropic_api_key": "sk-file-ant",
-        "openai_api_key": "sk-file-oai",
-        "openrouter_api_key": "sk-file-or",
-        "ollama_base_url": "http://custom:9999",
-        "default_provider": "openai",
-        "default_model": "gpt-4o",
-        "default_temperature": 0.5,
+        "providers": {
+            "anthropic": { "api_key": "sk-file-ant" },
+            "openai": { "api_key": "sk-file-oai" },
+            "openrouter": { "api_key": "sk-file-or" },
+            "ollama": { "base_url": "http://custom:9999" }
+        },
+        "provider": "openai",
+        "model": "gpt-4o",
+        "temperature": 0.5,
         "agent": {
             "max_tool_iterations": 20,
             "max_history_messages": 100,
@@ -131,13 +131,13 @@ TEST_CASE("Config::load: reads config file", "[config]") {
 
     Config cfg = Config::load();
 
-    REQUIRE(cfg.anthropic_api_key == "sk-file-ant");
-    REQUIRE(cfg.openai_api_key == "sk-file-oai");
-    REQUIRE(cfg.openrouter_api_key == "sk-file-or");
-    REQUIRE(cfg.ollama_base_url == "http://custom:9999");
-    REQUIRE(cfg.default_provider == "openai");
-    REQUIRE(cfg.default_model == "gpt-4o");
-    REQUIRE(cfg.default_temperature == 0.5);
+    REQUIRE(cfg.api_key_for("anthropic") == "sk-file-ant");
+    REQUIRE(cfg.api_key_for("openai") == "sk-file-oai");
+    REQUIRE(cfg.api_key_for("openrouter") == "sk-file-or");
+    REQUIRE(cfg.base_url_for("ollama") == "http://custom:9999");
+    REQUIRE(cfg.provider == "openai");
+    REQUIRE(cfg.model == "gpt-4o");
+    REQUIRE(cfg.temperature == 0.5);
     REQUIRE(cfg.agent.max_tool_iterations == 20);
     REQUIRE(cfg.agent.max_history_messages == 100);
     REQUIRE(cfg.agent.token_limit == 64000);
@@ -147,11 +147,11 @@ TEST_CASE("Config::load: env vars override config file", "[config]") {
     ConfigTestGuard g;
     REQUIRE_FALSE(g.dir.empty());
 
-    g.write_config(R"({"anthropic_api_key": "from-file"})");
+    g.write_config(R"({"providers": {"anthropic": {"api_key": "from-file"}}})");
     setenv("ANTHROPIC_API_KEY", "from-env", 1);
 
     Config cfg = Config::load();
-    REQUIRE(cfg.anthropic_api_key == "from-env");
+    REQUIRE(cfg.api_key_for("anthropic") == "from-env");
 
     unsetenv("ANTHROPIC_API_KEY");
 }
@@ -163,8 +163,8 @@ TEST_CASE("Config::load: malformed JSON falls back to defaults", "[config]") {
     g.write_config("not valid json {{{");
 
     Config cfg = Config::load();
-    REQUIRE(cfg.default_provider == "anthropic");
-    REQUIRE(cfg.anthropic_api_key.empty());
+    REQUIRE(cfg.provider == "anthropic");
+    REQUIRE(cfg.api_key_for("anthropic").empty());
 }
 
 TEST_CASE("Config::load: missing config file uses defaults", "[config]") {
@@ -172,8 +172,8 @@ TEST_CASE("Config::load: missing config file uses defaults", "[config]") {
     REQUIRE_FALSE(g.dir.empty());
 
     Config cfg = Config::load();
-    REQUIRE(cfg.default_provider == "anthropic");
-    REQUIRE(cfg.default_temperature == 0.7);
+    REQUIRE(cfg.provider == "anthropic");
+    REQUIRE(cfg.temperature == 0.7);
 }
 
 TEST_CASE("Config::load: all env var overrides", "[config]") {
@@ -186,10 +186,10 @@ TEST_CASE("Config::load: all env var overrides", "[config]") {
     setenv("OLLAMA_BASE_URL", "http://env:1234", 1);
 
     Config cfg = Config::load();
-    REQUIRE(cfg.anthropic_api_key == "env-ant");
-    REQUIRE(cfg.openai_api_key == "env-oai");
-    REQUIRE(cfg.openrouter_api_key == "env-or");
-    REQUIRE(cfg.ollama_base_url == "http://env:1234");
+    REQUIRE(cfg.api_key_for("anthropic") == "env-ant");
+    REQUIRE(cfg.api_key_for("openai") == "env-oai");
+    REQUIRE(cfg.api_key_for("openrouter") == "env-or");
+    REQUIRE(cfg.base_url_for("ollama") == "http://env:1234");
 
     unsetenv("ANTHROPIC_API_KEY");
     unsetenv("OPENAI_API_KEY");
@@ -210,8 +210,10 @@ TEST_CASE("Config::load: creates default config when missing", "[config]") {
     std::ifstream f(g.config_path());
     nlohmann::json j = nlohmann::json::parse(f);
 
-    REQUIRE(j.contains("default_provider"));
-    REQUIRE(j["default_provider"] == "anthropic");
+    REQUIRE(j.contains("provider"));
+    REQUIRE(j["provider"] == "anthropic");
+    REQUIRE(j.contains("providers"));
+    REQUIRE(j["providers"].contains("anthropic"));
     REQUIRE(j.contains("agent"));
     REQUIRE(j["agent"].contains("max_tool_iterations"));
     REQUIRE(j.contains("memory"));
@@ -222,9 +224,7 @@ TEST_CASE("Config::load: creates default config when missing", "[config]") {
     REQUIRE(j["memory"]["backend"] == "json");
 #endif
 
-    // Must not contain API keys or channels
-    REQUIRE_FALSE(j.contains("anthropic_api_key"));
-    REQUIRE_FALSE(j.contains("openai_api_key"));
+    // Must not contain channels
     REQUIRE_FALSE(j.contains("channels"));
 }
 
@@ -232,20 +232,20 @@ TEST_CASE("Config::load: migrates existing config with missing keys", "[config]"
     ConfigTestGuard g;
     REQUIRE_FALSE(g.dir.empty());
 
-    g.write_config(R"({"anthropic_api_key": "sk-test", "default_model": "gpt-4o"})");
+    g.write_config(R"({"providers": {"anthropic": {"api_key": "sk-test"}}, "model": "gpt-4o"})");
 
     Config cfg = Config::load();
 
     // User values preserved
-    REQUIRE(cfg.anthropic_api_key == "sk-test");
-    REQUIRE(cfg.default_model == "gpt-4o");
+    REQUIRE(cfg.api_key_for("anthropic") == "sk-test");
+    REQUIRE(cfg.model == "gpt-4o");
 
     // Re-read file to verify migration wrote new keys
     std::ifstream f(g.config_path());
     nlohmann::json j = nlohmann::json::parse(f);
 
-    REQUIRE(j["anthropic_api_key"] == "sk-test");
-    REQUIRE(j["default_model"] == "gpt-4o");
+    REQUIRE(j["providers"]["anthropic"]["api_key"] == "sk-test");
+    REQUIRE(j["model"] == "gpt-4o");
     REQUIRE(j.contains("memory"));
 #ifdef PTRCLAW_HAS_SQLITE_MEMORY
     REQUIRE(j["memory"]["backend"] == "sqlite");
@@ -262,8 +262,8 @@ TEST_CASE("Config::load: does not rewrite complete config", "[config]") {
 
     // Start from actual defaults, override a few values to prove they survive
     nlohmann::json full = Config::defaults_json();
-    full["default_provider"] = "openai";
-    full["default_model"] = "gpt-4o";
+    full["provider"] = "openai";
+    full["model"] = "gpt-4o";
     full["agent"]["max_tool_iterations"] = 5;
 
     g.write_config(full.dump(4) + "\n");
@@ -279,8 +279,8 @@ TEST_CASE("Config::load: does not rewrite complete config", "[config]") {
     Config cfg = Config::load();
 
     // Custom values preserved
-    REQUIRE(cfg.default_provider == "openai");
-    REQUIRE(cfg.default_model == "gpt-4o");
+    REQUIRE(cfg.provider == "openai");
+    REQUIRE(cfg.model == "gpt-4o");
     REQUIRE(cfg.agent.max_tool_iterations == 5);
 
     // File should be unchanged — no unnecessary rewrite
