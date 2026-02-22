@@ -7,8 +7,6 @@
 
 static ptrclaw::ProviderRegistrar reg_anthropic("anthropic",
     [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url) {
-        if (base_url.empty())
-            return std::make_unique<ptrclaw::AnthropicProvider>(key, http);
         return std::make_unique<ptrclaw::AnthropicProvider>(key, http, base_url);
     });
 
@@ -18,7 +16,8 @@ namespace ptrclaw {
 
 AnthropicProvider::AnthropicProvider(const std::string& api_key, HttpClient& http,
                                      const std::string& base_url)
-    : api_key_(api_key), http_(http), base_url_(base_url) {}
+    : api_key_(api_key), http_(http),
+      base_url_(base_url.empty() ? "https://api.anthropic.com/v1" : base_url) {}
 
 json AnthropicProvider::build_request(const std::vector<ChatMessage>& messages,
                                        const std::vector<ToolSpec>& tools,
