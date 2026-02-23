@@ -1,0 +1,52 @@
+name: Memory Benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: memory-benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate secret exists
+        shell: bash
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then
+            echo "Missing required secret: ANTHROPIC_API_KEY"
+            exit 1
+          fi
+          echo "::add-mask::${ANTHROPIC_API_KEY}"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ meson ninja-build libssl-dev libsqlite3-dev lld
+
+      - name: Build
+        run: |
+          meson setup builddir --buildtype=release
+          meson compile -C builddir
+
+      - name: Run memory benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/e2e/memory_benchmark.py ./builddir/ptrclaw 2>&1 | \
+            sed -E 's/sk-ant-[A-Za-z0-9_-]+/***REDACTED***/g'
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-benchmark-logs
+          path: builddir/meson-logs/
+          if-no-files-found: ignore
