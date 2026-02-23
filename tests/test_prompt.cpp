@@ -72,3 +72,46 @@ TEST_CASE("build_system_prompt: includes style adaptation instruction", "[prompt
     auto result = build_system_prompt(tools, false);
     REQUIRE(result.find("Adapt your communication style") != std::string::npos);
 }
+
+TEST_CASE("build_system_prompt: includes tool call style section", "[prompt]") {
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<PromptMockTool>());
+    auto result = build_system_prompt(tools, false);
+    REQUIRE(result.find("Tool Call Style") != std::string::npos);
+    REQUIRE(result.find("Do not narrate routine") != std::string::npos);
+}
+
+TEST_CASE("build_system_prompt: includes safety section", "[prompt]") {
+    std::vector<std::unique_ptr<Tool>> tools;
+    auto result = build_system_prompt(tools, false);
+    REQUIRE(result.find("## Safety") != std::string::npos);
+    REQUIRE(result.find("self-preservation") != std::string::npos);
+}
+
+TEST_CASE("build_system_prompt: includes runtime info", "[prompt]") {
+    std::vector<std::unique_ptr<Tool>> tools;
+    RuntimeInfo runtime{"claude-sonnet-4", "anthropic", "telegram"};
+    auto result = build_system_prompt(tools, false, false, nullptr, runtime);
+    REQUIRE(result.find("## Runtime") != std::string::npos);
+    REQUIRE(result.find("claude-sonnet-4") != std::string::npos);
+    REQUIRE(result.find("anthropic") != std::string::npos);
+    REQUIRE(result.find("telegram") != std::string::npos);
+}
+
+TEST_CASE("build_system_prompt: silent replies only with channel", "[prompt]") {
+    std::vector<std::unique_ptr<Tool>> tools;
+    // No channel — no silent replies
+    auto result = build_system_prompt(tools, false);
+    REQUIRE(result.find("[SILENT]") == std::string::npos);
+
+    // With channel — has silent replies
+    RuntimeInfo runtime{"", "", "telegram"};
+    auto result2 = build_system_prompt(tools, false, false, nullptr, runtime);
+    REQUIRE(result2.find("[SILENT]") != std::string::npos);
+}
+
+TEST_CASE("build_system_prompt: workspace section present", "[prompt]") {
+    std::vector<std::unique_ptr<Tool>> tools;
+    auto result = build_system_prompt(tools, false);
+    REQUIRE(result.find("## Workspace") != std::string::npos);
+}

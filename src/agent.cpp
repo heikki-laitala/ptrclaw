@@ -39,7 +39,9 @@ void Agent::inject_system_prompt() {
     } else {
         bool include_tool_desc = !provider_->supports_native_tools();
         bool has_memory = memory_ && memory_->backend_name() != "none";
-        prompt = build_system_prompt(tools_, include_tool_desc, has_memory, memory_.get());
+        RuntimeInfo runtime{model_, provider_->provider_name(), channel_};
+        prompt = build_system_prompt(tools_, include_tool_desc, has_memory,
+                                     memory_.get(), runtime);
     }
     history_.insert(history_.begin(), ChatMessage{Role::System, prompt, {}, {}});
     system_prompt_injected_ = true;

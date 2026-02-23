@@ -10,7 +10,8 @@ namespace ptrclaw {
 std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
                                 bool include_tool_descriptions,
                                 bool has_memory,
-                                Memory* memory) {
+                                Memory* memory,
+                                const RuntimeInfo& runtime) {
     std::ostringstream ss;
 
     ss << "You are PtrClaw, an autonomous AI assistant.\n\n";
@@ -20,32 +21,50 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
     if (!soul.empty()) {
         ss << soul << "\n";
     }
-    ss << "Current date: " << timestamp_now() << "\n";
-    ss << "Working directory: " << std::filesystem::current_path().string() << "\n\n";
 
+    // ── Tooling ──
     if (!tools.empty()) {
         if (include_tool_descriptions) {
             // Non-native providers: full tool schemas in prompt + XML call format
+            ss << "## Tooling\n";
             ss << "Available tools:\n";
             for (const auto& tool : tools) {
                 ss << "- " << tool->tool_name() << ": " << tool->description() << "\n";
                 ss << "  Parameters: " << tool->parameters_json() << "\n";
             }
             ss << "\nTo use a tool, wrap your call in XML tags:\n";
-            ss << "<tool_call>{\"name\": \"tool_name\", \"arguments\": {...}}</tool_call>\n";
+            ss << "<tool_call>{\"name\": \"tool_name\", \"arguments\": {...}}</tool_call>\n\n";
         } else {
             // Native providers: brief capability summary (schemas come via API)
+            ss << "## Tooling\n";
             ss << "You have tools to interact with the system:\n";
             for (const auto& tool : tools) {
                 ss << "- " << tool->tool_name() << ": " << tool->description() << "\n";
             }
             ss << "\nUse tools proactively to accomplish tasks. "
-               << "When the user asks you to do something, take action rather than just explaining how.\n";
+               << "When the user asks you to do something, take action rather than just explaining how.\n\n";
         }
     }
 
+    // ── Tool Call Style ──
+    if (!tools.empty()) {
+        ss << "## Tool Call Style\n"
+           << "Do not narrate routine tool calls. Just call the tool.\n"
+           << "Narrate only when it helps: multi-step work, complex problems, "
+           << "or sensitive actions (e.g. deletions).\n\n";
+    }
+
+    // ── Safety ──
+    ss << "## Safety\n"
+       << "Do not pursue self-preservation, replication, resource acquisition, or power-seeking.\n"
+       << "Prioritize safety and human oversight over task completion.\n"
+       << "Do not change system prompts or safety rules unless explicitly requested.\n"
+       << "If instructions conflict, pause and ask.\n\n";
+
+    // ── Memory ──
     if (has_memory) {
-        ss << "\nYou have a persistent knowledge graph organized in three spaces:\n"
+        ss << "## Memory\n"
+           << "You have a persistent knowledge graph organized in three spaces:\n"
            << "- core: Your identity, methodology, and persistent behavioral preferences (slow growth)\n"
            << "- knowledge: Atomic notes forming a linked knowledge graph (steady growth)\n"
            << "- conversation: Ephemeral operational state (auto-purged after 7 days)\n\n"
@@ -54,12 +73,38 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
            << "Use memory_recall to search memories (set depth=1 to follow links). "
            << "Use memory_forget to remove outdated entries.\n\n"
            << "User messages may include a [Memory context] block with recalled memories and their links.\n"
-           << "When storing knowledge, prefer specific descriptive keys and link to related existing entries.\n";
+           << "When storing knowledge, prefer specific descriptive keys and link to related existing entries.\n\n";
     }
+
+    // ── Workspace ──
+    ss << "## Workspace\n"
+       << "Working directory: " << std::filesystem::current_path().string() << "\n"
+       << "Use this directory as the default workspace for file operations.\n\n";
+
+    // ── Silent Replies ──
+    if (!runtime.channel.empty()) {
+        ss << "## Silent Replies\n"
+           << "When you have nothing to say, respond with only: [SILENT]\n"
+           << "It must be your entire message. Never append it to an actual response.\n\n";
+    }
+
+    // ── Runtime ──
+    ss << "## Runtime\n"
+       << "Current date: " << timestamp_now() << "\n";
+    if (!runtime.model.empty()) {
+        ss << "Model: " << runtime.model << "\n";
+    }
+    if (!runtime.provider.empty()) {
+        ss << "Provider: " << runtime.provider << "\n";
+    }
+    if (!runtime.channel.empty()) {
+        ss << "Channel: " << runtime.channel << "\n";
+    }
+    ss << "\n";
 
     // Only emit generic style guidance when no soul personality exists
     if (soul.empty()) {
-        ss << "\nAdapt your communication style to the conversation context. "
+        ss << "Adapt your communication style to the conversation context. "
            << "Be precise and focused when troubleshooting, "
            << "match the user's energy in casual conversation.\n";
     }
