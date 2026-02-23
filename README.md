@@ -120,12 +120,17 @@ Environment variables override the config file:
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 | `OLLAMA_BASE_URL` | Ollama server URL (default `http://localhost:11434`) |
 | `COMPATIBLE_BASE_URL` | Base URL for OpenAI-compatible endpoint |
+| `BASE_URL` | Global base URL override for the active provider |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token (overrides config) |
 | `WHATSAPP_ACCESS_TOKEN` | WhatsApp Business API access token |
 | `WHATSAPP_PHONE_ID` | WhatsApp Business phone number ID |
 | `WHATSAPP_VERIFY_TOKEN` | WhatsApp webhook verification token |
 | `WHATSAPP_WEBHOOK_LISTEN` | Bind address for built-in webhook server (e.g. `127.0.0.1:8080`) |
 | `WHATSAPP_WEBHOOK_SECRET` | Shared secret for proxy→local trust (`X-Webhook-Secret` header) |
+
+Notes:
+- There is currently no `COMPATIBLE_API_KEY` env var; set `providers.compatible.api_key` in `~/.ptrclaw/config.json` when using the `compatible` provider.
+- `BASE_URL` overrides provider-specific base URLs for whichever provider is active.
 
 ### How to get a Telegram bot token
 
