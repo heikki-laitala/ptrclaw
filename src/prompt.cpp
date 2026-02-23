@@ -72,7 +72,12 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
            << "Use memory_link to connect related notes.\n"
            << "Use memory_recall to search memories (set depth=1 to follow links). "
            << "Use memory_forget to remove outdated entries.\n\n"
-           << "User messages may include a [Memory context] block with recalled memories and their links.\n"
+           << "Each user message begins with a [Memory context] block containing automatically recalled memories:\n"
+           << "[Memory context]\n"
+           << "- some-key: some content [links: related-key]\n"
+           << "[/Memory context]\n"
+           << "This context is already retrieved for you — do not call memory_recall for the same topic. "
+           << "Only use memory_recall when you need information on a different topic than the user's message.\n"
            << "When storing knowledge, prefer specific descriptive keys and link to related existing entries.\n\n";
     }
 
