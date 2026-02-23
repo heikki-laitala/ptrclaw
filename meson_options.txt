@@ -13,8 +13,8 @@ option('with_ollama', type: 'boolean', value: true,
 # Channel features
 option('with_telegram', type: 'boolean', value: true,
        description: 'Build the Telegram channel')
-option('with_whatsapp', type: 'boolean', value: true,
-       description: 'Build the WhatsApp channel')
+option('with_whatsapp', type: 'boolean', value: false,
+       description: 'Build the WhatsApp channel (requires webhook server + reverse proxy)')
 
 # Tool features
 option('with_tools', type: 'boolean', value: true,

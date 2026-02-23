@@ -1,10 +1,10 @@
 # PtrClaw
 
-An AI assistant you can actually deploy anywhere. Single static binary, no runtime dependencies, no containers needed. Run it as a CLI tool, a Telegram bot, a WhatsApp bot — or plug in your own channel.
+An AI assistant you can actually deploy anywhere. Single static binary, no runtime dependencies, no containers needed. Run it as a CLI tool, a Telegram bot, or plug in your own channel. WhatsApp is available as an opt-in build flag.
 
 Built in C++17 because infrastructure should be small, fast, and boring to operate.
 
-**~517 KB static binary (macOS arm64), ~6.9 MB (Linux x86_64, statically linked with OpenSSL + sqlite3). 6 LLM providers. 8 built-in tools. 2 messaging channels. Persistent memory with knowledge graph. Compile-time feature flags to strip what you don't need.**
+**~518 KB static binary (macOS arm64), ~6.9 MB (Linux x86_64, statically linked with OpenSSL + sqlite3). 6 LLM providers. 8 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph. Compile-time feature flags to strip what you don't need.**
 
 ## Why PtrClaw?
 
@@ -27,7 +27,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Provider failover** — `reliable` provider wraps multiple backends with automatic fallback
 - **Multi-session management** with idle eviction
 - **Telegram channel** — long-polling, user allowlists, Markdown-to-HTML, per-user sessions, streaming message edits
-- **WhatsApp channel** — Business Cloud API with built-in webhook server (reverse-proxy ready), E.164 phone normalization, sender allowlists
+- **WhatsApp channel** *(opt-in: `-Dwith_whatsapp=true`)* — Business Cloud API with built-in webhook server (reverse-proxy ready), E.164 phone normalization, sender allowlists
 - **Soul hatching** — dynamic personality development through onboarding conversations
 
 ## Quick start
@@ -174,6 +174,8 @@ Optional hardening:
 
 ### How to get WhatsApp Cloud API credentials
 
+> **Note:** WhatsApp is not included in the default build. Enable it with `-Dwith_whatsapp=true` at configure time (see [Feature flags](#feature-flags)).
+
 Use Meta's WhatsApp Business Platform (Cloud API).
 
 1. Go to [Meta for Developers](https://developers.facebook.com/), create/select an app.
@@ -234,17 +236,19 @@ export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 
 ```text
 -m, --message MSG    Send a single message and exit
---channel NAME       Run as a channel bot (telegram, whatsapp)
+--channel NAME       Run as a channel bot (telegram, whatsapp¹)
 --provider NAME      Use a specific provider (anthropic, openai, ollama, openrouter)
 --model NAME         Use a specific model
 --dev                Enable developer-only commands (e.g. /soul)
 -h, --help           Show help
+
+¹ WhatsApp requires building with -Dwith_whatsapp=true
 ```
 
 ## Development
 
 ```sh
-make build          # compile (all features)
+make build          # compile (all features except WhatsApp)
 make build-minimal  # slim build: openai + telegram + tools + json memory
 make build-static   # size-optimized static binary for distribution
 make test           # run unit tests (Catch2)
@@ -257,7 +261,7 @@ Distribution builds (`build-static`, `build-minimal`) compile only the main bina
 
 ### Feature flags
 
-Every provider, channel, and tool is a compile-time feature flag in `meson_options.txt` (all default `true`). Disable unused components to reduce binary size:
+Every provider, channel, and tool is a compile-time feature flag in `meson_options.txt`. Most default to `true`; WhatsApp defaults to `false` (requires webhook infrastructure). Disable unused components to reduce binary size:
 
 | Flag | Controls | Default |
 | ---- | -------- | ------- |
@@ -267,7 +271,7 @@ Every provider, channel, and tool is a compile-time feature flag in `meson_optio
 | `with_compatible` | OpenAI-compatible provider (implies `with_openai`) | `true` |
 | `with_ollama` | Ollama provider | `true` |
 | `with_telegram` | Telegram channel | `true` |
-| `with_whatsapp` | WhatsApp channel | `true` |
+| `with_whatsapp` | WhatsApp channel | `false` |
 | `with_tools` | All built-in tools | `true` |
 | `with_memory` | Memory system (JsonMemory) | `true` |
 | `with_sqlite_memory` | SQLite+FTS5 memory backend | `true` |
@@ -298,11 +302,11 @@ ninja -C builddir
 
 | Configuration | macOS arm64 | Linux x86_64 |
 | ------------- | ----------- | ------------ |
-| Full (all features) | ~717 KB | ~717 KB |
-| Static (`make build-static`, stripped) | ~517 KB | ~6.9 MB |
+| Default (`make build`) | ~697 KB | ~697 KB |
+| Static (`make build-static`, stripped) | ~518 KB | ~6.9 MB |
 | Minimal (`make build-minimal`, stripped) | ~452 KB | — |
 
-Linux static binaries are larger because they bundle OpenSSL and sqlite3. The dynamically linked build is the same size as macOS. LTO is enabled by default. Distribution builds are stripped and size-optimized.
+Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux static binaries are larger because they bundle OpenSSL and sqlite3. The dynamically linked build is the same size as macOS. LTO is enabled by default. Distribution builds are stripped and size-optimized.
 
 ## Project structure
 
