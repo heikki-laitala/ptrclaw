@@ -23,14 +23,25 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
     ss << "Current date: " << timestamp_now() << "\n";
     ss << "Working directory: " << std::filesystem::current_path().string() << "\n\n";
 
-    if (include_tool_descriptions) {
-        ss << "Available tools:\n";
-        for (const auto& tool : tools) {
-            ss << "- " << tool->tool_name() << ": " << tool->description() << "\n";
-            ss << "  Parameters: " << tool->parameters_json() << "\n";
+    if (!tools.empty()) {
+        if (include_tool_descriptions) {
+            // Non-native providers: full tool schemas in prompt + XML call format
+            ss << "Available tools:\n";
+            for (const auto& tool : tools) {
+                ss << "- " << tool->tool_name() << ": " << tool->description() << "\n";
+                ss << "  Parameters: " << tool->parameters_json() << "\n";
+            }
+            ss << "\nTo use a tool, wrap your call in XML tags:\n";
+            ss << "<tool_call>{\"name\": \"tool_name\", \"arguments\": {...}}</tool_call>\n";
+        } else {
+            // Native providers: brief capability summary (schemas come via API)
+            ss << "You have tools to interact with the system:\n";
+            for (const auto& tool : tools) {
+                ss << "- " << tool->tool_name() << ": " << tool->description() << "\n";
+            }
+            ss << "\nUse tools proactively to accomplish tasks. "
+               << "When the user asks you to do something, take action rather than just explaining how.\n";
         }
-        ss << "\nTo use a tool, wrap your call in XML tags:\n";
-        ss << "<tool_call>{\"name\": \"tool_name\", \"arguments\": {...}}</tool_call>\n";
     }
 
     if (has_memory) {
