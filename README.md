@@ -20,7 +20,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 
 - **LLM streaming** — real-time token streaming with progressive message editing in channels
 - **Event-driven architecture** — publish/subscribe event bus decouples agent, channels, and streaming
-- **Interactive REPL** with slash commands (`/status`, `/model`, `/clear`, `/memory`, `/soul`, `/hatch`, `/help`, `/quit`)
+- **Interactive REPL** with slash commands (`/status`, `/model`, `/clear`, `/memory`, `/hatch`, `/help`, `/quit`; `/soul` available in `--dev` mode)
 - **Single-message mode** — pipe a question in and get an answer back
 - **Automatic history compaction** when token usage approaches the context limit
 - **Persistent memory** — knowledge graph with bidirectional links, three-space semantics (core/knowledge/conversation), graph-aware context enrichment, automatic conversation synthesis
@@ -237,6 +237,7 @@ export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 --channel NAME       Run as a channel bot (telegram, whatsapp)
 --provider NAME      Use a specific provider (anthropic, openai, ollama, openrouter)
 --model NAME         Use a specific model
+--dev                Enable developer-only commands (e.g. /soul)
 -h, --help           Show help
 ```
 
