@@ -310,6 +310,9 @@ uint32_t Agent::estimated_tokens() const {
 }
 
 void Agent::clear_history() {
+    for (auto& tool : tools_) {
+        tool->reset();
+    }
     history_.clear();
     system_prompt_injected_ = false;
     has_last_prompt_tokens_ = false;

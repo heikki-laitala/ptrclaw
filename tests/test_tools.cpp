@@ -302,6 +302,87 @@ TEST_CASE("ShellTool: empty stdin does not hang", "[tools]") {
     REQUIRE(result.output.empty());
 }
 
+// Helper: extract process_id from "[WAITING FOR INPUT - process_id:proc_N]"
+static std::string extract_process_id(const std::string& output) {
+    auto pos = output.find("process_id:");
+    if (pos == std::string::npos) return "";
+    pos += 11; // length of "process_id:"
+    auto end = output.find(']', pos);
+    if (end == std::string::npos) return "";
+    return output.substr(pos, end - pos);
+}
+
+// ═══ ShellTool interactive ═══════════════════════════════════════
+
+TEST_CASE("ShellTool: non-interactive command has no process_id", "[tools]") {
+    ShellTool tool;
+    auto result = tool.execute(R"({"command":"echo hello"})");
+    REQUIRE(result.success);
+    REQUIRE(result.output.find("hello") != std::string::npos);
+    REQUIRE(result.output.find("[WAITING FOR INPUT") == std::string::npos);
+}
+
+TEST_CASE("ShellTool: command waiting for stdin returns process_id", "[tools]") {
+    ShellTool tool;
+    // cat without stdin param will block waiting for input
+    auto result = tool.execute(R"({"command":"cat"})");
+    REQUIRE(result.success);
+    REQUIRE(result.output.find("[WAITING FOR INPUT -") != std::string::npos);
+    REQUIRE_FALSE(extract_process_id(result.output).empty());
+}
+
+TEST_CASE("ShellTool: resume with stdin completes process", "[tools]") {
+    ShellTool tool;
+    // 'read line; echo $line' reads one line then exits
+    auto r1 = tool.execute(R"({"command":"bash -c 'read line; echo got: $line'"})");
+    REQUIRE(r1.success);
+    REQUIRE(r1.output.find("[WAITING FOR INPUT -") != std::string::npos);
+
+    std::string proc_id = extract_process_id(r1.output);
+    REQUIRE_FALSE(proc_id.empty());
+
+    // Resume with input
+    std::string resume_args = R"({"process_id":")" + proc_id + R"(","stdin":"hello"})";
+    auto r2 = tool.execute(resume_args);
+    REQUIRE(r2.success);
+    REQUIRE(r2.output.find("got: hello") != std::string::npos);
+    REQUIRE(r2.output.find("[WAITING FOR INPUT") == std::string::npos);
+}
+
+TEST_CASE("ShellTool: resume with invalid process_id fails", "[tools]") {
+    ShellTool tool;
+    auto result = tool.execute(R"({"process_id":"nonexistent","stdin":"data"})");
+    REQUIRE_FALSE(result.success);
+    REQUIRE(result.output.find("No such process") != std::string::npos);
+}
+
+TEST_CASE("ShellTool: kill_all_processes cleans up", "[tools]") {
+    ShellTool tool;
+    // Start a blocking command
+    auto r1 = tool.execute(R"({"command":"cat"})");
+    REQUIRE(r1.output.find("[WAITING FOR INPUT -") != std::string::npos);
+
+    std::string proc_id = extract_process_id(r1.output);
+    REQUIRE_FALSE(proc_id.empty());
+
+    // Reset (kills all)
+    tool.reset();
+
+    // The process_id should no longer be valid
+    std::string resume_args = R"({"process_id":")" + proc_id + R"(","stdin":"data"})";
+    auto r2 = tool.execute(resume_args);
+    REQUIRE_FALSE(r2.success);
+    REQUIRE(r2.output.find("No such process") != std::string::npos);
+}
+
+TEST_CASE("ShellTool: stdin parameter still works for one-shot piping", "[tools]") {
+    ShellTool tool;
+    auto result = tool.execute(R"({"command":"cat","stdin":"piped data"})");
+    REQUIRE(result.success);
+    REQUIRE(result.output == "piped data");
+    REQUIRE(result.output.find("[WAITING FOR INPUT") == std::string::npos);
+}
+
 // ═══ Tool spec ═══════════════════════════════════════════════════
 
 TEST_CASE("Tool::spec builds ToolSpec correctly", "[tools]") {

@@ -23,6 +23,7 @@ public:
     virtual std::string tool_name() const = 0;
     virtual std::string description() const = 0;
     virtual std::string parameters_json() const = 0;
+    virtual void reset() {}
 
     ToolSpec spec() const {
         return ToolSpec{tool_name(), description(), parameters_json()};

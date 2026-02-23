@@ -2,6 +2,7 @@
 #include "../plugin.hpp"
 #include <nlohmann/json.hpp>
 #include <array>
+#include <csignal>
 #include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -11,6 +12,14 @@ static ptrclaw::ToolRegistrar reg_shell("shell",
 
 namespace ptrclaw {
 
+ShellTool::~ShellTool() {
+    kill_all_processes();
+}
+
+void ShellTool::reset() {
+    kill_all_processes();
+}
+
 ToolResult ShellTool::execute(const std::string& args_json) {
     nlohmann::json args;
     try {
@@ -19,20 +28,30 @@ ToolResult ShellTool::execute(const std::string& args_json) {
         return ToolResult{false, std::string("Failed to parse arguments: ") + e.what()};
     }
 
-    if (!args.contains("command") || !args["command"].is_string()) {
-        return ToolResult{false, "Missing required parameter: command"};
-    }
-
-    std::string command = args["command"].get<std::string>() + " 2>&1";
-
     std::string stdin_data;
     bool has_stdin = args.contains("stdin") && args["stdin"].is_string();
     if (has_stdin) {
         stdin_data = args["stdin"].get<std::string>();
     }
 
-    // stdin pipe: parent writes to stdin_pipe[1], child reads from stdin_pipe[0]
-    // stdout pipe: child writes to stdout_pipe[1], parent reads from stdout_pipe[0]
+    // Resume existing process
+    if (args.contains("process_id") && args["process_id"].is_string()) {
+        return resume_process(args["process_id"].get<std::string>(), stdin_data);
+    }
+
+    // New command
+    if (!args.contains("command") || !args["command"].is_string()) {
+        return ToolResult{false, "Missing required parameter: command (or process_id to resume)"};
+    }
+
+    return run_new_command(args["command"].get<std::string>(), stdin_data, has_stdin);
+}
+
+ToolResult ShellTool::run_new_command(const std::string& command,
+                                     const std::string& stdin_data,
+                                     bool has_stdin) {
+    std::string cmd = command + " 2>&1";
+
     int stdin_pipe[2];
     int stdout_pipe[2];
 
@@ -50,7 +69,8 @@ ToolResult ShellTool::execute(const std::string& args_json) {
     }
 
     if (pid == 0) {
-        // Child process
+        // Child process — detach from controlling terminal
+        setsid();
         close(stdin_pipe[1]);
         close(stdout_pipe[0]);
         dup2(stdin_pipe[0], STDIN_FILENO);
@@ -58,7 +78,7 @@ ToolResult ShellTool::execute(const std::string& args_json) {
         dup2(stdout_pipe[1], STDERR_FILENO);
         close(stdin_pipe[0]);
         close(stdout_pipe[1]);
-        execl("/bin/sh", "sh", "-c", command.c_str(), nullptr);
+        execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
         _exit(127);
     }
 
@@ -66,82 +86,180 @@ ToolResult ShellTool::execute(const std::string& args_json) {
     close(stdin_pipe[0]);
     close(stdout_pipe[1]);
 
-    // Interleave stdin writes and stdout reads via poll() to avoid deadlock
-    // when both pipe buffers fill simultaneously.
-    std::string output;
-    std::array<char, 4096> buffer;
-    size_t written = 0;
-    bool stdin_open = has_stdin && !stdin_data.empty();
-
-    // If no stdin data, close write end immediately so child gets EOF
-    if (!stdin_open) {
-        close(stdin_pipe[1]);
-    }
-
-    while (stdin_open || true) {
-        struct pollfd fds[2];
-        nfds_t nfds = 0;
-
-        // Always poll stdout for reading
-        fds[nfds].fd = stdout_pipe[0];
-        fds[nfds].events = POLLIN;
-        nfds_t stdout_idx = nfds++;
-
-        // Poll stdin for writing only if we still have data
-        nfds_t stdin_idx = nfds;
-        if (stdin_open) {
-            fds[nfds].fd = stdin_pipe[1];
-            fds[nfds].events = POLLOUT;
-            nfds++;
-        }
-
-        if (poll(fds, nfds, -1) < 0) break;
-
-        // Write stdin data when pipe is ready
-        if (stdin_open && (fds[stdin_idx].revents & (POLLOUT | POLLERR | POLLHUP)) != 0) {
-            ssize_t n = write(stdin_pipe[1], stdin_data.data() + written,
-                              stdin_data.size() - written);
-            if (n > 0) {
+    // Write stdin data if provided; close stdin when caller explicitly supplied
+    // the parameter (even if empty) so the child gets EOF. When no stdin param
+    // was given, leave the pipe open — stall detection will catch commands that
+    // block on input and return them as interactive processes.
+    if (has_stdin) {
+        if (!stdin_data.empty()) {
+            size_t written = 0;
+            while (written < stdin_data.size()) {
+                ssize_t n = write(stdin_pipe[1], stdin_data.data() + written,
+                                  stdin_data.size() - written);
+                if (n <= 0) break;
                 written += static_cast<size_t>(n);
             }
-            if (n <= 0 || written >= stdin_data.size()) {
-                close(stdin_pipe[1]);
-                stdin_open = false;
-            }
         }
-
-        // Read stdout data when available
-        if ((fds[stdout_idx].revents & POLLIN) != 0) {
-            ssize_t n = read(stdout_pipe[0], buffer.data(), buffer.size());
-            if (n > 0) {
-                output.append(buffer.data(), static_cast<size_t>(n));
-            } else {
-                break; // EOF or error
-            }
-        } else if ((fds[stdout_idx].revents & (POLLHUP | POLLERR)) != 0) {
-            break;
-        }
+        close(stdin_pipe[1]);
+        stdin_pipe[1] = -1;
     }
-    close(stdout_pipe[0]);
 
-    int status = 0;
-    waitpid(pid, &status, 0);
-    bool success = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    // Read output with stall detection
+    auto [output, still_running] = read_with_timeout(stdout_pipe[0], pid);
 
     constexpr size_t max_output = 10000;
     if (output.size() > max_output) {
         output = output.substr(0, max_output) + "\n[truncated]";
     }
 
-    return ToolResult{success, output};
+    if (!still_running) {
+        // Process finished
+        if (stdin_pipe[1] >= 0) close(stdin_pipe[1]);
+        close(stdout_pipe[0]);
+        int status = 0;
+        waitpid(pid, &status, 0);
+        bool success = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+        return ToolResult{success, output};
+    }
+
+    // Process is stalled — waiting for input
+    // Evict oldest process if at capacity
+    while (processes_.size() >= kMaxProcesses) {
+        auto oldest = processes_.begin();
+        cleanup_process(oldest->first);
+    }
+
+    std::string proc_id = "proc_" + std::to_string(next_id_++);
+    int stored_stdin = stdin_pipe[1] >= 0 ? stdin_pipe[1] : -1;
+    processes_[proc_id] = ProcessState{pid, stored_stdin, stdout_pipe[0]};
+
+    output += "\n[WAITING FOR INPUT - process_id:" + proc_id + "]";
+    return ToolResult{true, output};
+}
+
+ToolResult ShellTool::resume_process(const std::string& proc_id, const std::string& stdin_data) {
+    auto it = processes_.find(proc_id);
+    if (it == processes_.end()) {
+        return ToolResult{false, "No such process: " + proc_id};
+    }
+
+    auto& proc = it->second;
+
+    // Write stdin data
+    if (!stdin_data.empty() && proc.stdin_fd >= 0) {
+        std::string data = stdin_data;
+        if (data.back() != '\n') {
+            data += '\n';
+        }
+        size_t written = 0;
+        while (written < data.size()) {
+            ssize_t n = write(proc.stdin_fd, data.data() + written,
+                              data.size() - written);
+            if (n <= 0) break;
+            written += static_cast<size_t>(n);
+        }
+    }
+
+    // Read new output
+    auto [output, still_running] = read_with_timeout(proc.stdout_fd, proc.pid);
+
+    constexpr size_t max_output = 10000;
+    if (output.size() > max_output) {
+        output = output.substr(0, max_output) + "\n[truncated]";
+    }
+
+    if (!still_running) {
+        int status = 0;
+        if (proc.stdin_fd >= 0) close(proc.stdin_fd);
+        close(proc.stdout_fd);
+        waitpid(proc.pid, &status, 0);
+        processes_.erase(it);
+        bool success = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+        return ToolResult{success, output};
+    }
+
+    // Still waiting
+    output += "\n[WAITING FOR INPUT - process_id:" + proc_id + "]";
+    return ToolResult{true, output};
+}
+
+ShellTool::ReadResult ShellTool::read_with_timeout(int stdout_fd, pid_t pid) {
+    std::string output;
+    std::array<char, 4096> buffer;
+
+    while (true) {
+        struct pollfd pfd;
+        pfd.fd = stdout_fd;
+        pfd.events = POLLIN;
+
+        int ret = poll(&pfd, 1, kStallTimeoutMs);
+
+        if (ret < 0) {
+            break; // poll error
+        }
+
+        if (ret == 0) {
+            // Timeout — check if process is still alive
+            int status = 0;
+            pid_t result = waitpid(pid, &status, WNOHANG);
+            if (result == 0) {
+                // Still running, no output = stalled (waiting for input)
+                return {output, true};
+            }
+            // Process exited during timeout
+            return {output, false};
+        }
+
+        if ((pfd.revents & POLLIN) != 0) {
+            ssize_t n = read(stdout_fd, buffer.data(), buffer.size());
+            if (n > 0) {
+                output.append(buffer.data(), static_cast<size_t>(n));
+                continue; // Reset timeout — got data, keep reading
+            }
+            // EOF
+            return {output, false};
+        }
+
+        if ((pfd.revents & (POLLHUP | POLLERR)) != 0) {
+            return {output, false};
+        }
+    }
+
+    return {output, false};
+}
+
+void ShellTool::cleanup_process(const std::string& id) {
+    auto it = processes_.find(id);
+    if (it == processes_.end()) return;
+
+    auto& proc = it->second;
+    kill(proc.pid, SIGKILL);
+    if (proc.stdin_fd >= 0) close(proc.stdin_fd);
+    close(proc.stdout_fd);
+    int status = 0;
+    waitpid(proc.pid, &status, 0);
+    processes_.erase(it);
+}
+
+void ShellTool::kill_all_processes() {
+    for (auto& [id, proc] : processes_) {
+        kill(proc.pid, SIGKILL);
+        if (proc.stdin_fd >= 0) close(proc.stdin_fd);
+        close(proc.stdout_fd);
+        int status = 0;
+        waitpid(proc.pid, &status, 0);
+    }
+    processes_.clear();
 }
 
 std::string ShellTool::description() const {
-    return "Execute a shell command and return its output";
+    return "Execute a shell command. For interactive commands that wait for input, "
+           "the tool returns partial output with a process_id. Use process_id with "
+           "stdin to send follow-up input to the waiting process.";
 }
 
 std::string ShellTool::parameters_json() const {
-    return R"({"type":"object","properties":{"command":{"type":"string","description":"The shell command to execute"},"stdin":{"type":"string","description":"Optional input to write to the command's stdin. Use with commands that read from stdin (e.g. sudo -S)."}},"required":["command"]})";
+    return R"json({"type":"object","properties":{"command":{"type":"string","description":"The shell command to execute (required for new commands)"},"stdin":{"type":"string","description":"Input to write to the command's stdin. For new commands, this is initial input. For resumed processes, this is follow-up input (newline appended automatically)."},"process_id":{"type":"string","description":"Resume a waiting process by its ID. When provided, command is not needed - only stdin is sent to the existing process."}}})json";
 }
 
 } // namespace ptrclaw
