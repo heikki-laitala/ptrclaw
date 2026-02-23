@@ -72,6 +72,8 @@ private:
     std::unique_ptr<ResponseCache> response_cache_;
     uint32_t turns_since_synthesis_ = 0;
     bool hatching_ = false;
+    uint32_t last_prompt_tokens_ = 0; // from provider usage when available
+    bool has_last_prompt_tokens_ = false;
 };
 
 } // namespace ptrclaw

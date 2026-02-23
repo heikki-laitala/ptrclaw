@@ -53,6 +53,8 @@ void Agent::start_hatch() {
     hatching_ = true;
     history_.clear();
     system_prompt_injected_ = false;
+    has_last_prompt_tokens_ = false;
+    last_prompt_tokens_ = 0;
 }
 
 std::string Agent::process(const std::string& user_message) {
@@ -91,6 +93,8 @@ std::string Agent::process(const std::string& user_message) {
         auto cached = response_cache_->get(model_, sys_prompt, user_message);
         if (cached) {
             history_.push_back(ChatMessage{Role::Assistant, *cached, {}, {}});
+            // Cached responses have no provider usage payload — fall back to heuristic.
+            has_last_prompt_tokens_ = false;
             compact_history();
             return *cached;
         }
@@ -136,6 +140,12 @@ std::string Agent::process(const std::string& user_message) {
             }
         } catch (const std::exception& e) {
             return std::string("Error calling provider: ") + e.what();
+        }
+
+        // Track actual prompt token usage when provider reports it.
+        if (response.usage.prompt_tokens > 0) {
+            last_prompt_tokens_ = response.usage.prompt_tokens;
+            has_last_prompt_tokens_ = true;
         }
 
         // Emit ProviderResponse event
@@ -287,6 +297,11 @@ std::string Agent::process(const std::string& user_message) {
 }
 
 uint32_t Agent::estimated_tokens() const {
+    // Prefer real provider-reported prompt usage when available.
+    if (has_last_prompt_tokens_) {
+        return last_prompt_tokens_;
+    }
+
     uint32_t total = 0;
     for (const auto& msg : history_) {
         total += estimate_tokens(msg.content);
@@ -297,6 +312,8 @@ uint32_t Agent::estimated_tokens() const {
 void Agent::clear_history() {
     history_.clear();
     system_prompt_injected_ = false;
+    has_last_prompt_tokens_ = false;
+    last_prompt_tokens_ = 0;
 }
 
 void Agent::set_provider(std::unique_ptr<Provider> provider) {
