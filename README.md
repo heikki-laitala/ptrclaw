@@ -120,6 +120,18 @@ Create `~/.ptrclaw/config.json`:
 }
 ```
 
+Minimal config (Anthropic only):
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-20250514",
+  "providers": {
+    "anthropic": { "api_key": "sk-ant-..." }
+  }
+}
+```
+
 Environment variables override the config file:
 
 | Variable | Description |
