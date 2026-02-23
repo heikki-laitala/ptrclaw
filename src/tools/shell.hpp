@@ -24,6 +24,7 @@ public:
 
 private:
     static constexpr int kStallTimeoutMs = 3000;
+    static constexpr int kResumeTimeoutMs = 30000;
     static constexpr size_t kMaxProcesses = 4;
 
     ToolResult run_new_command(const std::string& command, const std::string& stdin_data,
@@ -34,7 +35,7 @@ private:
         std::string output;
         bool still_running;
     };
-    ReadResult read_with_timeout(int stdout_fd, pid_t pid);
+    ReadResult read_with_timeout(int stdout_fd, pid_t pid, int timeout_ms);
 
     void cleanup_process(const std::string& id);
     void kill_all_processes();
