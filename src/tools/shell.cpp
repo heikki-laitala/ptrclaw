@@ -105,7 +105,7 @@ ToolResult ShellTool::run_new_command(const std::string& command,
     }
 
     // Read output with stall detection
-    auto [output, still_running] = read_with_timeout(stdout_pipe[0], pid);
+    auto [output, still_running] = read_with_timeout(stdout_pipe[0], pid, kStallTimeoutMs);
 
     constexpr size_t max_output = 10000;
     if (output.size() > max_output) {
@@ -160,8 +160,9 @@ ToolResult ShellTool::resume_process(const std::string& proc_id, const std::stri
         }
     }
 
-    // Read new output
-    auto [output, still_running] = read_with_timeout(proc.stdout_fd, proc.pid);
+    // Read new output — use longer timeout since we just sent data and
+    // the process may need time for network/IO before responding
+    auto [output, still_running] = read_with_timeout(proc.stdout_fd, proc.pid, kResumeTimeoutMs);
 
     constexpr size_t max_output = 10000;
     if (output.size() > max_output) {
@@ -183,7 +184,7 @@ ToolResult ShellTool::resume_process(const std::string& proc_id, const std::stri
     return ToolResult{true, output};
 }
 
-ShellTool::ReadResult ShellTool::read_with_timeout(int stdout_fd, pid_t pid) {
+ShellTool::ReadResult ShellTool::read_with_timeout(int stdout_fd, pid_t pid, int timeout_ms) {
     std::string output;
     std::array<char, 4096> buffer;
 
@@ -192,7 +193,7 @@ ShellTool::ReadResult ShellTool::read_with_timeout(int stdout_fd, pid_t pid) {
         pfd.fd = stdout_fd;
         pfd.events = POLLIN;
 
-        int ret = poll(&pfd, 1, kStallTimeoutMs);
+        int ret = poll(&pfd, 1, timeout_ms);
 
         if (ret < 0) {
             break; // poll error
