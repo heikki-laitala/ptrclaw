@@ -73,14 +73,20 @@ Create `~/.ptrclaw/config.json`:
 
 ```json
 {
-  "default_provider": "anthropic",
-  "default_model": "claude-sonnet-4-20250514",
-  "default_temperature": 0.7,
-  "anthropic_api_key": "sk-ant-...",
-  "openai_api_key": "sk-...",
-  "openrouter_api_key": "sk-or-...",
-  "ollama_base_url": "http://localhost:11434",
-  "compatible_base_url": "http://localhost:8080/v1",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-20250514",
+  "temperature": 0.7,
+  "base_url": "",
+  "providers": {
+    "anthropic": { "api_key": "sk-ant-..." },
+    "openai": { "api_key": "sk-..." },
+    "openrouter": { "api_key": "sk-or-..." },
+    "ollama": { "base_url": "http://localhost:11434" },
+    "compatible": {
+      "api_key": "optional-if-required-by-endpoint",
+      "base_url": "http://localhost:8080/v1"
+    }
+  },
   "agent": {
     "max_tool_iterations": 10,
     "max_history_messages": 50,
@@ -90,22 +96,25 @@ Create `~/.ptrclaw/config.json`:
     "backend": "sqlite",
     "path": "~/.ptrclaw/memory.db",
     "enrich_depth": 1,
-    "synthesis": false,
+    "synthesis": true,
     "synthesis_interval": 5
   },
   "channels": {
     "telegram": {
       "bot_token": "123456:ABC-DEF...",
       "allow_from": ["alice", "bob"],
-      "reply_in_private": true
+      "reply_in_private": true,
+      "proxy": ""
     },
     "whatsapp": {
       "access_token": "EAA...",
       "phone_number_id": "123456789",
       "verify_token": "my-verify-secret",
+      "app_secret": "",
       "allow_from": ["+1234567890"],
       "webhook_listen": "127.0.0.1:8080",
-      "webhook_secret": "a-strong-random-secret"
+      "webhook_secret": "a-strong-random-secret",
+      "webhook_max_body": 65536
     }
   }
 }
