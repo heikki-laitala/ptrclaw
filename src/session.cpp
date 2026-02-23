@@ -86,6 +86,9 @@ void SessionManager::subscribe_events() {
     ptrclaw::subscribe<MessageReceivedEvent>(*event_bus_,
         [this](const MessageReceivedEvent& ev) {
             auto& agent = get_session(ev.session_id);
+            if (!ev.message.channel.empty()) {
+                agent.set_channel(ev.message.channel);
+            }
             std::string chat_id = ev.message.reply_target.value_or("");
 
             auto send_reply = [&](const std::string& content) {
