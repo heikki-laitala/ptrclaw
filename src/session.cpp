@@ -122,8 +122,12 @@ void SessionManager::subscribe_events() {
                 return;
             }
 
-            // Handle /soul command — display current soul data
+            // Handle /soul command — developer-only
             if (ev.message.content == "/soul") {
+                if (!config_.dev) {
+                    send_reply("Unknown command: /soul");
+                    return;
+                }
                 std::string display;
                 if (agent.memory()) {
                     display = format_soul_display(agent.memory());

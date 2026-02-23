@@ -13,6 +13,7 @@ nlohmann::json Config::defaults_json() {
         {"provider", "anthropic"},
         {"model", "claude-sonnet-4-20250514"},
         {"temperature", 0.7},
+        {"dev", false},
         {"base_url", ""},
         {"providers", {
             {"anthropic", {{"api_key", ""}}},
@@ -96,6 +97,8 @@ Config Config::load() {
         cfg.model = j["model"].get<std::string>();
     if (j.contains("temperature") && j["temperature"].is_number())
         cfg.temperature = j["temperature"].get<double>();
+    if (j.contains("dev") && j["dev"].is_boolean())
+        cfg.dev = j["dev"].get<bool>();
 
     if (j.contains("base_url") && j["base_url"].is_string())
         cfg.base_url = j["base_url"].get<std::string>();

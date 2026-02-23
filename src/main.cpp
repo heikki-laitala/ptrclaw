@@ -31,6 +31,7 @@ static void print_usage() {
               << "  --channel NAME       Run as a channel bot (telegram, whatsapp)\n"
               << "  --provider NAME      Use specific provider (anthropic, openai, ollama, openrouter)\n"
               << "  --model NAME         Use specific model\n"
+              << "  --dev                Enable developer-only commands (e.g. /soul)\n"
               << "  -h, --help           Show this help\n"
               << "\n"
               << "Interactive commands:\n"
@@ -122,6 +123,7 @@ int main(int argc, char* argv[]) try {
     std::string provider_name;
     std::string model_name;
     std::string channel_name;
+    bool dev_mode = false;
 
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "-h") == 0 || std::strcmp(argv[i], "--help") == 0) {
@@ -135,6 +137,8 @@ int main(int argc, char* argv[]) try {
             model_name = argv[++i];
         } else if (std::strcmp(argv[i], "--channel") == 0 && i + 1 < argc) {
             channel_name = argv[++i];
+        } else if (std::strcmp(argv[i], "--dev") == 0) {
+            dev_mode = true;
         } else {
             std::cerr << "Unknown option: " << argv[i] << "\n";
             print_usage();
@@ -147,6 +151,9 @@ int main(int argc, char* argv[]) try {
     auto config = ptrclaw::Config::load();
 
     // Override config with CLI args
+    if (dev_mode) {
+        config.dev = true;
+    }
     if (!provider_name.empty()) {
         config.provider = provider_name;
     }
@@ -270,14 +277,18 @@ int main(int argc, char* argv[]) try {
                     }
                 }
             } else if (line == "/soul") {
-                std::string display;
-                if (agent.memory()) {
-                    display = format_soul_display(agent.memory());
-                }
-                if (display.empty()) {
-                    std::cout << "No soul data yet. Use /hatch to create one.\n";
+                if (!config.dev) {
+                    std::cout << "Unknown command: " << line << "\n";
                 } else {
-                    std::cout << display;
+                    std::string display;
+                    if (agent.memory()) {
+                        display = format_soul_display(agent.memory());
+                    }
+                    if (display.empty()) {
+                        std::cout << "No soul data yet. Use /hatch to create one.\n";
+                    } else {
+                        std::cout << display;
+                    }
                 }
             } else if (line == "/hatch") {
                 agent.start_hatch();
@@ -289,9 +300,11 @@ int main(int argc, char* argv[]) try {
                           << "  /clear           Clear conversation history\n"
                           << "  /memory          Show memory status\n"
                           << "  /memory export   Export memories as JSON\n"
-                          << "  /memory import P Import memories from JSON file\n"
-                          << "  /soul            Show current soul/identity data\n"
-                          << "  /hatch           Create or re-create assistant identity\n"
+                          << "  /memory import P Import memories from JSON file\n";
+                if (config.dev) {
+                    std::cout << "  /soul            Show current soul/identity data\n";
+                }
+                std::cout << "  /hatch           Create or re-create assistant identity\n"
                           << "  /quit            Exit\n"
                           << "  /exit            Exit\n"
                           << "  /help            Show this help\n";

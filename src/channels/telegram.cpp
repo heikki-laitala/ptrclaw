@@ -17,6 +17,7 @@ static ptrclaw::ChannelRegistrar reg_telegram("telegram",
         tg_cfg.bot_token = ch["bot_token"].get<std::string>();
         tg_cfg.reply_in_private = ch.value("reply_in_private", true);
         tg_cfg.proxy = ch.value("proxy", std::string{});
+        tg_cfg.dev = config.dev;
         if (ch.contains("allow_from") && ch["allow_from"].is_array())
             for (const auto& u : ch["allow_from"])
                 if (u.is_string()) tg_cfg.allow_from.push_back(u.get<std::string>());
@@ -55,9 +56,11 @@ bool TelegramChannel::set_my_commands() {
         {{"command", "start"}, {"description", "Start conversation"}},
         {{"command", "new"},   {"description", "New conversation"}},
         {{"command", "hatch"}, {"description", "Create or recreate assistant identity"}},
-        {{"command", "soul"},  {"description", "Show current identity"}},
         {{"command", "help"},  {"description", "Show help"}},
     });
+    if (config_.dev) {
+        commands.push_back({{"command", "soul"}, {"description", "Show current identity"}});
+    }
     nlohmann::json body = {{"commands", commands}};
 
     try {

@@ -11,6 +11,7 @@ struct TelegramConfig {
     std::vector<std::string> allow_from;
     bool reply_in_private = true;
     std::string proxy; // optional proxy URL
+    bool dev = false;  // expose developer-only commands in Telegram menu
 };
 
 class TelegramChannel : public Channel {
