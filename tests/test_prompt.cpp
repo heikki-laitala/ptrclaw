@@ -27,15 +27,18 @@ TEST_CASE("build_system_prompt: contains working directory", "[prompt]") {
     REQUIRE(result.find("Working directory:") != std::string::npos);
 }
 
-TEST_CASE("build_system_prompt: without tool descriptions omits tool list", "[prompt]") {
+TEST_CASE("build_system_prompt: native provider shows tool summary", "[prompt]") {
     std::vector<std::unique_ptr<Tool>> tools;
     tools.push_back(std::make_unique<PromptMockTool>());
     auto result = build_system_prompt(tools, false);
     REQUIRE(result.find("Available tools:") == std::string::npos);
-    REQUIRE(result.find("test_tool") == std::string::npos);
+    REQUIRE(result.find("test_tool") != std::string::npos);
+    REQUIRE(result.find("A test tool") != std::string::npos);
+    REQUIRE(result.find("Use tools proactively") != std::string::npos);
+    REQUIRE(result.find("tool_call") == std::string::npos);
 }
 
-TEST_CASE("build_system_prompt: with tool descriptions includes tools", "[prompt]") {
+TEST_CASE("build_system_prompt: XML provider shows full tool schemas", "[prompt]") {
     std::vector<std::unique_ptr<Tool>> tools;
     tools.push_back(std::make_unique<PromptMockTool>());
     auto result = build_system_prompt(tools, true);
@@ -45,12 +48,11 @@ TEST_CASE("build_system_prompt: with tool descriptions includes tools", "[prompt
     REQUIRE(result.find("tool_call") != std::string::npos);
 }
 
-TEST_CASE("build_system_prompt: empty tool list with descriptions", "[prompt]") {
+TEST_CASE("build_system_prompt: empty tool list omits tool section", "[prompt]") {
     std::vector<std::unique_ptr<Tool>> tools;
     auto result = build_system_prompt(tools, true);
-    REQUIRE(result.find("Available tools:") != std::string::npos);
-    // Should still have the XML instruction
-    REQUIRE(result.find("tool_call") != std::string::npos);
+    REQUIRE(result.find("tools") == std::string::npos);
+    REQUIRE(result.find("tool_call") == std::string::npos);
 }
 
 TEST_CASE("build_system_prompt: multiple tools listed", "[prompt]") {
