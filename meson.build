@@ -48,12 +48,13 @@ lib_deps = [http_dep]
 
 if opt_sqlite_memory
   sqlite3_dep = dependency('sqlite3', required: false)
-  if not sqlite3_dep.found()
-    sqlite3_proj = subproject('sqlite3')
-    sqlite3_dep = sqlite3_proj.get_variable('sqlite3_dep')
+  if sqlite3_dep.found()
+    lib_deps += sqlite3_dep
+    add_project_arguments('-DPTRCLAW_HAS_SQLITE_MEMORY', language: 'cpp')
+  else
+    warning('sqlite3 not found — SQLite memory backend disabled')
+    opt_sqlite_memory = false
   endif
-  lib_deps += sqlite3_dep
-  add_project_arguments('-DPTRCLAW_HAS_SQLITE_MEMORY', language: 'cpp')
 endif
 
 # ── Core sources (always compiled) ─────────────────────────────
