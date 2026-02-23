@@ -27,7 +27,11 @@ STATICDIR := builddir-static
 MINDIR := builddir-minimal
 COVDIR := builddir-cov
 
-.PHONY: deps setup build build-minimal build-static run test coverage coverage-summary lint clean clear-memory
+.PHONY: deps setup build build-minimal build-static run test coverage coverage-summary lint clean clear-memory sync-wrap-hash
+
+sync-wrap-hash:
+	./scripts/sync-wrap-hash.sh
+
 
 deps:
 ifeq ($(shell uname),Darwin)
@@ -38,20 +42,20 @@ else
 	sudo apt-get install -y g++ meson ninja-build libssl-dev libsqlite3-dev clang-tidy lld gcovr
 endif
 
-setup:
+setup: sync-wrap-hash
 	@if [ ! -d $(BUILDDIR) ]; then meson setup $(BUILDDIR) $(NATIVE_ARGS) -Dcatch2:tests=false; fi
 
 build: setup
 	meson compile -C $(BUILDDIR)
 
-build-minimal:
+build-minimal: sync-wrap-hash
 	@if [ ! -d $(MINDIR) ]; then meson setup $(MINDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
 		-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false -Dwith_compatible=false \
 		-Dwith_whatsapp=false -Dwith_sqlite_memory=false $(SIZE_FLAGS); fi
 	meson compile -C $(MINDIR) ptrclaw
 	$(call STRIP_CMD,$(MINDIR)/ptrclaw) 2>/dev/null || true
 
-build-static:
+build-static: sync-wrap-hash
 	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) $(NATIVE_ARGS) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false $(SIZE_FLAGS); fi
 	meson compile -C $(STATICDIR) ptrclaw
 	$(call STRIP_CMD,$(STATICDIR)/ptrclaw) 2>/dev/null || true
@@ -62,7 +66,7 @@ run: build
 test: build
 	meson test -C $(BUILDDIR)
 
-coverage:
+coverage: sync-wrap-hash
 	@if [ ! -d $(COVDIR) ]; then meson setup $(COVDIR) $(NATIVE_ARGS) -Db_coverage=true -Dcatch2:tests=false; fi
 	meson test -C $(COVDIR)
 	gcovr --root . $(COVDIR) --filter src/ --html-details $(COVDIR)/coverage.html

@@ -2,7 +2,7 @@
 directory = sqlite-amalgamation-3480000
 source_url = https://www.sqlite.org/2025/sqlite-amalgamation-3480000.zip
 source_filename = sqlite-amalgamation-3480000.zip
-source_hash = 35ff59eab20fed51e53e5cca4d15f3e3a1abab9e7ae3b4e55764b44a2f9e51d9
+source_hash = d9a15a42db7c78f88fe3d3c5945acce2f4bfe9e4da9f685cd19f6ea1d40aa884
 patch_directory = sqlite3
 
 [provide]
