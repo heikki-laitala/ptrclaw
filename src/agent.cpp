@@ -39,7 +39,8 @@ void Agent::inject_system_prompt() {
     } else {
         bool include_tool_desc = !provider_->supports_native_tools();
         bool has_memory = memory_ && memory_->backend_name() != "none";
-        RuntimeInfo runtime{model_, provider_->provider_name(), channel_};
+        RuntimeInfo runtime{model_, provider_->provider_name(), channel_,
+                           binary_path_, session_id_};
         prompt = build_system_prompt(tools_, include_tool_desc, has_memory,
                                      memory_.get(), runtime);
     }

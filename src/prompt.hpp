@@ -12,7 +12,9 @@ namespace ptrclaw {
 struct RuntimeInfo {
     std::string model;
     std::string provider;
-    std::string channel; // empty if CLI
+    std::string channel;      // empty if CLI
+    std::string binary_path;  // resolved absolute path to ptrclaw binary
+    std::string session_id;   // current session ID (e.g. telegram chat ID)
 };
 
 // Build the system prompt, including tool descriptions for XML-based providers.

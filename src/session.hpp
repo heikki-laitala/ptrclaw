@@ -34,6 +34,9 @@ public:
     // List active session IDs
     std::vector<std::string> list_sessions() const;
 
+    // Binary path — propagated to new agents for cron scheduling
+    void set_binary_path(const std::string& path) { binary_path_ = path; }
+
     // Optional event bus — propagated to new agents
     void set_event_bus(EventBus* bus) { event_bus_ = bus; }
 
@@ -45,6 +48,7 @@ private:
     HttpClient& http_;
     std::unordered_map<std::string, Session> sessions_;
     mutable std::mutex mutex_;
+    std::string binary_path_;
     EventBus* event_bus_ = nullptr;
 };
 
