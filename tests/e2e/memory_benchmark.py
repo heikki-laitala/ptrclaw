@@ -25,16 +25,16 @@ from anthropic import Anthropic
 MODEL = "claude-sonnet-4-6"
 JUDGE_MODEL = "claude-opus-4-6"
 TIMEOUT_SECONDS = 180
-MESSAGE_DELAY = 1  # small pacing delay; hard limits enforced below
-JUDGE_DELAY = 0.2  # small pacing delay; hard limits enforced below
+MESSAGE_DELAY = 2  # slightly slower pacing to reduce burst risk
+JUDGE_DELAY = 0.5  # slightly slower judge pacing to reduce burst risk
 
 # Anthropic Sonnet 4.x published limits (with safety margin):
 # - 50 RPM
 # - 30k input tokens/min
 # - 8k output tokens/min
 REQUEST_BUDGET_PER_MINUTE = 35
-INPUT_TOKEN_BUDGET_PER_MINUTE = 20000
-OUTPUT_TOKEN_BUDGET_PER_MINUTE = 6500
+INPUT_TOKEN_BUDGET_PER_MINUTE = 18000
+OUTPUT_TOKEN_BUDGET_PER_MINUTE = 5500
 
 # Conservative reservations for benchmark calls.
 # ptrclaw can send large conversation history, so reserve generous input.
@@ -42,8 +42,8 @@ OUTPUT_TOKEN_BUDGET_PER_MINUTE = 6500
 # + cache_creation_input_tokens + input_tokens, so we intentionally
 # over-reserve input budget for each model call.
 # Provider max output for model calls is currently 4096.
-MODEL_CALL_INPUT_RESERVATION = 5500
-MODEL_CALL_OUTPUT_RESERVATION = 1200
+MODEL_CALL_INPUT_RESERVATION = 6000
+MODEL_CALL_OUTPUT_RESERVATION = 1300
 
 # Judge returns only a numeric score, keep output budget tiny.
 JUDGE_MAX_TOKENS = 64
