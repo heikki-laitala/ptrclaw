@@ -306,7 +306,7 @@ ninja -C builddir
 | ------------- | ----------- | ------------ |
 | Default (`make build`) | ~735 KB | ~735 KB |
 | Static (`make build-static`, stripped) | ~551 KB | ~6.8 MB |
-| Minimal (`make build-minimal`, stripped) | ~485 KB | — |
+| Minimal (`make build-minimal`, stripped) | ~485 KB | ~568 KB |
 
 Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux static binaries are larger because they bundle OpenSSL and sqlite3. The dynamically linked build is the same size as macOS. LTO is enabled by default. Distribution builds are stripped and size-optimized.
 
