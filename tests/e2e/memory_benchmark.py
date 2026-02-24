@@ -21,8 +21,8 @@ import tempfile
 import time
 import urllib.request
 
-MODEL = "claude-sonnet-4-6-20250514"
-JUDGE_MODEL = "claude-opus-4-6-20250514"
+MODEL = "claude-sonnet-4-6"
+JUDGE_MODEL = "claude-opus-4-6"
 TIMEOUT_SECONDS = 180
 MESSAGE_DELAY = 2  # seconds between messages to avoid 429 rate limits
 
