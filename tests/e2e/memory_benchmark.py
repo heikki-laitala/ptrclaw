@@ -34,7 +34,7 @@ JUDGE_DELAY = 0.5  # slightly slower judge pacing to reduce burst risk
 # - 8k output tokens/min
 REQUEST_BUDGET_PER_MINUTE = 35
 INPUT_TOKEN_BUDGET_PER_MINUTE = 18000
-OUTPUT_TOKEN_BUDGET_PER_MINUTE = 5500
+OUTPUT_TOKEN_BUDGET_PER_MINUTE = 5000
 
 # Conservative reservations for benchmark calls.
 # ptrclaw can send large conversation history, so reserve generous input.
@@ -42,13 +42,15 @@ OUTPUT_TOKEN_BUDGET_PER_MINUTE = 5500
 # + cache_creation_input_tokens + input_tokens, so we intentionally
 # over-reserve input budget for each model call.
 # Provider max output for model calls is currently 4096.
-MODEL_CALL_INPUT_RESERVATION = 6000
-MODEL_CALL_OUTPUT_RESERVATION = 1300
+MODEL_CALL_INPUT_RESERVATION = 6500
+MODEL_CALL_OUTPUT_RESERVATION = 2000
 
 # Seeding phase is where context grows fastest; use stricter pacing/reservations.
-SEED_MESSAGE_DELAY = 4
-SEED_CALL_INPUT_RESERVATION = 9000
-SEED_CALL_OUTPUT_RESERVATION = 1800
+SEED_MESSAGE_DELAY = 5
+SEED_CALL_INPUT_RESERVATION = 11000
+SEED_CALL_OUTPUT_RESERVATION = 3000
+
+RATE_LIMIT_COOLDOWN_SECONDS = 65
 
 # Judge returns only a numeric score, keep output budget tiny.
 JUDGE_MAX_TOKENS = 64
@@ -530,15 +532,29 @@ def start_pipe(binary, home):
     )
 
 
-def send_message(proc, content):
-    """Send a JSONL message and read the response."""
-    line = json.dumps({"content": content}) + "\n"
-    proc.stdin.write(line)
-    proc.stdin.flush()
-    resp_line = proc.stdout.readline()
-    if not resp_line:
-        raise RuntimeError("pipe: no response (check stderr output above)")
-    return json.loads(resp_line).get("content", "")
+def send_message(proc, content, retries=1):
+    """Send a JSONL message and read the response.
+
+    On provider 429 responses, wait and retry the same prompt once.
+    """
+    attempts = retries + 1
+    for i in range(attempts):
+        line = json.dumps({"content": content}) + "\n"
+        proc.stdin.write(line)
+        proc.stdin.flush()
+        resp_line = proc.stdout.readline()
+        if not resp_line:
+            raise RuntimeError("pipe: no response (check stderr output above)")
+        resp = json.loads(resp_line).get("content", "")
+        low = resp.lower()
+        if "http 429" in low or "rate limit" in low:
+            if i < attempts - 1:
+                print(f"    Rate limit hit; cooling down {RATE_LIMIT_COOLDOWN_SECONDS}s and retrying...",
+                      file=sys.stderr)
+                time.sleep(RATE_LIMIT_COOLDOWN_SECONDS)
+                continue
+        return resp
+    return ""
 
 
 def close_pipe(proc):
@@ -627,7 +643,7 @@ def run_scenario(binary, backend, scenario):
                                        estimate_tokens(msg)))
             output_limiter.wait_for(SEED_CALL_OUTPUT_RESERVATION)
             request_limiter.wait_for(1)
-            resp = send_message(proc, msg)
+            resp = send_message(proc, msg, retries=1)
             print(f"    Seed {i + 1}: sent ({len(resp)} chars response)",
                   file=sys.stderr)
         close_pipe(proc)
@@ -647,7 +663,7 @@ def run_scenario(binary, backend, scenario):
                                        estimate_tokens(tc["question"])))
             output_limiter.wait_for(MODEL_CALL_OUTPUT_RESERVATION)
             request_limiter.wait_for(1)
-            resp = send_message(proc, tc["question"])
+            resp = send_message(proc, tc["question"], retries=1)
             responses.append(resp)
             print(f"    Q{i + 1}: {resp[:120]}...", file=sys.stderr)
         close_pipe(proc)
