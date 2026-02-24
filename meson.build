@@ -241,7 +241,7 @@ endif
 summary({
   'Providers': providers.length() > 0 ? ', '.join(providers) : 'none',
   'Channels':  channels.length() > 0  ? ', '.join(channels)  : 'none',
-  'Tools':     opt_tools ? 'file_read, file_write, file_edit, shell' : 'none',
+  'Tools':     opt_tools ? 'file_read, file_write, file_edit, shell, cron' : 'none',
   'Memory':    memory_features.length() > 0 ? ', '.join(memory_features) : 'none',
   'Memory tools': opt_memory_tools ? 'memory_store, memory_recall, memory_forget, memory_link' : 'none',
 }, section: 'Features')
