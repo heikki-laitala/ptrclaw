@@ -33,7 +33,7 @@ jobs:
 
       - name: Build
         run: |
-          meson setup builddir --buildtype=release
+          meson setup builddir --buildtype=release -Dwith_pipe=true
           meson compile -C builddir
 
       - name: Run memory benchmark

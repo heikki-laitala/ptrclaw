@@ -193,6 +193,21 @@ int main(int argc, char* argv[]) try {
     auto tools = ptrclaw::create_builtin_tools();
     ptrclaw::Agent agent(std::move(provider), std::move(tools), config);
 
+#ifdef PTRCLAW_HAS_PIPE
+    // Pipe mode: JSONL on stdin/stdout for scripted multi-turn conversations
+    if (channel_name == "pipe") {
+        std::string line;
+        while (std::getline(std::cin, line)) {
+            auto j = nlohmann::json::parse(line);
+            std::string response = agent.process(j.value("content", ""));
+            nlohmann::json out = {{"content", response}};
+            std::cout << out.dump() << "\n" << std::flush;
+        }
+        ptrclaw::http_cleanup();
+        return 0;
+    }
+#endif
+
     // Single message mode
     if (!message.empty()) {
         std::string response = agent.process(message);
