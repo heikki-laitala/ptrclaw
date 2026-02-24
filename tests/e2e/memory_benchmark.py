@@ -20,7 +20,8 @@ import sys
 import tempfile
 import urllib.request
 
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "claude-sonnet-4-6-20250514"
+JUDGE_MODEL = "claude-haiku-4-5-20251001"
 TIMEOUT_SECONDS = 180
 
 # ── Conversation scripts ─────────────────────────────────────────────
@@ -42,6 +43,26 @@ SEED_MESSAGES = [
     "environment is already set up but production needs a new cluster. "
     "Sarah mentioned we should also add Grafana for monitoring the "
     "dashboard's own performance metrics.",
+
+    "In today's standup, Priya said the data pipeline will ingest events "
+    "from Kafka topics. She's using Apache Flink for stream processing and "
+    "the raw events land in S3 before being loaded into TimescaleDB. The "
+    "expected throughput is around 50,000 events per second at peak.",
+
+    "Sarah demoed the dashboard wireframes. The main view has four panels: "
+    "a real-time event stream, a retention cohort chart, a revenue funnel, "
+    "and a geographic heatmap. The design system is based on Tailwind CSS "
+    "with a custom component library called Prism.",
+
+    "Marcus raised a concern about rate limiting. The Go backend needs to "
+    "handle burst traffic during marketing campaigns. He proposed using "
+    "Redis with a token bucket algorithm, capped at 1000 requests per "
+    "second per tenant. The Redis cluster will be hosted on ElastiCache.",
+
+    "We had a retrospective on the auth migration. Marcus finished the "
+    "OAuth 2.0 work ahead of schedule. The remaining piece is SAML "
+    "integration for enterprise SSO customers — that's been assigned to "
+    "a new contractor named Diego who starts next Monday.",
 ]
 
 TEST_CASES = [
@@ -56,8 +77,8 @@ TEST_CASES = [
     {
         "question": "What's the main blocker for the dashboard integration?",
         "ground_truth": (
-            "OAuth 1.0 to OAuth 2.0 migration, Marcus is handling it, "
-            "estimated two weeks"
+            "OAuth 1.0 to OAuth 2.0 migration was the blocker, Marcus "
+            "handled it and finished ahead of schedule"
         ),
     },
     {
@@ -70,8 +91,48 @@ TEST_CASES = [
     {
         "question": "What's the project timeline and what risks should we track?",
         "ground_truth": (
-            "MVP deadline is March 15th, main risk is OAuth 1.0 to 2.0 "
-            "migration taking about two weeks"
+            "MVP deadline is March 15th, OAuth migration risk is resolved, "
+            "SAML integration for enterprise SSO still pending"
+        ),
+    },
+    {
+        "question": "How does the data pipeline process events?",
+        "ground_truth": (
+            "Events come from Kafka topics, processed by Apache Flink for "
+            "stream processing, raw events stored in S3, then loaded into "
+            "TimescaleDB. Peak throughput is 50,000 events per second"
+        ),
+    },
+    {
+        "question": "What are the main panels on the dashboard UI?",
+        "ground_truth": (
+            "Four panels: real-time event stream, retention cohort chart, "
+            "revenue funnel, and geographic heatmap. Uses Tailwind CSS "
+            "with a custom component library called Prism"
+        ),
+    },
+    {
+        "question": "How is rate limiting handled in the backend?",
+        "ground_truth": (
+            "Redis with token bucket algorithm, 1000 requests per second "
+            "per tenant, Redis cluster on ElastiCache. Marcus designed this "
+            "for burst traffic during marketing campaigns"
+        ),
+    },
+    {
+        "question": "Who is Diego and what is he working on?",
+        "ground_truth": (
+            "Diego is a new contractor starting next Monday, assigned to "
+            "SAML integration for enterprise SSO customers"
+        ),
+    },
+    {
+        "question": "Summarize what each team member is responsible for.",
+        "ground_truth": (
+            "Sarah leads frontend and designed the dashboard wireframes, "
+            "Marcus handles backend services including auth migration and "
+            "rate limiting, Priya owns the data pipeline with Kafka/Flink, "
+            "Diego is the new contractor handling SAML SSO integration"
         ),
     },
 ]
@@ -149,7 +210,7 @@ def llm_judge(response, ground_truth):
     """
     api_key = os.environ["ANTHROPIC_API_KEY"]
     body = json.dumps({
-        "model": MODEL,
+        "model": JUDGE_MODEL,
         "max_tokens": 16,
         "system": (
             "You are a scoring assistant. Rate how well a response "
@@ -286,6 +347,7 @@ def main():
     print(f"  Binary:  {binary}")
     print(f"  Backend: {backend}")
     print(f"  Model:   {MODEL}")
+    print(f"  Judge:   {JUDGE_MODEL}")
 
     scores, details = run_benchmark(binary, backend)
 
