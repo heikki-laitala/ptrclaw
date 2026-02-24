@@ -161,6 +161,30 @@ int main(int argc, char* argv[]) try {
         config.model = model_name;
     }
 
+#ifdef PTRCLAW_HAS_PIPE
+    // Pipe mode: JSONL on stdin/stdout for scripted multi-turn conversations
+    if (channel_name == "pipe") {
+        ptrclaw::PlatformHttpClient http_client;
+        auto provider = ptrclaw::create_provider(
+            config.provider,
+            config.api_key_for(config.provider),
+            http_client,
+            config.base_url_for(config.provider));
+        auto tools = ptrclaw::create_builtin_tools();
+        ptrclaw::Agent agent(std::move(provider), std::move(tools), config);
+
+        std::string line;
+        while (std::getline(std::cin, line)) {
+            auto j = nlohmann::json::parse(line);
+            std::string response = agent.process(j.value("content", ""));
+            nlohmann::json out = {{"content", response}};
+            std::cout << out.dump() << "\n" << std::flush;
+        }
+        ptrclaw::http_cleanup();
+        return 0;
+    }
+#endif
+
     // Channel mode
     if (!channel_name.empty()) {
         std::signal(SIGINT, signal_handler);
@@ -192,21 +216,6 @@ int main(int argc, char* argv[]) try {
     // Create tools and agent
     auto tools = ptrclaw::create_builtin_tools();
     ptrclaw::Agent agent(std::move(provider), std::move(tools), config);
-
-#ifdef PTRCLAW_HAS_PIPE
-    // Pipe mode: JSONL on stdin/stdout for scripted multi-turn conversations
-    if (channel_name == "pipe") {
-        std::string line;
-        while (std::getline(std::cin, line)) {
-            auto j = nlohmann::json::parse(line);
-            std::string response = agent.process(j.value("content", ""));
-            nlohmann::json out = {{"content", response}};
-            std::cout << out.dump() << "\n" << std::flush;
-        }
-        ptrclaw::http_cleanup();
-        return 0;
-    }
-#endif
 
     // Single message mode
     if (!message.empty()) {
