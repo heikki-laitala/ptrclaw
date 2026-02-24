@@ -368,13 +368,8 @@ void Agent::set_response_cache(std::unique_ptr<ResponseCache> cache) {
     response_cache_ = std::move(cache);
 }
 
-void Agent::maybe_synthesize() {
+void Agent::run_synthesis() {
     if (!memory_ || !config_.memory.synthesis || memory_->backend_name() == "none") return;
-    if (config_.memory.synthesis_interval == 0) return;
-
-    turns_since_synthesis_++;
-    if (turns_since_synthesis_ < config_.memory.synthesis_interval) return;
-    turns_since_synthesis_ = 0;
 
     // Collect recent user+assistant messages for synthesis
     // Strip [Memory context] blocks from user messages so the synthesis LLM
@@ -429,6 +424,17 @@ void Agent::maybe_synthesize() {
     }
 }
 
+void Agent::maybe_synthesize() {
+    if (!memory_ || !config_.memory.synthesis || memory_->backend_name() == "none") return;
+    if (config_.memory.synthesis_interval == 0) return;
+
+    turns_since_synthesis_++;
+    if (turns_since_synthesis_ < config_.memory.synthesis_interval) return;
+    turns_since_synthesis_ = 0;
+
+    run_synthesis();
+}
+
 void Agent::compact_history() {
     uint32_t tokens = estimated_tokens();
     auto threshold = static_cast<uint32_t>(config_.agent.token_limit * 0.75);
@@ -437,6 +443,12 @@ void Agent::compact_history() {
                           tokens > threshold;
 
     if (!should_compact || history_.size() <= 12) return;
+
+    // Force synthesis before compaction if there are unsynthesized turns
+    if (turns_since_synthesis_ > 0) {
+        run_synthesis();
+        turns_since_synthesis_ = 0;
+    }
 
     // Keep system prompt (first message) + last 10 messages
     // Summarize the middle portion

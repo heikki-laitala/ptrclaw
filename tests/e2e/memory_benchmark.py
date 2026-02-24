@@ -465,7 +465,7 @@ def start_pipe(binary, home):
         [binary, "--channel", "pipe"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=sys.stderr,
         text=True,
         env=env,
     )
@@ -478,8 +478,7 @@ def send_message(proc, content):
     proc.stdin.flush()
     resp_line = proc.stdout.readline()
     if not resp_line:
-        stderr = proc.stderr.read()
-        raise RuntimeError(f"pipe: no response (stderr: {stderr[:300]})")
+        raise RuntimeError("pipe: no response (check stderr output above)")
     return json.loads(resp_line).get("content", "")
 
 
