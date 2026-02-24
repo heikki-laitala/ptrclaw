@@ -10,7 +10,7 @@ jobs:
   benchmark:
     name: memory-benchmark
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
@@ -30,6 +30,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y g++ meson ninja-build libssl-dev libsqlite3-dev lld
+          pip install anthropic
 
       - name: Build
         run: |

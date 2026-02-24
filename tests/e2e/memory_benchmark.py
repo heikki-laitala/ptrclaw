@@ -18,11 +18,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.request
+import time
+
+from anthropic import Anthropic
 
 MODEL = "claude-sonnet-4-6"
 JUDGE_MODEL = "claude-opus-4-6"
 TIMEOUT_SECONDS = 180
+MESSAGE_DELAY = 10  # seconds between pipe messages to stay under rate limits
+JUDGE_DELAY = 2  # seconds between judge calls
 
 # ── Conversation scripts ─────────────────────────────────────────────
 
@@ -495,16 +499,16 @@ def close_pipe(proc):
 # ── LLM judge ────────────────────────────────────────────────────────
 
 
-def llm_judge(response, ground_truth):
-    """Score a response against ground truth using Anthropic Haiku.
+def llm_judge(client, response, ground_truth):
+    """Score a response against ground truth using LLM judge.
 
-    Returns a float between 0.0 and 1.0.
+    Returns a float between 0.0 and 1.0. The Anthropic SDK handles
+    retry with exponential backoff on 429/5xx automatically.
     """
-    api_key = os.environ["ANTHROPIC_API_KEY"]
-    body = json.dumps({
-        "model": JUDGE_MODEL,
-        "max_tokens": 16,
-        "system": (
+    result = client.messages.create(
+        model=JUDGE_MODEL,
+        max_tokens=4096,
+        system=(
             "You are a scoring assistant. Rate how well a response "
             "demonstrates awareness of specific facts from a prior "
             "conversation.\n\n"
@@ -516,7 +520,7 @@ def llm_judge(response, ground_truth):
             "- 0.0: No awareness of the relevant facts\n\n"
             "Output only the numeric score, nothing else."
         ),
-        "messages": [
+        messages=[
             {
                 "role": "user",
                 "content": (
@@ -525,24 +529,9 @@ def llm_judge(response, ground_truth):
                 ),
             }
         ],
-    }).encode()
-
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        },
     )
-
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read())
-
-    text = result["content"][0]["text"].strip()
     try:
-        score = float(text)
+        score = float(result.content[0].text.strip())
         return max(0.0, min(1.0, score))
     except ValueError:
         return 0.0
@@ -564,6 +553,8 @@ def run_scenario(binary, backend, scenario):
               file=sys.stderr)
         proc = start_pipe(binary, home)
         for i, msg in enumerate(seed):
+            if i > 0:
+                time.sleep(MESSAGE_DELAY)
             resp = send_message(proc, msg)
             print(f"    Seed {i + 1}: sent ({len(resp)} chars response)",
                   file=sys.stderr)
@@ -577,6 +568,8 @@ def run_scenario(binary, backend, scenario):
         proc = start_pipe(binary, home)
         responses = []
         for i, tc in enumerate(tests):
+            if i > 0:
+                time.sleep(MESSAGE_DELAY)
             resp = send_message(proc, tc["question"])
             responses.append(resp)
             print(f"    Q{i + 1}: {resp[:120]}...", file=sys.stderr)
@@ -584,9 +577,12 @@ def run_scenario(binary, backend, scenario):
 
         # Phase 3: Score — LLM judge
         print("\n  Phase 3: Scoring with LLM judge...", file=sys.stderr)
+        client = Anthropic(max_retries=5)
         results = []
         for i, (tc, resp) in enumerate(zip(tests, responses)):
-            score = llm_judge(resp, tc["ground_truth"])
+            if i > 0:
+                time.sleep(JUDGE_DELAY)
+            score = llm_judge(client, resp, tc["ground_truth"])
             results.append({
                 "question": tc["question"],
                 "ground_truth": tc["ground_truth"],
