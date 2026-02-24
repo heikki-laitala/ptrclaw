@@ -41,13 +41,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 tests/e2e/memory_benchmark.py ./builddir/ptrclaw 2>&1 | \
-            sed -E 's/sk-ant-[A-Za-z0-9_-]+/***REDACTED***/g'
+          mkdir -p benchmark-results
+          python3 tests/e2e/memory_benchmark.py ./builddir/ptrclaw \
+            --output benchmark-results/results.json \
+            2> >(tee benchmark-results/benchmark.log >&2)
 
-      - name: Upload logs on failure
-        if: failure()
+      - name: Redact secrets from logs
+        if: always()
+        run: |
+          if [ -d benchmark-results ]; then
+            find benchmark-results -type f -exec \
+              sed -i -E 's/sk-ant-[A-Za-z0-9_-]+/***REDACTED***/g' {} +
+          fi
+
+      - name: Upload benchmark results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: memory-benchmark-logs
-          path: builddir/meson-logs/
+          name: memory-benchmark-results
+          path: benchmark-results/
           if-no-files-found: ignore
