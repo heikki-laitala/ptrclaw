@@ -206,7 +206,7 @@ def close_pipe(proc):
 def llm_judge(response, ground_truth):
     """Score a response against ground truth using Anthropic Haiku.
 
-    Returns 0.0, 0.5, or 1.0.
+    Returns a float between 0.0 and 1.0.
     """
     api_key = os.environ["ANTHROPIC_API_KEY"]
     body = json.dumps({
@@ -216,11 +216,13 @@ def llm_judge(response, ground_truth):
             "You are a scoring assistant. Rate how well a response "
             "demonstrates awareness of specific facts from a prior "
             "conversation.\n\n"
-            "Score exactly one of:\n"
-            "- 1.0: Response clearly references the key facts correctly\n"
-            "- 0.5: Response references some facts or is partially correct\n"
-            "- 0.0: Response shows no awareness of the relevant facts\n\n"
-            "Output only the numeric score."
+            "Score on a continuous scale from 0.0 to 1.0:\n"
+            "- 1.0: All key facts referenced correctly\n"
+            "- 0.7-0.9: Most facts present, minor gaps\n"
+            "- 0.4-0.6: Some facts present, partially correct\n"
+            "- 0.1-0.3: Vague awareness, mostly missing\n"
+            "- 0.0: No awareness of the relevant facts\n\n"
+            "Output only the numeric score, nothing else."
         ),
         "messages": [
             {
@@ -247,18 +249,9 @@ def llm_judge(response, ground_truth):
         result = json.loads(resp.read())
 
     text = result["content"][0]["text"].strip()
-    # Parse the numeric score
-    for candidate in ("1.0", "0.5", "0.0"):
-        if candidate in text:
-            return float(candidate)
-    # Fallback: try to parse as float and round to nearest valid score
     try:
-        raw = float(text)
-        if raw >= 0.75:
-            return 1.0
-        if raw >= 0.25:
-            return 0.5
-        return 0.0
+        score = float(text)
+        return max(0.0, min(1.0, score))
     except ValueError:
         return 0.0
 
