@@ -40,6 +40,11 @@ opt_memory        = get_option('with_memory')
 opt_sqlite_memory = get_option('with_sqlite_memory')
 opt_memory_tools  = get_option('with_memory_tools') and opt_memory
 
+opt_pipe = get_option('with_pipe')
+if opt_pipe
+  add_project_arguments('-DPTRCLAW_HAS_PIPE', language: 'cpp')
+endif
+
 # sse.cpp is shared by anthropic and openai streaming
 opt_sse = opt_anthropic or opt_openai
 
