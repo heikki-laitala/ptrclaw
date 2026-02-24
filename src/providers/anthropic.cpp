@@ -3,7 +3,10 @@
 #include "../http.hpp"
 #include "../plugin.hpp"
 #include <nlohmann/json.hpp>
+#include <cmath>
+#include <iostream>
 #include <stdexcept>
+#include <thread>
 
 static ptrclaw::ProviderRegistrar reg_anthropic("anthropic",
     [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url) {
@@ -18,6 +21,19 @@ AnthropicProvider::AnthropicProvider(const std::string& api_key, HttpClient& htt
                                      const std::string& base_url)
     : api_key_(api_key), http_(http),
       base_url_(base_url.empty() ? "https://api.anthropic.com/v1" : base_url) {}
+
+bool AnthropicProvider::is_retryable(long status_code) {
+    return status_code == 429 || status_code == 408 || status_code == 409 ||
+           (status_code >= 500 && status_code < 600);
+}
+
+void AnthropicProvider::backoff_sleep(uint32_t attempt) {
+    double delay = std::min(INITIAL_DELAY_S * std::pow(2.0, static_cast<double>(attempt)),
+                            MAX_DELAY_S);
+    auto ms = static_cast<long>(delay * 1000);
+    std::cerr << "[anthropic] Rate limited, retrying in " << ms << "ms...\n";
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
 
 json AnthropicProvider::build_request(const std::vector<ChatMessage>& messages,
                                        const std::vector<ToolSpec>& tools,
@@ -115,6 +131,7 @@ ChatResponse AnthropicProvider::chat(const std::vector<ChatMessage>& messages,
                                       const std::string& model,
                                       double temperature) {
     json request = build_request(messages, tools, model, temperature);
+    std::string body = request.dump();
 
     std::vector<Header> headers = {
         {"x-api-key", api_key_},
@@ -122,45 +139,53 @@ ChatResponse AnthropicProvider::chat(const std::vector<ChatMessage>& messages,
         {"content-type", "application/json"}
     };
 
-    auto response = http_.post(base_url_ + "/messages", request.dump(), headers);
+    for (uint32_t attempt = 0; attempt <= MAX_RETRIES; ++attempt) {
+        auto response = http_.post(base_url_ + "/messages", body, headers);
 
-    if (response.status_code < 200 || response.status_code >= 300) {
+        if (response.status_code >= 200 && response.status_code < 300) {
+            auto resp = json::parse(response.body);
+
+            ChatResponse result;
+            result.model = resp.value("model", model);
+
+            if (resp.contains("content") && resp["content"].is_array()) {
+                for (const auto& block : resp["content"]) {
+                    std::string type = block.value("type", "");
+                    if (type == "text") {
+                        result.content = block.value("text", "");
+                    } else if (type == "tool_use") {
+                        ToolCall tc;
+                        tc.id = block.value("id", "");
+                        tc.name = block.value("name", "");
+                        if (block.contains("input")) {
+                            tc.arguments = block["input"].dump();
+                        }
+                        result.tool_calls.push_back(std::move(tc));
+                    }
+                }
+            }
+
+            if (resp.contains("usage")) {
+                const auto& usage = resp["usage"];
+                result.usage.prompt_tokens = usage.value("input_tokens", 0u);
+                result.usage.completion_tokens = usage.value("output_tokens", 0u);
+                result.usage.total_tokens = result.usage.prompt_tokens + result.usage.completion_tokens;
+            }
+
+            return result;
+        }
+
+        if (is_retryable(response.status_code) && attempt < MAX_RETRIES) {
+            backoff_sleep(attempt);
+            continue;
+        }
+
         throw std::runtime_error("Anthropic API error (HTTP " +
             std::to_string(response.status_code) + "): " + response.body);
     }
 
-    auto resp = json::parse(response.body);
-
-    ChatResponse result;
-    result.model = resp.value("model", model);
-
-    // Parse content blocks
-    if (resp.contains("content") && resp["content"].is_array()) {
-        for (const auto& block : resp["content"]) {
-            std::string type = block.value("type", "");
-            if (type == "text") {
-                result.content = block.value("text", "");
-            } else if (type == "tool_use") {
-                ToolCall tc;
-                tc.id = block.value("id", "");
-                tc.name = block.value("name", "");
-                if (block.contains("input")) {
-                    tc.arguments = block["input"].dump();
-                }
-                result.tool_calls.push_back(std::move(tc));
-            }
-        }
-    }
-
-    // Parse usage
-    if (resp.contains("usage")) {
-        const auto& usage = resp["usage"];
-        result.usage.prompt_tokens = usage.value("input_tokens", 0u);
-        result.usage.completion_tokens = usage.value("output_tokens", 0u);
-        result.usage.total_tokens = result.usage.prompt_tokens + result.usage.completion_tokens;
-    }
-
-    return result;
+    // Unreachable, but satisfies compiler
+    throw std::runtime_error("Anthropic API error: max retries exceeded");
 }
 
 ChatResponse AnthropicProvider::chat_stream(const std::vector<ChatMessage>& messages,
@@ -170,6 +195,7 @@ ChatResponse AnthropicProvider::chat_stream(const std::vector<ChatMessage>& mess
                                              const TextDeltaCallback& on_delta) {
     json request = build_request(messages, tools, model, temperature);
     request["stream"] = true;
+    std::string body = request.dump();
 
     std::vector<Header> headers = {
         {"x-api-key", api_key_},
@@ -177,122 +203,132 @@ ChatResponse AnthropicProvider::chat_stream(const std::vector<ChatMessage>& mess
         {"content-type", "application/json"}
     };
 
-    ChatResponse result;
-    result.model = model;
-    std::string accumulated_text;
+    for (uint32_t attempt = 0; attempt <= MAX_RETRIES; ++attempt) {
+        ChatResponse result;
+        result.model = model;
+        std::string accumulated_text;
 
-    // Track tool use blocks: index → {id, name, arguments_json}
-    struct ToolBlock {
-        std::string id;
-        std::string name;
-        std::string arguments;
-    };
-    std::vector<ToolBlock> tool_blocks;
-    int current_block_index = -1;
-    bool in_tool_block = false;
+        struct ToolBlock {
+            std::string id;
+            std::string name;
+            std::string arguments;
+        };
+        std::vector<ToolBlock> tool_blocks;
+        int current_block_index = -1;
+        bool in_tool_block = false;
 
-    SSEParser parser;
-    bool stream_error = false;
-    std::string error_body;
+        SSEParser parser;
+        bool stream_error = false;
+        std::string error_body;
+        bool got_stream_data = false;
 
-    auto http_response = http_.stream_post_raw(
-        base_url_ + "/messages", request.dump(), headers,
-        [&](const char* data, size_t len) -> bool {
-            std::string chunk(data, len);
-            parser.feed(chunk, [&](const SSEEvent& sse) -> bool {
-                if (sse.event == "error") {
-                    stream_error = true;
-                    error_body = sse.data;
-                    return false;
-                }
-
-                if (sse.data.empty() || sse.data == "[DONE]") return true;
-
-                json payload;
-                try {
-                    payload = json::parse(sse.data);
-                } catch (...) {
-                    return true; // skip unparseable chunks
-                }
-
-                if (sse.event == "message_start") {
-                    if (payload.contains("message")) {
-                        const auto& msg = payload["message"];
-                        result.model = msg.value("model", model);
-                        if (msg.contains("usage")) {
-                            result.usage.prompt_tokens = msg["usage"].value("input_tokens", 0u);
-                        }
+        auto http_response = http_.stream_post_raw(
+            base_url_ + "/messages", body, headers,
+            [&](const char* data, size_t len) -> bool {
+                got_stream_data = true;
+                std::string chunk(data, len);
+                parser.feed(chunk, [&](const SSEEvent& sse) -> bool {
+                    if (sse.event == "error") {
+                        stream_error = true;
+                        error_body = sse.data;
+                        return false;
                     }
-                } else if (sse.event == "content_block_start") {
-                    current_block_index++;
-                    if (payload.contains("content_block")) {
-                        const auto& block = payload["content_block"];
-                        std::string type = block.value("type", "");
-                        if (type == "tool_use") {
-                            in_tool_block = true;
-                            ToolBlock tb;
-                            tb.id = block.value("id", "");
-                            tb.name = block.value("name", "");
-                            tool_blocks.push_back(std::move(tb));
-                        } else {
-                            in_tool_block = false;
-                        }
+
+                    if (sse.data.empty() || sse.data == "[DONE]") return true;
+
+                    json payload;
+                    try {
+                        payload = json::parse(sse.data);
+                    } catch (...) {
+                        return true;
                     }
-                } else if (sse.event == "content_block_delta") {
-                    if (payload.contains("delta")) {
-                        const auto& delta = payload["delta"];
-                        std::string delta_type = delta.value("type", "");
-                        if (delta_type == "text_delta") {
-                            std::string text = delta.value("text", "");
-                            if (!text.empty()) {
-                                accumulated_text += text;
-                                if (on_delta) {
-                                    on_delta(text);
-                                }
+
+                    if (sse.event == "message_start") {
+                        if (payload.contains("message")) {
+                            const auto& msg = payload["message"];
+                            result.model = msg.value("model", model);
+                            if (msg.contains("usage")) {
+                                result.usage.prompt_tokens = msg["usage"].value("input_tokens", 0u);
                             }
-                        } else if (delta_type == "input_json_delta" && !tool_blocks.empty()) {
-                            tool_blocks.back().arguments += delta.value("partial_json", "");
+                        }
+                    } else if (sse.event == "content_block_start") {
+                        current_block_index++;
+                        if (payload.contains("content_block")) {
+                            const auto& block = payload["content_block"];
+                            std::string type = block.value("type", "");
+                            if (type == "tool_use") {
+                                in_tool_block = true;
+                                ToolBlock tb;
+                                tb.id = block.value("id", "");
+                                tb.name = block.value("name", "");
+                                tool_blocks.push_back(std::move(tb));
+                            } else {
+                                in_tool_block = false;
+                            }
+                        }
+                    } else if (sse.event == "content_block_delta") {
+                        if (payload.contains("delta")) {
+                            const auto& delta = payload["delta"];
+                            std::string delta_type = delta.value("type", "");
+                            if (delta_type == "text_delta") {
+                                std::string text = delta.value("text", "");
+                                if (!text.empty()) {
+                                    accumulated_text += text;
+                                    if (on_delta) {
+                                        on_delta(text);
+                                    }
+                                }
+                            } else if (delta_type == "input_json_delta" && !tool_blocks.empty()) {
+                                tool_blocks.back().arguments += delta.value("partial_json", "");
+                            }
+                        }
+                    } else if (sse.event == "content_block_stop") {
+                        in_tool_block = false;
+                    } else if (sse.event == "message_delta") {
+                        if (payload.contains("usage")) {
+                            result.usage.completion_tokens = payload["usage"].value("output_tokens", 0u);
                         }
                     }
-                } else if (sse.event == "content_block_stop") {
-                    in_tool_block = false;
-                } else if (sse.event == "message_delta") {
-                    if (payload.contains("usage")) {
-                        result.usage.completion_tokens = payload["usage"].value("output_tokens", 0u);
-                    }
-                }
 
-                return true;
+                    return true;
+                });
+                return !stream_error;
             });
-            return !stream_error;
-        });
 
-    if (stream_error) {
-        throw std::runtime_error("Anthropic streaming error: " + error_body);
+        if (stream_error) {
+            throw std::runtime_error("Anthropic streaming error: " + error_body);
+        }
+
+        // Check for retryable HTTP errors (429 returns before any stream data)
+        if (http_response.status_code != 0 &&
+            (http_response.status_code < 200 || http_response.status_code >= 300)) {
+            if (!got_stream_data && is_retryable(http_response.status_code) &&
+                attempt < MAX_RETRIES) {
+                backoff_sleep(attempt);
+                continue;
+            }
+            throw std::runtime_error("Anthropic API error (HTTP " +
+                std::to_string(http_response.status_code) + ")");
+        }
+
+        // Assemble result
+        if (!accumulated_text.empty()) {
+            result.content = accumulated_text;
+        }
+
+        for (auto& tb : tool_blocks) {
+            ToolCall tc;
+            tc.id = std::move(tb.id);
+            tc.name = std::move(tb.name);
+            tc.arguments = std::move(tb.arguments);
+            result.tool_calls.push_back(std::move(tc));
+        }
+
+        result.usage.total_tokens = result.usage.prompt_tokens + result.usage.completion_tokens;
+        return result;
     }
 
-    if (http_response.status_code != 0 &&
-        (http_response.status_code < 200 || http_response.status_code >= 300)) {
-        throw std::runtime_error("Anthropic API error (HTTP " +
-            std::to_string(http_response.status_code) + ")");
-    }
-
-    // Assemble result
-    if (!accumulated_text.empty()) {
-        result.content = accumulated_text;
-    }
-
-    for (auto& tb : tool_blocks) {
-        ToolCall tc;
-        tc.id = std::move(tb.id);
-        tc.name = std::move(tb.name);
-        tc.arguments = std::move(tb.arguments);
-        result.tool_calls.push_back(std::move(tc));
-    }
-
-    result.usage.total_tokens = result.usage.prompt_tokens + result.usage.completion_tokens;
-
-    return result;
+    throw std::runtime_error("Anthropic API error: max retries exceeded");
 }
 
 std::string AnthropicProvider::chat_simple(const std::string& system_prompt,
@@ -312,30 +348,40 @@ std::string AnthropicProvider::chat_simple(const std::string& system_prompt,
         {{"role", "user"}, {"content", message}}
     });
 
+    std::string body = request.dump();
+
     std::vector<Header> headers = {
         {"x-api-key", api_key_},
         {"anthropic-version", API_VERSION},
         {"content-type", "application/json"}
     };
 
-    auto response = http_.post(base_url_ + "/messages", request.dump(), headers);
+    for (uint32_t attempt = 0; attempt <= MAX_RETRIES; ++attempt) {
+        auto response = http_.post(base_url_ + "/messages", body, headers);
 
-    if (response.status_code < 200 || response.status_code >= 300) {
+        if (response.status_code >= 200 && response.status_code < 300) {
+            auto resp = json::parse(response.body);
+
+            if (resp.contains("content") && resp["content"].is_array()) {
+                for (const auto& block : resp["content"]) {
+                    if (block.value("type", "") == "text") {
+                        return block.value("text", "");
+                    }
+                }
+            }
+            return "";
+        }
+
+        if (is_retryable(response.status_code) && attempt < MAX_RETRIES) {
+            backoff_sleep(attempt);
+            continue;
+        }
+
         throw std::runtime_error("Anthropic API error (HTTP " +
             std::to_string(response.status_code) + "): " + response.body);
     }
 
-    auto resp = json::parse(response.body);
-
-    if (resp.contains("content") && resp["content"].is_array()) {
-        for (const auto& block : resp["content"]) {
-            if (block.value("type", "") == "text") {
-                return block.value("text", "");
-            }
-        }
-    }
-
-    return "";
+    throw std::runtime_error("Anthropic API error: max retries exceeded");
 }
 
 } // namespace ptrclaw

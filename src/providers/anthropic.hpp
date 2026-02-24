@@ -36,10 +36,16 @@ private:
                                  const std::vector<ToolSpec>& tools,
                                  const std::string& model,
                                  double temperature) const;
+    static bool is_retryable(long status_code);
+    static void backoff_sleep(uint32_t attempt);
+
     std::string api_key_;
     HttpClient& http_;
     std::string base_url_;
     static constexpr const char* API_VERSION = "2023-06-01";
+    static constexpr uint32_t MAX_RETRIES = 2;
+    static constexpr double INITIAL_DELAY_S = 0.5;
+    static constexpr double MAX_DELAY_S = 8.0;
 };
 
 } // namespace ptrclaw
