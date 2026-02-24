@@ -26,6 +26,7 @@ endif
 STATICDIR := builddir-static
 MINDIR := builddir-minimal
 COVDIR := builddir-cov
+PIPEDIR := builddir-pipe
 
 .PHONY: deps setup build build-minimal build-static run test coverage coverage-summary lint clean clear-memory
 
@@ -80,4 +81,4 @@ clear-memory:
 	@echo "Memory cleared"
 
 clean:
-	rm -rf $(BUILDDIR) $(STATICDIR) $(MINDIR) $(COVDIR)
+	rm -rf $(BUILDDIR) $(STATICDIR) $(MINDIR) $(COVDIR) $(PIPEDIR)
