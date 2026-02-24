@@ -37,7 +37,7 @@ struct MemoryConfig {
 
 struct Config {
     std::string provider = "anthropic";
-    std::string model = "claude-sonnet-4-20250514";
+    std::string model = "claude-sonnet-4-6";
     double temperature = 0.7;
     bool dev = false;      // Enables developer-only commands (e.g. /soul)
     std::string base_url;  // Global override — applies to the active provider
