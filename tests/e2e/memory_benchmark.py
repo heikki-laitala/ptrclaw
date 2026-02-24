@@ -561,6 +561,7 @@ def run_scenario(binary, backend, scenario):
         close_pipe(proc)
         print("    Seed phase complete, memories accumulated.",
               file=sys.stderr)
+        time.sleep(3)  # Allow SQLite WAL checkpoint before test phase
 
         # Phase 2: Test — new process, same HOME (same memory files)
         print(f"\n  Phase 2: Testing ({len(tests)} questions)...",

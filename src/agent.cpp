@@ -12,6 +12,16 @@
 
 namespace ptrclaw {
 
+// Strip [Memory context]...[/Memory context] block prepended by memory_enrich()
+static std::string strip_memory_context(const std::string& text) {
+    const std::string open_tag = "[Memory context]\n";
+    const std::string close_tag = "[/Memory context]\n\n";
+    if (text.substr(0, open_tag.size()) != open_tag) return text;
+    auto end = text.find(close_tag);
+    if (end == std::string::npos) return text;
+    return text.substr(end + close_tag.size());
+}
+
 Agent::Agent(std::unique_ptr<Provider> provider,
              std::vector<std::unique_ptr<Tool>> tools,
              const Config& config)
@@ -367,11 +377,17 @@ void Agent::maybe_synthesize() {
     turns_since_synthesis_ = 0;
 
     // Collect recent user+assistant messages for synthesis
+    // Strip [Memory context] blocks from user messages so the synthesis LLM
+    // sees only the original user text (avoids duplicate/contaminated context).
     std::vector<ChatMessage> recent;
     size_t start = (history_.size() > 10) ? history_.size() - 10 : 0;
     for (size_t i = start; i < history_.size(); i++) {
         if (history_[i].role == Role::User || history_[i].role == Role::Assistant) {
-            recent.push_back(history_[i]);
+            ChatMessage msg = history_[i];
+            if (msg.role == Role::User) {
+                msg.content = strip_memory_context(msg.content);
+            }
+            recent.push_back(std::move(msg));
         }
     }
     if (recent.empty()) return;
