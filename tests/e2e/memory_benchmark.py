@@ -21,7 +21,7 @@ import tempfile
 import urllib.request
 
 MODEL = "claude-sonnet-4-6-20250514"
-JUDGE_MODEL = "claude-haiku-4-5-20251001"
+JUDGE_MODEL = "claude-opus-4-6-20250514"
 TIMEOUT_SECONDS = 180
 
 # ── Conversation scripts ─────────────────────────────────────────────
