@@ -29,11 +29,17 @@ MESSAGE_DELAY = 1  # small pacing delay; hard limits enforced below
 JUDGE_DELAY = 0.2  # small pacing delay; hard limits enforced below
 
 # Anthropic per-minute limits (keep safety margin).
-TOKEN_BUDGET_PER_MINUTE = 26000
-REQUEST_BUDGET_PER_MINUTE = 48
+TOKEN_BUDGET_PER_MINUTE = 22000
+REQUEST_BUDGET_PER_MINUTE = 45
+
+# Conservative reservations for benchmark requests.
+# ptrclaw currently requests up to 4096 output tokens for Anthropic calls,
+# and context can grow significantly during seeded conversations.
+MODEL_CALL_TOKEN_RESERVATION = 6500
 
 # Judge returns only a numeric score, so keep output budget small.
 JUDGE_MAX_TOKENS = 64
+JUDGE_CALL_TOKEN_RESERVATION = 1200
 
 
 def estimate_tokens(text):
@@ -547,7 +553,8 @@ def llm_judge(client, response, ground_truth, token_limiter, request_limiter):
         f"Ground truth facts: {ground_truth}\n\n"
         f"Response to evaluate:\n{response}"
     )
-    token_limiter.wait_for(estimate_tokens(request_text) + JUDGE_MAX_TOKENS)
+    token_limiter.wait_for(max(JUDGE_CALL_TOKEN_RESERVATION,
+                               estimate_tokens(request_text) + JUDGE_MAX_TOKENS))
     request_limiter.wait_for(1)
 
     result = client.messages.create(
@@ -599,7 +606,8 @@ def run_scenario(binary, backend, scenario):
         for i, msg in enumerate(seed):
             if i > 0:
                 time.sleep(MESSAGE_DELAY)
-            token_limiter.wait_for(estimate_tokens(msg) + 1200)
+            token_limiter.wait_for(max(MODEL_CALL_TOKEN_RESERVATION,
+                                       estimate_tokens(msg) + 1200))
             request_limiter.wait_for(1)
             resp = send_message(proc, msg)
             print(f"    Seed {i + 1}: sent ({len(resp)} chars response)",
@@ -617,7 +625,8 @@ def run_scenario(binary, backend, scenario):
         for i, tc in enumerate(tests):
             if i > 0:
                 time.sleep(MESSAGE_DELAY)
-            token_limiter.wait_for(estimate_tokens(tc["question"]) + 1200)
+            token_limiter.wait_for(max(MODEL_CALL_TOKEN_RESERVATION,
+                                       estimate_tokens(tc["question"]) + 1200))
             request_limiter.wait_for(1)
             resp = send_message(proc, tc["question"])
             responses.append(resp)
