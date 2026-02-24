@@ -1,0 +1,130 @@
+name: Hourly PR Review (Heikki only)
+
+on:
+  schedule:
+    # Hourly; Helsinki window is enforced in-job.
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      prs: ${{ steps.list.outputs.prs }}
+      in_window: ${{ steps.window.outputs.in_window }}
+    steps:
+      - name: Check Helsinki review window (09:00-23:00)
+        id: window
+        shell: bash
+        run: |
+          HOUR=$(TZ=Europe/Helsinki date +%H)
+          if [ "$HOUR" -ge 9 ] && [ "$HOUR" -lt 23 ]; then
+            echo "in_window=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "in_window=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: List open PRs authored by heikki-laitala
+        if: steps.window.outputs.in_window == 'true'
+        id: list
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const prs = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100
+            });
+
+            const filtered = prs
+              .filter(pr => pr.user?.login === 'heikki-laitala')
+              .map(pr => ({ number: pr.number, headSha: pr.head.sha }));
+
+            core.setOutput('prs', JSON.stringify(filtered));
+
+      - name: Set empty list outside window
+        if: steps.window.outputs.in_window != 'true'
+        id: empty
+        run: echo 'prs=[]' >> "$GITHUB_OUTPUT"
+
+  review:
+    runs-on: ubuntu-latest
+    needs: discover
+    if: needs.discover.outputs.in_window == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        pr: ${{ fromJson(needs.discover.outputs.prs) }}
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ matrix.pr.number }}/head
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ meson ninja-build libssl-dev libsqlite3-dev lld
+
+      - name: Build minimal
+        id: build
+        shell: bash
+        run: |
+          set -e
+          make build-minimal
+
+      - name: Test
+        id: test
+        shell: bash
+        run: |
+          set -e
+          make test
+
+      - name: Skip if already reviewed for this commit
+        id: reviewed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          REVIEWS_JSON=$(gh api \
+            repos/${{ github.repository }}/pulls/${{ matrix.pr.number }}/reviews)
+          MATCH=$(echo "$REVIEWS_JSON" | jq -r \
+            '.[] | select(.user.login=="github-actions[bot]" and .commit_id=="${{ matrix.pr.headSha }}") | .id' | head -n1)
+          if [ -n "$MATCH" ] && [ "$MATCH" != "null" ]; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post review comment
+        if: steps.reviewed.outputs.already != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          BODY=$(cat <<'EOF'
+          Automated hourly review (Heikki-only windowed reviewer)
+
+          ✅ Build: `make build-minimal`
+          ✅ Tests: `make test-minimal`
+
+          Scope:
+          - Repository: `${{ github.repository }}`
+          - Author filter: `heikki-laitala`
+          - Schedule window: `09:00–23:00 Europe/Helsinki`
+
+          If you want deeper semantic review in addition to build/test checks, reply and I can extend this workflow.
+          EOF
+          )
+
+          gh pr review ${{ matrix.pr.number }} \
+            --repo ${{ github.repository }} \
+            --comment \
+            --body "$BODY"
