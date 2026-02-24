@@ -45,6 +45,11 @@ OUTPUT_TOKEN_BUDGET_PER_MINUTE = 5500
 MODEL_CALL_INPUT_RESERVATION = 6000
 MODEL_CALL_OUTPUT_RESERVATION = 1300
 
+# Seeding phase is where context grows fastest; use stricter pacing/reservations.
+SEED_MESSAGE_DELAY = 4
+SEED_CALL_INPUT_RESERVATION = 9000
+SEED_CALL_OUTPUT_RESERVATION = 1800
+
 # Judge returns only a numeric score, keep output budget tiny.
 JUDGE_MAX_TOKENS = 64
 JUDGE_CALL_INPUT_RESERVATION = 1200
@@ -617,10 +622,10 @@ def run_scenario(binary, backend, scenario):
         proc = start_pipe(binary, home)
         for i, msg in enumerate(seed):
             if i > 0:
-                time.sleep(MESSAGE_DELAY)
-            input_limiter.wait_for(max(MODEL_CALL_INPUT_RESERVATION,
+                time.sleep(SEED_MESSAGE_DELAY)
+            input_limiter.wait_for(max(SEED_CALL_INPUT_RESERVATION,
                                        estimate_tokens(msg)))
-            output_limiter.wait_for(MODEL_CALL_OUTPUT_RESERVATION)
+            output_limiter.wait_for(SEED_CALL_OUTPUT_RESERVATION)
             request_limiter.wait_for(1)
             resp = send_message(proc, msg)
             print(f"    Seed {i + 1}: sent ({len(resp)} chars response)",
