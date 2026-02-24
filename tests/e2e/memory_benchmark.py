@@ -32,8 +32,8 @@ JUDGE_DELAY = 0.2  # small pacing delay; hard limits enforced below
 # - 50 RPM
 # - 30k input tokens/min
 # - 8k output tokens/min
-REQUEST_BUDGET_PER_MINUTE = 45
-INPUT_TOKEN_BUDGET_PER_MINUTE = 22000
+REQUEST_BUDGET_PER_MINUTE = 35
+INPUT_TOKEN_BUDGET_PER_MINUTE = 20000
 OUTPUT_TOKEN_BUDGET_PER_MINUTE = 6500
 
 # Conservative reservations for benchmark calls.
