@@ -63,6 +63,40 @@ SEED_MESSAGES = [
     "OAuth 2.0 work ahead of schedule. The remaining piece is SAML "
     "integration for enterprise SSO customers — that's been assigned to "
     "a new contractor named Diego who starts next Monday.",
+
+    "Priya shared her data quality strategy. She's implementing a dead "
+    "letter queue in Kafka for malformed events. Events that fail schema "
+    "validation three times get routed to a separate S3 bucket for manual "
+    "review. She estimates about 2% of events will need this path.",
+
+    "Sarah proposed a feature flag system using LaunchDarkly for the "
+    "dashboard rollout. The plan is to do a gradual rollout: 10% of "
+    "internal users first, then 50%, then GA. Each phase lasts one week.",
+
+    "Marcus set up the CI/CD pipeline using GitHub Actions. The backend "
+    "runs unit tests, integration tests against a Dockerized PostgreSQL, "
+    "and then deploys to staging via ArgoCD. The test suite takes about "
+    "8 minutes to complete.",
+
+    "We discussed the budget. The AWS infrastructure cost estimate is "
+    "$4,200 per month: $1,800 for EKS, $900 for ElastiCache, $600 for "
+    "RDS PostgreSQL, $500 for S3 and data transfer, and $400 for "
+    "monitoring and logging with Datadog.",
+
+    "Sarah mentioned accessibility requirements. The dashboard must meet "
+    "WCAG 2.1 AA compliance. She's adding aria labels to all chart "
+    "components and ensuring keyboard navigation works for every panel. "
+    "An external audit by AccessiTech is scheduled for April 1st.",
+
+    "Diego sent his first status update. He's completed the SAML metadata "
+    "parser and is now working on the SP-initiated SSO flow. He found "
+    "that three enterprise customers — Globex, Initech, and Umbrella "
+    "Corp — are waiting for SAML support before signing their contracts.",
+
+    "In the latest planning session, we agreed to add a fifth dashboard "
+    "panel: a custom SQL query builder that lets power users write ad-hoc "
+    "queries against TimescaleDB. Sarah will build the UI and Marcus will "
+    "create a sandboxed read-only database connection pool for it.",
 ]
 
 TEST_CASES = [
@@ -135,6 +169,46 @@ TEST_CASES = [
             "Diego is the new contractor handling SAML SSO integration"
         ),
     },
+    {
+        "question": "What happens to malformed events in the data pipeline?",
+        "ground_truth": (
+            "Malformed events go to a dead letter queue in Kafka. After "
+            "three failed schema validations they're routed to a separate "
+            "S3 bucket for manual review. About 2% of events expected"
+        ),
+    },
+    {
+        "question": "How much does the AWS infrastructure cost monthly?",
+        "ground_truth": (
+            "$4,200 per month total: $1,800 EKS, $900 ElastiCache, "
+            "$600 RDS PostgreSQL, $500 S3 and data transfer, $400 "
+            "Datadog monitoring and logging"
+        ),
+    },
+    {
+        "question": "What enterprise customers are waiting for SAML support?",
+        "ground_truth": (
+            "Three enterprise customers: Globex, Initech, and Umbrella "
+            "Corp are waiting for SAML support before signing contracts. "
+            "Diego is building the SP-initiated SSO flow"
+        ),
+    },
+    {
+        "question": "What's the rollout strategy for the dashboard?",
+        "ground_truth": (
+            "Gradual rollout using LaunchDarkly feature flags: 10% "
+            "internal users first, then 50%, then GA. Each phase "
+            "lasts one week"
+        ),
+    },
+    {
+        "question": "What's the fifth dashboard panel that was added?",
+        "ground_truth": (
+            "Custom SQL query builder for power users to write ad-hoc "
+            "queries against TimescaleDB. Sarah builds UI, Marcus "
+            "creates sandboxed read-only database connection pool"
+        ),
+    },
 ]
 
 
@@ -148,6 +222,9 @@ def make_config(home, backend="sqlite"):
     config = {
         "provider": "anthropic",
         "model": MODEL,
+        "agent": {
+            "max_history_messages": 20,
+        },
         "memory": {
             "backend": backend,
             "synthesis": True,
@@ -260,56 +337,127 @@ def llm_judge(response, ground_truth):
 
 
 def run_benchmark(binary, backend):
-    """Run the full seed → test → score pipeline. Returns (scores, details)."""
+    """Run the full seed → test → score pipeline. Returns list of result dicts."""
     home = tempfile.mkdtemp(prefix=f"ptrclaw_bench_{backend}_")
     try:
         make_config(home, backend)
 
-        # Phase 1: Seed — send 4 messages to build up memories
-        print(f"\n  Phase 1: Seeding ({len(SEED_MESSAGES)} messages)...")
+        # Phase 1: Seed
+        print(f"\n  Phase 1: Seeding ({len(SEED_MESSAGES)} messages)...",
+              file=sys.stderr)
         proc = start_pipe(binary, home)
         for i, msg in enumerate(SEED_MESSAGES):
             resp = send_message(proc, msg)
-            print(f"    Seed {i + 1}: sent ({len(resp)} chars response)")
+            print(f"    Seed {i + 1}: sent ({len(resp)} chars response)",
+                  file=sys.stderr)
         close_pipe(proc)
-        print("    Seed phase complete, memories accumulated.")
+        print("    Seed phase complete, memories accumulated.",
+              file=sys.stderr)
 
         # Phase 2: Test — new process, same HOME (same memory files)
-        print(f"\n  Phase 2: Testing ({len(TEST_CASES)} questions)...")
+        print(f"\n  Phase 2: Testing ({len(TEST_CASES)} questions)...",
+              file=sys.stderr)
         proc = start_pipe(binary, home)
         responses = []
         for i, tc in enumerate(TEST_CASES):
             resp = send_message(proc, tc["question"])
             responses.append(resp)
-            print(f"    Q{i + 1}: {resp[:120]}...")
+            print(f"    Q{i + 1}: {resp[:120]}...", file=sys.stderr)
         close_pipe(proc)
 
         # Phase 3: Score — LLM judge
-        print("\n  Phase 3: Scoring with LLM judge...")
-        scores = []
-        details = []
+        print("\n  Phase 3: Scoring with LLM judge...", file=sys.stderr)
+        results = []
         for i, (tc, resp) in enumerate(zip(TEST_CASES, responses)):
             score = llm_judge(resp, tc["ground_truth"])
-            scores.append(score)
-            tag = "PASS" if score >= 0.5 else "FAIL"
-            detail = f"Q{i + 1}: {score:.1f} [{tag}]"
-            details.append(detail)
-            print(f"    {detail}")
+            results.append({
+                "question": tc["question"],
+                "ground_truth": tc["ground_truth"],
+                "response": resp,
+                "score": score,
+            })
+            print(f"    Q{i + 1}: {score:.2f}", file=sys.stderr)
 
-        return scores, details
+        return results
     finally:
         shutil.rmtree(home, ignore_errors=True)
+
+
+def print_results(results, backend, baseline=None):
+    """Print results table to stdout, with optional baseline comparison."""
+    scores = [r["score"] for r in results]
+    mean = sum(scores) / len(scores)
+    passed = mean >= 0.5
+
+    # Build baseline score lookup by question text
+    base_scores = {}
+    base_mean = None
+    if baseline:
+        for bq in baseline.get("questions", []):
+            base_scores[bq["question"]] = bq["score"]
+        base_mean = baseline.get("mean_score")
+
+    has_baseline = bool(base_scores)
+    w = 72 if has_baseline else 62
+
+    print(f"\nMemory Recall Benchmark — {backend}")
+    print(f"{'─' * w}")
+    if has_baseline:
+        print(f" {'#':<4} {'Score':>5}  {'Base':>5}  {'Delta':>6}  Question")
+    else:
+        print(f" {'#':<4} {'Score':>5}  Question")
+    print(f"{'─' * w}")
+
+    for i, r in enumerate(results):
+        tag = "✓" if r["score"] >= 0.5 else "✗"
+        q = r["question"][:42] if has_baseline else r["question"][:48]
+        if has_baseline:
+            bs = base_scores.get(r["question"])
+            if bs is not None:
+                delta = r["score"] - bs
+                sign = "+" if delta > 0 else ""
+                print(f" {i + 1:<4} {r['score']:>5.2f}  {bs:>5.2f}  "
+                      f"{sign}{delta:>5.2f}  {tag} {q}")
+            else:
+                print(f" {i + 1:<4} {r['score']:>5.2f}     —      —  "
+                      f"{tag} {q}")
+        else:
+            print(f" {i + 1:<4} {r['score']:>5.2f}  {tag} {q}")
+
+    print(f"{'─' * w}")
+    if has_baseline and base_mean is not None:
+        delta = mean - base_mean
+        sign = "+" if delta > 0 else ""
+        print(f" {'Mean':>9}: {mean:.2f}  (baseline: {base_mean:.2f}, "
+              f"delta: {sign}{delta:.2f})")
+    else:
+        print(f" {'Mean':>9}: {mean:.2f}")
+    print(f" {'Result':>9}: {'PASS' if passed else 'FAIL'} (threshold: 0.50)")
+    print(f" {'Model':>9}: {MODEL}")
+    print(f" {'Judge':>9}: {JUDGE_MODEL}")
+    print(f" {'Backend':>9}: {backend}")
+    print(f" {'Seed msgs':>9}: {len(SEED_MESSAGES)}")
+    print(f" {'Questions':>9}: {len(TEST_CASES)}")
+    print()
 
 
 def main():
     binary = None
     backend = "sqlite"
+    output_file = None
+    compare_file = None
 
     args = sys.argv[1:]
     i = 0
     while i < len(args):
         if args[i] == "--backend" and i + 1 < len(args):
             backend = args[i + 1]
+            i += 2
+        elif args[i] == "--output" and i + 1 < len(args):
+            output_file = args[i + 1]
+            i += 2
+        elif args[i] == "--compare" and i + 1 < len(args):
+            compare_file = args[i + 1]
             i += 2
         elif args[i].startswith("--"):
             print(f"Unknown option: {args[i]}", file=sys.stderr)
@@ -320,7 +468,8 @@ def main():
 
     if not binary:
         print(
-            f"Usage: {sys.argv[0]} <path-to-ptrclaw-binary> [--backend sqlite|json]",
+            f"Usage: {sys.argv[0]} <path-to-ptrclaw-binary> "
+            f"[--backend sqlite|json] [--output FILE] [--compare FILE]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -336,26 +485,49 @@ def main():
         )
         sys.exit(1)
 
-    print(f"Memory Recall Benchmark")
-    print(f"  Binary:  {binary}")
-    print(f"  Backend: {backend}")
-    print(f"  Model:   {MODEL}")
-    print(f"  Judge:   {JUDGE_MODEL}")
+    # Load baseline for comparison
+    baseline = None
+    if compare_file:
+        with open(compare_file) as f:
+            baseline = json.load(f)
+        print(f"Comparing against baseline: {compare_file}", file=sys.stderr)
 
-    scores, details = run_benchmark(binary, backend)
+    print(f"Running memory recall benchmark...", file=sys.stderr)
+    print(f"  Backend: {backend}, Model: {MODEL}", file=sys.stderr)
 
-    mean_score = sum(scores) / len(scores)
-    passed = mean_score >= 0.5
+    results = run_benchmark(binary, backend)
+    scores = [r["score"] for r in results]
+    mean = sum(scores) / len(scores)
+    passed = mean >= 0.5
 
-    print(f"\n{'=' * 60}")
-    print(f"  Backend: {backend}")
-    print(f"  Scores:  {', '.join(f'{s:.1f}' for s in scores)}")
-    print(f"  Mean:    {mean_score:.2f}")
-    print(f"  Result:  {'PASS' if passed else 'FAIL'} (threshold: 0.50)")
-    print(f"{'=' * 60}")
+    # Summary table to stdout
+    print_results(results, backend, baseline)
+
+    # Save structured results for comparison
+    if output_file:
+        output = {
+            "backend": backend,
+            "model": MODEL,
+            "judge_model": JUDGE_MODEL,
+            "seed_messages": len(SEED_MESSAGES),
+            "mean_score": round(mean, 3),
+            "passed": passed,
+            "questions": [
+                {
+                    "question": r["question"],
+                    "score": round(r["score"], 3),
+                    "ground_truth": r["ground_truth"],
+                    "response": r["response"],
+                }
+                for r in results
+            ],
+        }
+        with open(output_file, "w") as f:
+            json.dump(output, f, indent=2)
+        print(f"Results saved to {output_file}", file=sys.stderr)
 
     # Machine-readable output for CI
-    print(f"\n::notice::Memory benchmark ({backend}): mean={mean_score:.2f}")
+    print(f"::notice::Memory benchmark ({backend}): mean={mean:.2f}")
 
     sys.exit(0 if passed else 1)
 
