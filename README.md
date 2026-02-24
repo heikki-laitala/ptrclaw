@@ -4,7 +4,7 @@ An AI assistant you can actually deploy anywhere. Single static binary, no runti
 
 Built in C++17 because infrastructure should be small, fast, and boring to operate.
 
-**~518 KB static binary (macOS arm64), ~6.9 MB (Linux x86_64, statically linked with OpenSSL + sqlite3). 6 LLM providers. 8 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph. Compile-time feature flags to strip what you don't need.**
+**~551 KB static binary (macOS arm64), ~6.9 MB (Linux x86_64, statically linked with OpenSSL + sqlite3). 6 LLM providers. 9 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph. Compile-time feature flags to strip what you don't need.**
 
 ## Why PtrClaw?
 
@@ -12,9 +12,9 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 
 - **Deploy anywhere** — one static binary, no runtime deps, runs on any Linux box or Mac
 - **Swap providers freely** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Switch with a config change, no code modifications
-- **Real tool use** — file I/O, shell execution (with stdin piping), and a persistent knowledge graph memory system. Providers with native function calling use it directly; others fall back to XML-based parsing
+- **Real tool use** — file I/O, shell execution (with stdin piping), cron scheduling, and a persistent knowledge graph memory system. Providers with native function calling use it directly; others fall back to XML-based parsing
 - **Extend without forking** — providers, channels, tools, and memory backends self-register via a plugin system. Add a new one by implementing an interface and dropping in a `.cpp` file
-- **Build only what you need** — 11 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~452 KB)
+- **Build only what you need** — 11 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~485 KB)
 
 ## Features
 
@@ -25,6 +25,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Automatic history compaction** when token usage approaches the context limit
 - **Persistent memory** — knowledge graph with bidirectional links, three-space semantics (core/knowledge/conversation), graph-aware context enrichment, automatic conversation synthesis
 - **Provider failover** — `reliable` provider wraps multiple backends with automatic fallback
+- **Cron scheduling** — the agent can schedule recurring tasks via system crontab and send results back via `--notify`
 - **Multi-session management** with idle eviction
 - **Telegram channel** — long-polling, user allowlists, Markdown-to-HTML, per-user sessions, streaming message edits
 - **WhatsApp channel** *(opt-in: `-Dwith_whatsapp=true`)* — Business Cloud API with built-in webhook server (reverse-proxy ready), E.164 phone normalization, sender allowlists
@@ -235,12 +236,13 @@ export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 ### CLI options
 
 ```text
--m, --message MSG    Send a single message and exit
---channel NAME       Run as a channel bot (telegram, whatsapp¹)
---provider NAME      Use a specific provider (anthropic, openai, ollama, openrouter)
---model NAME         Use a specific model
---dev                Enable developer-only commands (e.g. /soul)
--h, --help           Show help
+-m, --message MSG        Send a single message and exit
+--notify CHAN:TARGET      After -m, send response via channel (e.g. telegram:123456)
+--channel NAME           Run as a channel bot (telegram, whatsapp¹)
+--provider NAME          Use a specific provider (anthropic, openai, ollama, openrouter)
+--model NAME             Use a specific model
+--dev                    Enable developer-only commands (e.g. /soul)
+-h, --help               Show help
 
 ¹ WhatsApp requires building with -Dwith_whatsapp=true
 ```
@@ -302,9 +304,9 @@ ninja -C builddir
 
 | Configuration | macOS arm64 | Linux x86_64 |
 | ------------- | ----------- | ------------ |
-| Default (`make build`) | ~697 KB | ~697 KB |
-| Static (`make build-static`, stripped) | ~518 KB | ~6.9 MB |
-| Minimal (`make build-minimal`, stripped) | ~452 KB | — |
+| Default (`make build`) | ~735 KB | ~735 KB |
+| Static (`make build-static`, stripped) | ~551 KB | ~6.9 MB |
+| Minimal (`make build-minimal`, stripped) | ~485 KB | — |
 
 Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux static binaries are larger because they bundle OpenSSL and sqlite3. The dynamically linked build is the same size as macOS. LTO is enabled by default. Distribution builds are stripped and size-optimized.
 
@@ -351,6 +353,7 @@ src/
     file_write.cpp      Write/create files
     file_edit.cpp       Search-and-replace edits
     shell.cpp           Shell command execution (with stdin support)
+    cron.cpp            Cron scheduling (list, add, remove system crontab entries)
     memory_store.cpp    Store/upsert memory entries with optional links
     memory_recall.cpp   Search memories with graph traversal
     memory_forget.cpp   Delete memory entries
@@ -363,4 +366,4 @@ meson_options.txt       Compile-time feature flags
 
 ## Acknowledgements
 
-PtrClaw started as a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw) and has since diverged into its own architecture with an event bus, plugin system, and streaming pipeline. Nullclaw is a far more feature-rich project — if you need a battle-tested assistant with a broader tool ecosystem, check it out. PtrClaw trades breadth for a smaller footprint: our dynamically linked binary is ~717 KB vs nullclaw's ~1.9 MB, with the goal of staying minimal and easy to embed or deploy on constrained environments.
+PtrClaw started as a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw) and has since diverged into its own architecture with an event bus, plugin system, and streaming pipeline. Nullclaw is a far more feature-rich project — if you need a battle-tested assistant with a broader tool ecosystem, check it out. PtrClaw trades breadth for a smaller footprint: our dynamically linked binary is ~735 KB vs nullclaw's ~1.9 MB, with the goal of staying minimal and easy to embed or deploy on constrained environments.

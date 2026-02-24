@@ -32,7 +32,7 @@ make test && make lint   # Both must pass
 ```text
 Agent (agentic loop)
 ├── Provider (LLM API) ── Anthropic, OpenAI, OpenRouter, Ollama, Compatible, Reliable
-├── Tool (actions)     ── file_read, file_write, file_edit, shell, memory_store, memory_recall, memory_forget, memory_link
+├── Tool (actions)     ── file_read, file_write, file_edit, shell, cron, memory_store, memory_recall, memory_forget, memory_link
 ├── Dispatcher         ── XML tool call parsing for non-native providers
 ├── Memory (pluggable) ── JsonMemory (file-based, knowledge graph), SqliteMemory (FTS5), NoneMemory (no-op)
 │   └── ResponseCache  ── LLM response deduplication (FNV-1a hash, TTL+LRU)
