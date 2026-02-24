@@ -17,6 +17,17 @@
 #include <atomic>
 #include <csignal>
 
+namespace {
+
+struct HttpGuard {
+    HttpGuard() { ptrclaw::http_init(); }
+    ~HttpGuard() { ptrclaw::http_cleanup(); }
+    HttpGuard(const HttpGuard&) = delete;
+    HttpGuard& operator=(const HttpGuard&) = delete;
+};
+
+} // namespace
+
 static std::atomic<bool> g_shutdown{false};
 
 static void signal_handler(int /*sig*/) {
@@ -70,6 +81,16 @@ static int run_channel(const std::string& channel_name,
         return 1;
     }
 
+    if (!channel->supports_polling()) {
+        std::cerr << channel_name << " channel requires an external webhook gateway.\n"
+                  << "For whatsapp: set webhook_listen (e.g. \"127.0.0.1:8080\") in\n"
+                  << "~/.ptrclaw/config.json under channels.whatsapp, or via the\n"
+                  << "WHATSAPP_WEBHOOK_LISTEN env var, to start the built-in webhook\n"
+                  << "server. Place a reverse proxy (nginx, Caddy) in front for TLS\n"
+                  << "and rate-limiting. See docs/reverse-proxy.md for details.\n";
+        return 1;
+    }
+
     channel->initialize();
 
     // Set up event bus
@@ -87,16 +108,6 @@ static int run_channel(const std::string& channel_name,
 
     uint32_t poll_count = 0;
     std::cerr << "[" << channel_name << "] Bot started. Polling for messages...\n";
-
-    if (!channel->supports_polling()) {
-        std::cerr << channel_name << " channel requires an external webhook gateway.\n"
-                  << "For whatsapp: set webhook_listen (e.g. \"127.0.0.1:8080\") in\n"
-                  << "~/.ptrclaw/config.json under channels.whatsapp, or via the\n"
-                  << "WHATSAPP_WEBHOOK_LISTEN env var, to start the built-in webhook\n"
-                  << "server. Place a reverse proxy (nginx, Caddy) in front for TLS\n"
-                  << "and rate-limiting. See docs/reverse-proxy.md for details.\n";
-        return 1;
-    }
 
     while (!g_shutdown.load()) {
         auto messages = channel->poll_updates();
@@ -147,7 +158,7 @@ int main(int argc, char* argv[]) try {
     }
 
     // Initialize
-    ptrclaw::http_init();
+    HttpGuard http_guard;
     auto config = ptrclaw::Config::load();
 
     // Override config with CLI args
@@ -161,45 +172,22 @@ int main(int argc, char* argv[]) try {
         config.model = model_name;
     }
 
-#ifdef PTRCLAW_HAS_PIPE
-    // Pipe mode: JSONL on stdin/stdout for scripted multi-turn conversations
-    if (channel_name == "pipe") {
-        ptrclaw::PlatformHttpClient http_client;
-        auto provider = ptrclaw::create_provider(
-            config.provider,
-            config.api_key_for(config.provider),
-            http_client,
-            config.base_url_for(config.provider));
-        auto tools = ptrclaw::create_builtin_tools();
-        ptrclaw::Agent agent(std::move(provider), std::move(tools), config);
-
-        std::string line;
-        while (std::getline(std::cin, line)) {
-            auto j = nlohmann::json::parse(line);
-            std::string response = agent.process(j.value("content", ""));
-            nlohmann::json out = {{"content", response}};
-            std::cout << out.dump() << "\n" << std::flush;
-        }
-        ptrclaw::http_cleanup();
-        return 0;
-    }
-#endif
-
-    // Channel mode
-    if (!channel_name.empty()) {
-        std::signal(SIGINT, signal_handler);
-        std::signal(SIGTERM, signal_handler);
-        ptrclaw::http_set_abort_flag(&g_shutdown);
-
-        ptrclaw::PlatformHttpClient http_client;
-        int rc = run_channel(channel_name, config, http_client);
-
-        ptrclaw::http_cleanup();
-        return rc;
-    }
-
-    // Create HTTP client and provider
     ptrclaw::PlatformHttpClient http_client;
+
+    // Channel mode (except pipe, which needs an agent below)
+    if (!channel_name.empty()) {
+#ifdef PTRCLAW_HAS_PIPE
+        if (channel_name != "pipe")
+#endif
+        {
+            std::signal(SIGINT, signal_handler);
+            std::signal(SIGTERM, signal_handler);
+            ptrclaw::http_set_abort_flag(&g_shutdown);
+            return run_channel(channel_name, config, http_client);
+        }
+    }
+
+    // Create provider and agent (pipe, -m, REPL modes)
     std::unique_ptr<ptrclaw::Provider> provider;
     try {
         provider = ptrclaw::create_provider(
@@ -209,19 +197,29 @@ int main(int argc, char* argv[]) try {
             config.base_url_for(config.provider));
     } catch (const std::exception& e) {
         std::cerr << "Error creating provider: " << e.what() << "\n";
-        ptrclaw::http_cleanup();
         return 1;
     }
-
-    // Create tools and agent
     auto tools = ptrclaw::create_builtin_tools();
     ptrclaw::Agent agent(std::move(provider), std::move(tools), config);
+
+#ifdef PTRCLAW_HAS_PIPE
+    // Pipe mode: JSONL on stdin/stdout for scripted multi-turn conversations
+    if (channel_name == "pipe") {
+        std::string line;
+        while (std::getline(std::cin, line)) {
+            auto j = nlohmann::json::parse(line);
+            std::string response = agent.process(j.value("content", ""));
+            nlohmann::json out = {{"content", response}};
+            std::cout << out.dump() << "\n" << std::flush;
+        }
+        return 0;
+    }
+#endif
 
     // Single message mode
     if (!message.empty()) {
         std::string response = agent.process(message);
         std::cout << response << '\n';
-        ptrclaw::http_cleanup();
         return 0;
     }
 
@@ -343,7 +341,6 @@ int main(int argc, char* argv[]) try {
         std::cout << "\n" << response << "\n\n";
     }
 
-    ptrclaw::http_cleanup();
     return 0;
 } catch (const std::exception& e) {
     std::cerr << "Fatal error: " << e.what() << '\n';
