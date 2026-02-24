@@ -33,13 +33,16 @@ JUDGE_DELAY = 0.2  # small pacing delay; hard limits enforced below
 # - 30k input tokens/min
 # - 8k output tokens/min
 REQUEST_BUDGET_PER_MINUTE = 45
-INPUT_TOKEN_BUDGET_PER_MINUTE = 24000
+INPUT_TOKEN_BUDGET_PER_MINUTE = 22000
 OUTPUT_TOKEN_BUDGET_PER_MINUTE = 6500
 
 # Conservative reservations for benchmark calls.
 # ptrclaw can send large conversation history, so reserve generous input.
+# Anthropic ITPM uses total_input_tokens = cache_read_input_tokens
+# + cache_creation_input_tokens + input_tokens, so we intentionally
+# over-reserve input budget for each model call.
 # Provider max output for model calls is currently 4096.
-MODEL_CALL_INPUT_RESERVATION = 4500
+MODEL_CALL_INPUT_RESERVATION = 5500
 MODEL_CALL_OUTPUT_RESERVATION = 1200
 
 # Judge returns only a numeric score, keep output budget tiny.
