@@ -25,8 +25,46 @@ from anthropic import Anthropic
 MODEL = "claude-sonnet-4-6"
 JUDGE_MODEL = "claude-opus-4-6"
 TIMEOUT_SECONDS = 180
-MESSAGE_DELAY = 10  # seconds between pipe messages to stay under rate limits
-JUDGE_DELAY = 2  # seconds between judge calls
+MESSAGE_DELAY = 10  # baseline delay between pipe messages
+JUDGE_DELAY = 2  # baseline delay between judge calls
+
+# Anthropic enforces per-minute token limits. Keep a safety margin below 30k.
+TOKEN_BUDGET_PER_MINUTE = 26000
+
+# Judge returns only a numeric score, so keep output budget small.
+JUDGE_MAX_TOKENS = 64
+
+
+def estimate_tokens(text):
+    """Rough token estimate for throttling (chars/4 heuristic)."""
+    return max(1, len(text) // 4)
+
+
+class TokenRateLimiter:
+    """Simple sliding-window token limiter (60s)."""
+
+    def __init__(self, budget_per_minute):
+        self.budget = budget_per_minute
+        self.events = []  # (timestamp, tokens)
+
+    def _trim(self, now):
+        cutoff = now - 60.0
+        self.events = [(t, tok) for t, tok in self.events if t >= cutoff]
+
+    def _used(self, now):
+        self._trim(now)
+        return sum(tok for _, tok in self.events)
+
+    def wait_for(self, tokens):
+        while True:
+            now = time.time()
+            used = self._used(now)
+            if used + tokens <= self.budget:
+                self.events.append((now, tokens))
+                return
+            oldest_ts = self.events[0][0]
+            sleep_s = max(0.25, 60.0 - (now - oldest_ts) + 0.05)
+            time.sleep(sleep_s)
 
 # ── Conversation scripts ─────────────────────────────────────────────
 
@@ -498,15 +536,21 @@ def close_pipe(proc):
 # ── LLM judge ────────────────────────────────────────────────────────
 
 
-def llm_judge(client, response, ground_truth):
+def llm_judge(client, response, ground_truth, limiter):
     """Score a response against ground truth using LLM judge.
 
     Returns a float between 0.0 and 1.0. The Anthropic SDK handles
     retry with exponential backoff on 429/5xx automatically.
     """
+    request_text = (
+        f"Ground truth facts: {ground_truth}\n\n"
+        f"Response to evaluate:\n{response}"
+    )
+    limiter.wait_for(estimate_tokens(request_text) + JUDGE_MAX_TOKENS)
+
     result = client.messages.create(
         model=JUDGE_MODEL,
-        max_tokens=4096,
+        max_tokens=JUDGE_MAX_TOKENS,
         system=(
             "You are a scoring assistant. Rate how well a response "
             "demonstrates awareness of specific facts from a prior "
@@ -522,10 +566,7 @@ def llm_judge(client, response, ground_truth):
         messages=[
             {
                 "role": "user",
-                "content": (
-                    f"Ground truth facts: {ground_truth}\n\n"
-                    f"Response to evaluate:\n{response}"
-                ),
+                "content": request_text,
             }
         ],
     )
@@ -546,6 +587,7 @@ def run_scenario(binary, backend, scenario):
     home = tempfile.mkdtemp(prefix=f"ptrclaw_bench_{scenario['name']}_")
     try:
         make_config(home, backend)
+        limiter = TokenRateLimiter(TOKEN_BUDGET_PER_MINUTE)
 
         # Phase 1: Seed
         print(f"\n  Phase 1: Seeding ({len(seed)} messages)...",
@@ -554,6 +596,7 @@ def run_scenario(binary, backend, scenario):
         for i, msg in enumerate(seed):
             if i > 0:
                 time.sleep(MESSAGE_DELAY)
+            limiter.wait_for(estimate_tokens(msg) + 1200)
             resp = send_message(proc, msg)
             print(f"    Seed {i + 1}: sent ({len(resp)} chars response)",
                   file=sys.stderr)
@@ -570,6 +613,7 @@ def run_scenario(binary, backend, scenario):
         for i, tc in enumerate(tests):
             if i > 0:
                 time.sleep(MESSAGE_DELAY)
+            limiter.wait_for(estimate_tokens(tc["question"]) + 1200)
             resp = send_message(proc, tc["question"])
             responses.append(resp)
             print(f"    Q{i + 1}: {resp[:120]}...", file=sys.stderr)
@@ -582,7 +626,7 @@ def run_scenario(binary, backend, scenario):
         for i, (tc, resp) in enumerate(zip(tests, responses)):
             if i > 0:
                 time.sleep(JUDGE_DELAY)
-            score = llm_judge(client, resp, tc["ground_truth"])
+            score = llm_judge(client, resp, tc["ground_truth"], limiter)
             results.append({
                 "question": tc["question"],
                 "ground_truth": tc["ground_truth"],
