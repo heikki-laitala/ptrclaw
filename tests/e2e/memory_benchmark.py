@@ -20,8 +20,8 @@ import sys
 import tempfile
 import urllib.request
 
-MODEL = "claude-sonnet-4-6-20250514"
-JUDGE_MODEL = "claude-opus-4-6-20250514"
+MODEL = "claude-sonnet-4-6"
+JUDGE_MODEL = "claude-opus-4-6"
 TIMEOUT_SECONDS = 180
 
 # ── Conversation scripts ─────────────────────────────────────────────
