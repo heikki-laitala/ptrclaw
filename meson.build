@@ -105,6 +105,7 @@ if opt_tools
   optional_sources += files(
     'src/tools/file_edit.cpp', 'src/tools/file_read.cpp',
     'src/tools/file_write.cpp', 'src/tools/shell.cpp',
+    'src/tools/cron.cpp',
   )
 endif
 
@@ -168,7 +169,7 @@ if opt_sse
   optional_test_sources += files('tests/test_sse.cpp')
 endif
 if opt_tools
-  optional_test_sources += files('tests/test_tools.cpp')
+  optional_test_sources += files('tests/test_tools.cpp', 'tests/test_cron.cpp')
 endif
 if opt_telegram
   optional_test_sources += files('tests/test_telegram.cpp')

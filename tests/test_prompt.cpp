@@ -90,7 +90,7 @@ TEST_CASE("build_system_prompt: includes safety section", "[prompt]") {
 
 TEST_CASE("build_system_prompt: includes runtime info", "[prompt]") {
     std::vector<std::unique_ptr<Tool>> tools;
-    RuntimeInfo runtime{"claude-sonnet-4", "anthropic", "telegram"};
+    RuntimeInfo runtime{"claude-sonnet-4", "anthropic", "telegram", "", ""};
     auto result = build_system_prompt(tools, false, false, nullptr, runtime);
     REQUIRE(result.find("## Runtime") != std::string::npos);
     REQUIRE(result.find("claude-sonnet-4") != std::string::npos);
@@ -105,7 +105,7 @@ TEST_CASE("build_system_prompt: silent replies only with channel", "[prompt]") {
     REQUIRE(result.find("[SILENT]") == std::string::npos);
 
     // With channel — has silent replies
-    RuntimeInfo runtime{"", "", "telegram"};
+    RuntimeInfo runtime{"", "", "telegram", "", ""};
     auto result2 = build_system_prompt(tools, false, false, nullptr, runtime);
     REQUIRE(result2.find("[SILENT]") != std::string::npos);
 }
@@ -114,4 +114,41 @@ TEST_CASE("build_system_prompt: workspace section present", "[prompt]") {
     std::vector<std::unique_ptr<Tool>> tools;
     auto result = build_system_prompt(tools, false);
     REQUIRE(result.find("## Workspace") != std::string::npos);
+}
+
+TEST_CASE("build_system_prompt: includes binary path and session", "[prompt]") {
+    std::vector<std::unique_ptr<Tool>> tools;
+    RuntimeInfo runtime{"model", "provider", "telegram",
+                        "/usr/local/bin/ptrclaw", "123456789"};
+    auto result = build_system_prompt(tools, false, false, nullptr, runtime);
+    REQUIRE(result.find("Binary: /usr/local/bin/ptrclaw") != std::string::npos);
+    REQUIRE(result.find("Session: 123456789") != std::string::npos);
+}
+
+// Mock cron tool for scheduling hint test
+class MockCronTool : public Tool {
+public:
+    ToolResult execute(const std::string&) override { return {true, ""}; }
+    std::string tool_name() const override { return "cron"; }
+    std::string description() const override { return "cron tool"; }
+    std::string parameters_json() const override { return R"({"type":"object"})"; }
+};
+
+TEST_CASE("build_system_prompt: scheduling hint with cron tool", "[prompt]") {
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<MockCronTool>());
+    RuntimeInfo runtime{"model", "provider", "telegram",
+                        "/usr/local/bin/ptrclaw", "123456789"};
+    auto result = build_system_prompt(tools, false, false, nullptr, runtime);
+    REQUIRE(result.find("## Scheduled Tasks") != std::string::npos);
+    REQUIRE(result.find("/usr/local/bin/ptrclaw -m") != std::string::npos);
+    REQUIRE(result.find("--notify telegram:123456789") != std::string::npos);
+}
+
+TEST_CASE("build_system_prompt: no scheduling hint without binary path", "[prompt]") {
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<MockCronTool>());
+    RuntimeInfo runtime{"model", "provider", "telegram", "", ""};
+    auto result = build_system_prompt(tools, false, false, nullptr, runtime);
+    REQUIRE(result.find("## Scheduled Tasks") == std::string::npos);
 }

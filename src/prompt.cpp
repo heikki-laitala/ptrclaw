@@ -105,7 +105,33 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
     if (!runtime.channel.empty()) {
         ss << "Channel: " << runtime.channel << "\n";
     }
+    if (!runtime.binary_path.empty()) {
+        ss << "Binary: " << runtime.binary_path << "\n";
+    }
+    if (!runtime.session_id.empty()) {
+        ss << "Session: " << runtime.session_id << "\n";
+    }
     ss << "\n";
+
+    // Scheduling hint — only when cron tool is available and binary path is set
+    if (!runtime.binary_path.empty()) {
+        bool has_cron = false;
+        for (const auto& tool : tools) {
+            if (tool->tool_name() == "cron") {
+                has_cron = true;
+                break;
+            }
+        }
+        if (has_cron) {
+            ss << "## Scheduled Tasks\n"
+               << "Use the cron tool to schedule recurring tasks. To send results to the user:\n"
+               << "  " << runtime.binary_path << " -m \"task\"";
+            if (!runtime.channel.empty() && !runtime.session_id.empty()) {
+                ss << " --notify " << runtime.channel << ":" << runtime.session_id;
+            }
+            ss << "\n\n";
+        }
+    }
 
     // Only emit generic style guidance when no soul personality exists
     if (soul.empty()) {

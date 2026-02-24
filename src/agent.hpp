@@ -42,6 +42,7 @@ public:
     void set_event_bus(EventBus* bus) { event_bus_ = bus; }
     void set_session_id(const std::string& id) { session_id_ = id; }
     void set_channel(const std::string& ch) { channel_ = ch; }
+    void set_binary_path(const std::string& path) { binary_path_ = path; }
 
     // Memory system
     void set_memory(std::unique_ptr<Memory> memory);
@@ -70,6 +71,7 @@ private:
     EventBus* event_bus_ = nullptr;
     std::string session_id_;
     std::string channel_;
+    std::string binary_path_;
     std::unique_ptr<Memory> memory_;
     std::unique_ptr<ResponseCache> response_cache_;
     uint32_t turns_since_synthesis_ = 0;

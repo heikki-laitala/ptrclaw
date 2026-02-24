@@ -16,6 +16,8 @@
 #include <cstring>
 #include <atomic>
 #include <csignal>
+#include <filesystem>
+#include <sstream>
 
 namespace {
 
@@ -34,11 +36,40 @@ static void signal_handler(int /*sig*/) {
     g_shutdown.store(true);
 }
 
+static std::string resolve_binary_path(const char* argv0) {
+    std::string path(argv0);
+
+    // Absolute or relative path — resolve via filesystem
+    if (path.find('/') != std::string::npos) {
+        std::error_code ec;
+        auto canonical = std::filesystem::canonical(path, ec);
+        if (!ec) return canonical.string();
+        return path;
+    }
+
+    // Bare name — search PATH
+    const char* path_env = std::getenv("PATH");
+    if (!path_env) return path;
+
+    std::istringstream dirs(path_env);
+    std::string dir;
+    while (std::getline(dirs, dir, ':')) {
+        auto candidate = std::filesystem::path(dir) / path;
+        std::error_code ec;
+        if (std::filesystem::exists(candidate, ec)) {
+            auto canonical = std::filesystem::canonical(candidate, ec);
+            if (!ec) return canonical.string();
+        }
+    }
+    return path;
+}
+
 static void print_usage() {
     std::cout << "Usage: ptrclaw [options]\n"
               << "\n"
               << "Options:\n"
               << "  -m, --message MSG    Send a single message and exit\n"
+              << "  --notify CHAN:TARGET  After -m, send response via channel (e.g. telegram:123456)\n"
               << "  --channel NAME       Run as a channel bot (telegram, whatsapp)\n"
               << "  --provider NAME      Use specific provider (anthropic, openai, ollama, openrouter)\n"
               << "  --model NAME         Use specific model\n"
@@ -65,7 +96,8 @@ static void print_usage() {
 
 static int run_channel(const std::string& channel_name,
                        ptrclaw::Config& config,
-                       ptrclaw::HttpClient& http_client) {
+                       ptrclaw::HttpClient& http_client,
+                       const std::string& binary_path) {
     // Create channel via plugin registry
     std::unique_ptr<ptrclaw::Channel> channel;
     try {
@@ -96,6 +128,7 @@ static int run_channel(const std::string& channel_name,
     // Set up event bus
     ptrclaw::EventBus bus;
     ptrclaw::SessionManager sessions(config, http_client);
+    sessions.set_binary_path(binary_path);
     sessions.set_event_bus(&bus);
 
     // Wire up channel display (typing, streaming, message delivery)
@@ -134,6 +167,7 @@ int main(int argc, char* argv[]) try {
     std::string provider_name;
     std::string model_name;
     std::string channel_name;
+    std::string notify_spec;
     bool dev_mode = false;
 
     for (int i = 1; i < argc; i++) {
@@ -146,6 +180,8 @@ int main(int argc, char* argv[]) try {
             provider_name = argv[++i];
         } else if (std::strcmp(argv[i], "--model") == 0 && i + 1 < argc) {
             model_name = argv[++i];
+        } else if (std::strcmp(argv[i], "--notify") == 0 && i + 1 < argc) {
+            notify_spec = argv[++i];
         } else if (std::strcmp(argv[i], "--channel") == 0 && i + 1 < argc) {
             channel_name = argv[++i];
         } else if (std::strcmp(argv[i], "--dev") == 0) {
@@ -156,6 +192,21 @@ int main(int argc, char* argv[]) try {
             return 1;
         }
     }
+
+    // Validate --notify requires -m
+    if (!notify_spec.empty() && message.empty()) {
+        std::cerr << "Error: --notify requires -m (single message mode)\n";
+        return 1;
+    }
+
+    // Validate --notify format
+    if (!notify_spec.empty() && notify_spec.find(':') == std::string::npos) {
+        std::cerr << "Error: --notify must be CHANNEL:TARGET (e.g. telegram:123456)\n";
+        return 1;
+    }
+
+    // Resolve binary path for cron scheduling
+    std::string binary_path = resolve_binary_path(argv[0]);
 
     // Initialize
     HttpGuard http_guard;
@@ -183,7 +234,7 @@ int main(int argc, char* argv[]) try {
             std::signal(SIGINT, signal_handler);
             std::signal(SIGTERM, signal_handler);
             ptrclaw::http_set_abort_flag(&g_shutdown);
-            return run_channel(channel_name, config, http_client);
+            return run_channel(channel_name, config, http_client, binary_path);
         }
     }
 
@@ -201,6 +252,7 @@ int main(int argc, char* argv[]) try {
     }
     auto tools = ptrclaw::create_builtin_tools();
     ptrclaw::Agent agent(std::move(provider), std::move(tools), config);
+    agent.set_binary_path(binary_path);
 
 #ifdef PTRCLAW_HAS_PIPE
     // Pipe mode: JSONL on stdin/stdout for scripted multi-turn conversations
@@ -220,6 +272,21 @@ int main(int argc, char* argv[]) try {
     if (!message.empty()) {
         std::string response = agent.process(message);
         std::cout << response << '\n';
+
+        // Send notification if --notify was specified
+        if (!notify_spec.empty()) {
+            auto colon = notify_spec.find(':');
+            std::string chan_name = notify_spec.substr(0, colon);
+            std::string target = notify_spec.substr(colon + 1);
+            try {
+                auto channel = ptrclaw::PluginRegistry::instance().create_channel(
+                    chan_name, config, http_client);
+                channel->send_message(target, response);
+            } catch (const std::exception& e) {
+                std::cerr << "Notification failed: " << e.what() << "\n";
+            }
+        }
+
         return 0;
     }
 

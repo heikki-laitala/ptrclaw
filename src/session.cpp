@@ -33,6 +33,11 @@ Agent& SessionManager::get_session(const std::string& session_id) {
     session.agent = std::make_unique<Agent>(std::move(provider), std::move(tools), config_);
     session.last_active = epoch_seconds();
 
+    // Propagate binary path to new agent
+    if (!binary_path_.empty()) {
+        session.agent->set_binary_path(binary_path_);
+    }
+
     // Propagate event bus to new agent
     if (event_bus_) {
         session.agent->set_event_bus(event_bus_);
