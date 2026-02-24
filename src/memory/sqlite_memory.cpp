@@ -17,6 +17,30 @@ static ptrclaw::MemoryRegistrar reg_sqlite("sqlite",
 
 namespace ptrclaw {
 
+// Preprocess a user query for FTS5: split on non-alphanumeric, skip
+// tokens shorter than 3 chars, and OR-join the remainder so that any
+// matching token produces results (FTS5 defaults to implicit AND).
+static std::string build_fts_query(const std::string& query) {
+    std::string result;
+    std::string token;
+    for (char c : query) {
+        if (std::isalnum(static_cast<unsigned char>(c))) {
+            token += c;
+        } else {
+            if (token.size() >= 3) {
+                if (!result.empty()) result += " OR ";
+                result += token;
+            }
+            token.clear();
+        }
+    }
+    if (token.size() >= 3) {
+        if (!result.empty()) result += " OR ";
+        result += token;
+    }
+    return result;
+}
+
 // RAII wrapper for sqlite3_stmt
 struct StmtGuard {
     sqlite3_stmt* stmt = nullptr;
@@ -218,14 +242,16 @@ std::vector<MemoryEntry> SqliteMemory::recall(const std::string& query, uint32_t
 
     int lim = static_cast<int>(limit);
 
-    // Try FTS5 MATCH first
+    // Try FTS5 MATCH first (OR-joined tokens for partial matching)
+    std::string fts_query = build_fts_query(query);
+    if (fts_query.empty()) fts_query = query;  // fallback if all tokens too short
     std::string fts_sql =
         "SELECT m.id, m.key, m.content, m.category, m.timestamp, m.session_id,"
         "       bm25(memories_fts) AS score"
         " FROM memories_fts"
         " JOIN memories AS m ON memories_fts.rowid = m.rowid"
         " WHERE memories_fts MATCH ?";
-    std::vector<std::string> fts_params = {query};
+    std::vector<std::string> fts_params = {fts_query};
     if (category_filter) {
         fts_sql += " AND m.category = ?";
         fts_params.push_back(category_to_string(*category_filter));
