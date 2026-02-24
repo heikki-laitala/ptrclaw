@@ -75,7 +75,7 @@ Create `~/.ptrclaw/config.json`:
 ```json
 {
   "provider": "anthropic",
-  "model": "claude-sonnet-4-20250514",
+  "model": "claude-sonnet-4-6",
   "temperature": 0.7,
   "base_url": "",
   "providers": {
@@ -126,7 +126,7 @@ Minimal config (Anthropic only):
 ```json
 {
   "provider": "anthropic",
-  "model": "claude-sonnet-4-20250514",
+  "model": "claude-sonnet-4-6",
   "providers": {
     "anthropic": { "api_key": "sk-ant-..." }
   }

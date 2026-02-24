@@ -11,7 +11,7 @@ namespace ptrclaw {
 nlohmann::json Config::defaults_json() {
     return {
         {"provider", "anthropic"},
-        {"model", "claude-sonnet-4-20250514"},
+        {"model", "claude-sonnet-4-6"},
         {"temperature", 0.7},
         {"dev", false},
         {"base_url", ""},
