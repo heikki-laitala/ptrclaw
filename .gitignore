@@ -4,6 +4,7 @@ builddir/
 builddir-cov/
 builddir-minimal/
 builddir-static/
+builddir-pipe/
 .cache/
 
 # IDE
