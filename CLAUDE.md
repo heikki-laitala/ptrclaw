@@ -76,7 +76,7 @@ Never log secrets or tokens. Validate at system boundaries. Keep network/filesys
 - **Memory**: `std::unique_ptr` for polymorphic ownership, `std::optional` for nullable values
 - **JSON**: nlohmann/json (`#include <nlohmann/json.hpp>`)
 - **Tests**: Catch2 with `TEST_CASE` / `REQUIRE`. Mock classes inherit from abstract interfaces.
-- **Git**: Conventional commits (`feat:`, `fix:`, `chore:`, `refactor:`, `test:`, `ci:`). No Co-Authored-By trailer.
+- **Git**: Conventional commits (`feat:`, `fix:`, `chore:`, `refactor:`, `test:`, `ci:`). No Co-Authored-By trailer. No "Generated with Claude Code" footer in PR descriptions.
 
 ## Key Files
 
