@@ -18,11 +18,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 
 MODEL = "claude-sonnet-4-6-20250514"
 JUDGE_MODEL = "claude-opus-4-6-20250514"
 TIMEOUT_SECONDS = 180
+MESSAGE_DELAY = 2  # seconds between messages to avoid 429 rate limits
 
 # ── Conversation scripts ─────────────────────────────────────────────
 
@@ -564,6 +566,8 @@ def run_scenario(binary, backend, scenario):
               file=sys.stderr)
         proc = start_pipe(binary, home)
         for i, msg in enumerate(seed):
+            if i > 0:
+                time.sleep(MESSAGE_DELAY)
             resp = send_message(proc, msg)
             print(f"    Seed {i + 1}: sent ({len(resp)} chars response)",
                   file=sys.stderr)
@@ -577,6 +581,8 @@ def run_scenario(binary, backend, scenario):
         proc = start_pipe(binary, home)
         responses = []
         for i, tc in enumerate(tests):
+            if i > 0:
+                time.sleep(MESSAGE_DELAY)
             resp = send_message(proc, tc["question"])
             responses.append(resp)
             print(f"    Q{i + 1}: {resp[:120]}...", file=sys.stderr)
@@ -586,6 +592,8 @@ def run_scenario(binary, backend, scenario):
         print("\n  Phase 3: Scoring with LLM judge...", file=sys.stderr)
         results = []
         for i, (tc, resp) in enumerate(zip(tests, responses)):
+            if i > 0:
+                time.sleep(MESSAGE_DELAY)
             score = llm_judge(resp, tc["ground_truth"])
             results.append({
                 "question": tc["question"],
