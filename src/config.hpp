@@ -16,6 +16,7 @@ struct AgentConfig {
     uint32_t max_tool_iterations = 10;
     uint32_t max_history_messages = 50;
     uint32_t token_limit = 128000;
+    bool disable_streaming = false;
 };
 
 struct MemoryConfig {

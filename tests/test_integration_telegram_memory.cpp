@@ -41,13 +41,14 @@ TEST_CASE("Integration: Telegram message reaches provider with memory context bl
     MockHttpClient provider_http;
     provider_http.next_response = {
         200,
-        R"({"model":"llama3","message":{"content":"ok"},"prompt_eval_count":10,"eval_count":2})"
+        R"({"model":"claude-sonnet-4-6","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":10,"output_tokens":2}})"
     };
 
     Config cfg;
-    cfg.provider = "ollama"; // non-streaming provider => uses mocked post()
-    cfg.model = "llama3";
-    cfg.providers["ollama"].base_url = "http://localhost:11434";
+    cfg.provider = "anthropic";
+    cfg.model = "claude-sonnet-4-6";
+    cfg.providers["anthropic"].api_key = "test-key";
+    cfg.agent.disable_streaming = true;
     cfg.memory.backend = "json";
     cfg.memory.path = "/tmp/ptrclaw_test_memory_integration.json";
     cfg.memory.recall_limit = 5;
