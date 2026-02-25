@@ -392,40 +392,16 @@ int main(int argc, char* argv[]) try {
                 agent.set_model(new_model);
                 std::cout << "Model set to: " << new_model << "\n";
             } else if (line == "/models") {
-                auto current_prov = agent.provider_name();
-                bool on_codex = (current_prov == "openai" &&
-                                 config.providers.count("openai") &&
-                                 config.providers.at("openai").use_oauth);
+                auto oai_it = config.providers.find("openai");
+                bool use_oauth = oai_it != config.providers.end() && oai_it->second.use_oauth;
+                auto infos = ptrclaw::list_providers(config, agent.provider_name(), use_oauth);
 
                 std::cout << "Configured providers:\n";
-                for (const auto& [name, entry] : config.providers) {
-                    if (name == "openai") {
-                        if (!entry.api_key.empty()) {
-                            bool active = (current_prov == "openai" && !on_codex);
-                            std::cout << (active ? "* " : "  ")
-                                      << "openai         API key";
-                            if (active) std::cout << "    model: " << agent.model();
-                            std::cout << "\n";
-                        }
-                        if (!entry.oauth_access_token.empty()) {
-                            bool active = on_codex;
-                            std::cout << (active ? "* " : "  ")
-                                      << "openai-codex   OAuth";
-                            if (active) std::cout << "      model: " << agent.model();
-                            std::cout << "\n";
-                        }
-                        continue;
-                    }
-                    bool has_creds = !entry.api_key.empty() || !entry.base_url.empty();
-                    if (!has_creds) continue;
-                    std::string auth = !entry.api_key.empty() ? "API key" : "local";
-                    bool active = (name == current_prov);
-                    std::cout << (active ? "* " : "  ")
-                              << name;
-                    // Pad to 15 chars
-                    for (size_t i = name.size(); i < 15; ++i) std::cout << ' ';
-                    std::cout << auth;
-                    if (active) std::cout << "    model: " << agent.model();
+                for (const auto& info : infos) {
+                    std::cout << (info.active ? "* " : "  ") << info.name;
+                    for (size_t i = info.name.size(); i < 15; ++i) std::cout << ' ';
+                    std::cout << info.auth;
+                    if (info.active) std::cout << "    model: " << agent.model();
                     std::cout << "\n";
                 }
                 std::cout << "\nSwitch: /provider <name> [model]\n";
@@ -435,38 +411,14 @@ int main(int argc, char* argv[]) try {
                 std::string prov_name = (space == std::string::npos) ? args : args.substr(0, space);
                 std::string model_arg = (space == std::string::npos) ? "" : ptrclaw::trim(args.substr(space + 1));
 
-                if (prov_name == "openai-codex") {
-                    auto it = config.providers.find("openai");
-                    if (it == config.providers.end() || it->second.oauth_access_token.empty()) {
-                        std::cout << "OpenAI OAuth not configured. Run /auth openai start\n";
-                    } else {
-                        auto fresh = ptrclaw::create_provider("openai", config.api_key_for("openai"), http_client,
-                            config.base_url_for("openai"), config.prompt_caching_for("openai"), &it->second);
-                        setup_repl_oauth_refresh(fresh.get(), config);
-                        agent.set_provider(std::move(fresh));
-                        agent.set_model(model_arg.empty() ? std::string(ptrclaw::kDefaultOAuthModel) : model_arg);
-                        std::cout << "Switched to openai-codex | Model: " << agent.model() << "\n";
-                    }
+                auto sr = ptrclaw::switch_provider(prov_name, model_arg, config, http_client);
+                if (!sr.error.empty()) {
+                    std::cout << sr.error << "\n";
                 } else {
-                    auto it = config.providers.find(prov_name);
-                    if (it == config.providers.end()) {
-                        std::cout << "Unknown provider: " << prov_name << "\n";
-                    } else if (it->second.api_key.empty() && it->second.base_url.empty()) {
-                        std::cout << "No credentials for " << prov_name << "\n";
-                    } else {
-                        const ptrclaw::ProviderEntry* ep = &it->second;
-                        ptrclaw::ProviderEntry no_oauth;
-                        if (prov_name == "openai") {
-                            no_oauth = it->second;
-                            no_oauth.use_oauth = false;
-                            ep = &no_oauth;
-                        }
-                        auto fresh = ptrclaw::create_provider(prov_name, config.api_key_for(prov_name), http_client,
-                            config.base_url_for(prov_name), config.prompt_caching_for(prov_name), ep);
-                        agent.set_provider(std::move(fresh));
-                        if (!model_arg.empty()) agent.set_model(model_arg);
-                        std::cout << "Switched to " << prov_name << " | Model: " << agent.model() << "\n";
-                    }
+                    setup_repl_oauth_refresh(sr.provider.get(), config);
+                    agent.set_provider(std::move(sr.provider));
+                    if (!sr.model.empty()) agent.set_model(sr.model);
+                    std::cout << "Switched to " << sr.display_name << " | Model: " << agent.model() << "\n";
                 }
             } else if (line == "/memory") {
                 auto* mem = agent.memory();
