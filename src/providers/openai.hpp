@@ -52,6 +52,7 @@ protected:
     std::string bearer_token();
     void refresh_oauth_if_needed();
     bool use_responses_api(const std::string& model) const;
+    std::string responses_url(const std::string& model) const;
 
 private:
     nlohmann::json build_responses_request(
