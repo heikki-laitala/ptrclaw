@@ -24,7 +24,8 @@ Agent& SessionManager::get_session(const std::string& session_id) {
         config_.provider,
         config_.api_key_for(config_.provider),
         http_,
-        config_.base_url_for(config_.provider));
+        config_.base_url_for(config_.provider),
+        config_.prompt_caching_for(config_.provider));
 
     auto tools = create_builtin_tools();
 

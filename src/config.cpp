@@ -16,7 +16,7 @@ nlohmann::json Config::defaults_json() {
         {"dev", false},
         {"base_url", ""},
         {"providers", {
-            {"anthropic", {{"api_key", ""}}},
+            {"anthropic", {{"api_key", ""}, {"prompt_caching", true}}},
             {"openai", {{"api_key", ""}}},
             {"openrouter", {{"api_key", ""}}},
             {"ollama", {{"base_url", "http://localhost:11434"}}},
@@ -111,6 +111,8 @@ Config Config::load() {
                 entry.api_key = obj["api_key"].get<std::string>();
             if (obj.contains("base_url") && obj["base_url"].is_string())
                 entry.base_url = obj["base_url"].get<std::string>();
+            if (obj.contains("prompt_caching") && obj["prompt_caching"].is_boolean())
+                entry.prompt_caching = obj["prompt_caching"].get<bool>();
             cfg.providers[name] = std::move(entry);
         }
     }
@@ -202,6 +204,12 @@ std::string Config::base_url_for(const std::string& prov) const {
     auto it = providers.find(prov);
     if (it != providers.end()) return it->second.base_url;
     return {};
+}
+
+bool Config::prompt_caching_for(const std::string& prov) const {
+    auto it = providers.find(prov);
+    if (it != providers.end()) return it->second.prompt_caching;
+    return false;
 }
 
 nlohmann::json Config::channel_config(const std::string& name) const {

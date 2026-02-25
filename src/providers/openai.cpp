@@ -7,7 +7,8 @@
 #include <map>
 
 static ptrclaw::ProviderRegistrar reg_openai("openai",
-    [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url) {
+    [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url,
+       bool /* prompt_caching */) {
         return std::make_unique<ptrclaw::OpenAIProvider>(key, http, base_url);
     });
 

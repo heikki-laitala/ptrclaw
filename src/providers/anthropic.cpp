@@ -9,8 +9,10 @@
 #include <thread>
 
 static ptrclaw::ProviderRegistrar reg_anthropic("anthropic",
-    [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url) {
-        return std::make_unique<ptrclaw::AnthropicProvider>(key, http, base_url);
+    [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url,
+       bool prompt_caching) {
+        return std::make_unique<ptrclaw::AnthropicProvider>(key, http, base_url,
+                                                            prompt_caching);
     });
 
 using json = nlohmann::json;
@@ -18,9 +20,11 @@ using json = nlohmann::json;
 namespace ptrclaw {
 
 AnthropicProvider::AnthropicProvider(const std::string& api_key, HttpClient& http,
-                                     const std::string& base_url)
+                                     const std::string& base_url,
+                                     bool prompt_caching)
     : api_key_(api_key), http_(http),
-      base_url_(base_url.empty() ? "https://api.anthropic.com/v1" : base_url) {}
+      base_url_(base_url.empty() ? "https://api.anthropic.com/v1" : base_url),
+      prompt_caching_enabled_(prompt_caching) {}
 
 bool AnthropicProvider::is_retryable(long status_code) {
     return status_code == 429 || status_code == 408 || status_code == 409 ||
@@ -138,6 +142,9 @@ ChatResponse AnthropicProvider::chat(const std::vector<ChatMessage>& messages,
         {"anthropic-version", API_VERSION},
         {"content-type", "application/json"}
     };
+    if (prompt_caching_enabled_) {
+        headers.emplace_back("anthropic-beta", "prompt-caching-2024-07-31");
+    }
 
     for (uint32_t attempt = 0; attempt <= MAX_RETRIES; ++attempt) {
         auto response = http_.post(base_url_ + "/messages", body, headers);
@@ -202,6 +209,9 @@ ChatResponse AnthropicProvider::chat_stream(const std::vector<ChatMessage>& mess
         {"anthropic-version", API_VERSION},
         {"content-type", "application/json"}
     };
+    if (prompt_caching_enabled_) {
+        headers.emplace_back("anthropic-beta", "prompt-caching-2024-07-31");
+    }
 
     for (uint32_t attempt = 0; attempt <= MAX_RETRIES; ++attempt) {
         ChatResponse result;
@@ -355,6 +365,9 @@ std::string AnthropicProvider::chat_simple(const std::string& system_prompt,
         {"anthropic-version", API_VERSION},
         {"content-type", "application/json"}
     };
+    if (prompt_caching_enabled_) {
+        headers.emplace_back("anthropic-beta", "prompt-caching-2024-07-31");
+    }
 
     for (uint32_t attempt = 0; attempt <= MAX_RETRIES; ++attempt) {
         auto response = http_.post(base_url_ + "/messages", body, headers);

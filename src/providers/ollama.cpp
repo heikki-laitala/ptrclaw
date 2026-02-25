@@ -5,7 +5,8 @@
 #include <stdexcept>
 
 static ptrclaw::ProviderRegistrar reg_ollama("ollama",
-    [](const std::string&, ptrclaw::HttpClient& http, const std::string& base_url) {
+    [](const std::string&, ptrclaw::HttpClient& http, const std::string& base_url,
+       bool /* prompt_caching */) {
         std::string url = base_url.empty() ? "http://localhost:11434" : base_url;
         return std::make_unique<ptrclaw::OllamaProvider>(http, url);
     });

@@ -2,7 +2,8 @@
 #include "../plugin.hpp"
 
 static ptrclaw::ProviderRegistrar reg_openrouter("openrouter",
-    [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url) {
+    [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url,
+       bool /* prompt_caching */) {
         return std::make_unique<ptrclaw::OpenRouterProvider>(key, http, base_url);
     });
 

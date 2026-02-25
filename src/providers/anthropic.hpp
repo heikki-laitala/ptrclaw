@@ -9,7 +9,8 @@ namespace ptrclaw {
 class AnthropicProvider : public Provider {
 public:
     AnthropicProvider(const std::string& api_key, HttpClient& http,
-                      const std::string& base_url);
+                      const std::string& base_url,
+                      bool prompt_caching = false);
 
     ChatResponse chat(const std::vector<ChatMessage>& messages,
                       const std::vector<ToolSpec>& tools,
@@ -42,6 +43,7 @@ private:
     std::string api_key_;
     HttpClient& http_;
     std::string base_url_;
+    bool prompt_caching_enabled_ = false;
     static constexpr const char* API_VERSION = "2023-06-01";
     static constexpr uint32_t MAX_RETRIES = 2;
     static constexpr double INITIAL_DELAY_S = 0.5;
