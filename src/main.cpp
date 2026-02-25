@@ -351,10 +351,12 @@ int main(int argc, char* argv[]) try {
             config.prompt_caching_for("openai"), &updated);
         setup_repl_oauth_refresh(fresh.get(), config);
         agent.set_provider(std::move(fresh));
+        agent.set_model(ptrclaw::kDefaultOAuthModel);
 
         pending_oauth.reset();
 
-        std::cout << "OpenAI OAuth connected."
+        std::cout << "OpenAI OAuth connected. Model switched to "
+                  << ptrclaw::kDefaultOAuthModel << "."
                   << (persisted
                       ? " Saved to ~/.ptrclaw/config.json\n"
                       : " (warning: could not persist to config file)\n");

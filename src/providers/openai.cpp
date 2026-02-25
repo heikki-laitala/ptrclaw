@@ -176,10 +176,277 @@ std::vector<Header> OpenAIProvider::build_headers() {
     };
 }
 
+// ── Responses API detection ──────────────────────────────────────
+
+bool OpenAIProvider::use_responses_api(const std::string& model) const {
+    return model.find("codex") != std::string::npos;
+}
+
+// ── Responses API request building ──────────────────────────────
+
+json OpenAIProvider::build_responses_request(
+    const std::vector<ChatMessage>& messages,
+    const std::vector<ToolSpec>& tools,
+    const std::string& model, double temperature) const {
+
+    json request;
+    request["model"] = model;
+    request["temperature"] = temperature;
+
+    // Extract system prompt → "instructions"
+    std::string instructions;
+    json input = json::array();
+
+    for (const auto& msg : messages) {
+        if (msg.role == Role::System) {
+            if (!instructions.empty()) instructions += "\n";
+            instructions += msg.content;
+            continue;
+        }
+
+        if (msg.role == Role::Tool && msg.tool_call_id.has_value()) {
+            // Tool results → function_call_output items
+            json item;
+            item["type"] = "function_call_output";
+            item["call_id"] = msg.tool_call_id.value();
+            item["output"] = msg.content;
+            input.push_back(item);
+            continue;
+        }
+
+        if (msg.role == Role::Assistant && msg.name.has_value()) {
+            // Assistant with tool calls → emit text + function_call items
+            if (!msg.content.empty()) {
+                input.push_back({{"role", "assistant"}, {"content", msg.content}});
+            }
+            try {
+                auto tc_arr = json::parse(msg.name.value());
+                if (tc_arr.is_array()) {
+                    for (const auto& tc : tc_arr) {
+                        json item;
+                        item["type"] = "function_call";
+                        item["call_id"] = tc.value("id", "");
+                        item["name"] = tc.value("name", "");
+                        item["arguments"] = tc.value("arguments", "");
+                        input.push_back(item);
+                    }
+                }
+            } catch (const std::exception&) { // NOLINT(bugprone-empty-catch)
+            }
+            continue;
+        }
+
+        // User / plain assistant messages
+        json m;
+        m["role"] = role_to_string(msg.role);
+        m["content"] = msg.content;
+        input.push_back(m);
+    }
+
+    if (!instructions.empty()) {
+        request["instructions"] = instructions;
+    }
+    request["input"] = input;
+
+    if (!tools.empty()) {
+        json tools_arr = json::array();
+        for (const auto& tool : tools) {
+            json t;
+            t["type"] = "function";
+            t["name"] = tool.name;
+            t["description"] = tool.description;
+            t["parameters"] = json::parse(tool.parameters_json);
+            tools_arr.push_back(t);
+        }
+        request["tools"] = tools_arr;
+    }
+
+    return request;
+}
+
+// ── Responses API response parsing ──────────────────────────────
+
+ChatResponse OpenAIProvider::parse_responses_response(
+    const json& resp, const std::string& model) const {
+
+    ChatResponse result;
+    result.model = resp.value("model", model);
+
+    if (resp.contains("output") && resp["output"].is_array()) {
+        for (const auto& item : resp["output"]) {
+            std::string type = item.value("type", "");
+
+            if (type == "message") {
+                // Text output: {"type":"message","content":[{"type":"output_text","text":"..."}]}
+                if (item.contains("content") && item["content"].is_array()) {
+                    for (const auto& block : item["content"]) {
+                        if (block.value("type", "") == "output_text") {
+                            std::string text = block.value("text", "");
+                            if (!text.empty()) {
+                                if (result.content.has_value()) {
+                                    result.content.value() += text;
+                                } else {
+                                    result.content = text;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (type == "function_call") {
+                ToolCall tc;
+                tc.id = item.value("call_id", "");
+                tc.name = item.value("name", "");
+                tc.arguments = item.value("arguments", "");
+                result.tool_calls.push_back(std::move(tc));
+            }
+        }
+    }
+
+    // Usage: input_tokens / output_tokens
+    if (resp.contains("usage")) {
+        const auto& usage = resp["usage"];
+        result.usage.prompt_tokens = usage.value("input_tokens", 0u);
+        result.usage.completion_tokens = usage.value("output_tokens", 0u);
+        result.usage.total_tokens = result.usage.prompt_tokens + result.usage.completion_tokens;
+    }
+
+    return result;
+}
+
+// ── Responses API: non-streaming ────────────────────────────────
+
+ChatResponse OpenAIProvider::chat_responses(
+    const std::vector<ChatMessage>& messages,
+    const std::vector<ToolSpec>& tools,
+    const std::string& model, double temperature) {
+
+    json request = build_responses_request(messages, tools, model, temperature);
+
+    std::string url = base_url_ + "/responses";
+    auto headers = build_headers();
+
+    auto response = http_.post(url, request.dump(), headers);
+
+    if (response.status_code < 200 || response.status_code >= 300) {
+        throw std::runtime_error(provider_name() + " API error (HTTP " +
+            std::to_string(response.status_code) + "): " + response.body);
+    }
+
+    return parse_responses_response(json::parse(response.body), model);
+}
+
+// ── Responses API: streaming ────────────────────────────────────
+
+ChatResponse OpenAIProvider::chat_stream_responses(
+    const std::vector<ChatMessage>& messages,
+    const std::vector<ToolSpec>& tools,
+    const std::string& model, double temperature,
+    const TextDeltaCallback& on_delta) {
+
+    json request = build_responses_request(messages, tools, model, temperature);
+    request["stream"] = true;
+
+    std::string url = base_url_ + "/responses";
+    auto headers = build_headers();
+
+    ChatResponse result;
+    result.model = model;
+    std::string accumulated_text;
+
+    // Accumulate tool calls by output_index
+    std::map<int, ToolCall> tool_call_map;
+
+    SSEParser parser;
+
+    auto http_response = http_.stream_post_raw(
+        url, request.dump(), headers,
+        [&](const char* data, size_t len) -> bool {
+            std::string chunk(data, len);
+            parser.feed(chunk, [&](const SSEEvent& sse) -> bool {
+                if (sse.data.empty() || sse.data == "[DONE]") return true;
+
+                json payload;
+                try {
+                    payload = json::parse(sse.data);
+                } catch (...) {
+                    return true;
+                }
+
+                // Text delta
+                if (sse.event == "response.output_text.delta") {
+                    std::string text = payload.value("delta", "");
+                    if (!text.empty()) {
+                        accumulated_text += text;
+                        if (on_delta) {
+                            on_delta(text);
+                        }
+                    }
+                }
+                // New function_call item
+                else if (sse.event == "response.output_item.added") {
+                    if (payload.contains("item")) {
+                        const auto& item = payload["item"];
+                        if (item.value("type", "") == "function_call") {
+                            int idx = payload.value("output_index", 0);
+                            auto& entry = tool_call_map[idx];
+                            entry.id = item.value("call_id", "");
+                            entry.name = item.value("name", "");
+                        }
+                    }
+                }
+                // Function call argument chunks
+                else if (sse.event == "response.function_call_arguments.delta") {
+                    int idx = payload.value("output_index", 0);
+                    tool_call_map[idx].arguments += payload.value("delta", "");
+                }
+                // Final usage
+                else if (sse.event == "response.completed") {
+                    if (payload.contains("response") &&
+                        payload["response"].contains("usage")) {
+                        const auto& usage = payload["response"]["usage"];
+                        result.usage.prompt_tokens = usage.value("input_tokens", 0u);
+                        result.usage.completion_tokens = usage.value("output_tokens", 0u);
+                        result.usage.total_tokens =
+                            result.usage.prompt_tokens + result.usage.completion_tokens;
+                    }
+                    if (payload.contains("response") &&
+                        payload["response"].contains("model")) {
+                        result.model = payload["response"].value("model", model);
+                    }
+                }
+
+                return true;
+            });
+            return true;
+        });
+
+    if (http_response.status_code != 0 &&
+        (http_response.status_code < 200 || http_response.status_code >= 300)) {
+        throw std::runtime_error(provider_name() + " API error (HTTP " +
+            std::to_string(http_response.status_code) + ")");
+    }
+
+    if (!accumulated_text.empty()) {
+        result.content = accumulated_text;
+    }
+
+    for (auto& [idx, tc] : tool_call_map) {
+        result.tool_calls.push_back(std::move(tc));
+    }
+
+    return result;
+}
+
+// ── Chat Completions (original) ─────────────────────────────────
+
 ChatResponse OpenAIProvider::chat(const std::vector<ChatMessage>& messages,
                                    const std::vector<ToolSpec>& tools,
                                    const std::string& model,
                                    double temperature) {
+    if (use_responses_api(model)) {
+        return chat_responses(messages, tools, model, temperature);
+    }
+
     json request = build_request(messages, tools, model, temperature);
 
     std::string url = base_url_ + "/chat/completions";
@@ -238,6 +505,10 @@ ChatResponse OpenAIProvider::chat_stream(const std::vector<ChatMessage>& message
                                           const std::string& model,
                                           double temperature,
                                           const TextDeltaCallback& on_delta) {
+    if (use_responses_api(model)) {
+        return chat_stream_responses(messages, tools, model, temperature, on_delta);
+    }
+
     json request = build_request(messages, tools, model, temperature);
     request["stream"] = true;
     request["stream_options"] = {{"include_usage", true}};
@@ -346,6 +617,16 @@ std::string OpenAIProvider::chat_simple(const std::string& system_prompt,
                                          const std::string& message,
                                          const std::string& model,
                                          double temperature) {
+    if (use_responses_api(model)) {
+        std::vector<ChatMessage> msgs;
+        if (!system_prompt.empty()) {
+            msgs.push_back({Role::System, system_prompt, std::nullopt, std::nullopt});
+        }
+        msgs.push_back({Role::User, message, std::nullopt, std::nullopt});
+        auto resp = chat_responses(msgs, {}, model, temperature);
+        return resp.content.value_or("");
+    }
+
     json request;
     request["model"] = model;
     request["temperature"] = temperature;

@@ -241,10 +241,12 @@ bool SessionManager::handle_auth_command(
             config_.prompt_caching_for("openai"), &updated);
         setup_oauth_refresh_callback(fresh.get());
         agent.set_provider(std::move(fresh));
+        agent.set_model(kDefaultOAuthModel);
 
         clear_pending_oauth(ev.session_id);
 
-        send_reply(std::string("OpenAI OAuth connected ✅") +
+        send_reply(std::string("OpenAI OAuth connected ✅ Model switched to ") +
+                   kDefaultOAuthModel + "." +
                    (persisted
                     ? " Saved to ~/.ptrclaw/config.json"
                     : " (warning: could not persist to config file)"));

@@ -51,6 +51,27 @@ protected:
     virtual std::vector<Header> build_headers();
     std::string bearer_token();
     void refresh_oauth_if_needed();
+    bool use_responses_api(const std::string& model) const;
+
+private:
+    nlohmann::json build_responses_request(
+        const std::vector<ChatMessage>& messages,
+        const std::vector<ToolSpec>& tools,
+        const std::string& model, double temperature) const;
+
+    ChatResponse parse_responses_response(
+        const nlohmann::json& resp, const std::string& model) const;
+
+    ChatResponse chat_responses(
+        const std::vector<ChatMessage>& messages,
+        const std::vector<ToolSpec>& tools,
+        const std::string& model, double temperature);
+
+    ChatResponse chat_stream_responses(
+        const std::vector<ChatMessage>& messages,
+        const std::vector<ToolSpec>& tools,
+        const std::string& model, double temperature,
+        const TextDeltaCallback& on_delta);
 
     std::string api_key_;
     HttpClient& http_;
