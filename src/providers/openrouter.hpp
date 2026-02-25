@@ -12,7 +12,7 @@ public:
     std::string provider_name() const override { return "openrouter"; }
 
 protected:
-    std::vector<Header> build_headers() const override;
+    std::vector<Header> build_headers() override;
 };
 
 } // namespace ptrclaw

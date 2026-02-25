@@ -660,3 +660,95 @@ TEST_CASE("OpenAIProvider: empty choices returns no content", "[providers][opena
     REQUIRE_FALSE(result.content.has_value());
     REQUIRE_FALSE(result.has_tool_calls());
 }
+
+// ════════════════════════════════════════════════════════════════
+// OpenAI Provider: OAuth
+// ════════════════════════════════════════════════════════════════
+
+TEST_CASE("OpenAIProvider: uses Bearer token from OAuth when use_oauth is true", "[providers][openai][oauth]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-4",
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+    })"};
+
+    // Token expires far in the future so no refresh needed
+    OpenAIProvider provider("api-key", mock, "",
+                            true, "my-oauth-token", "my-refresh", 9999999999);
+
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5);
+
+    REQUIRE(find_header(mock.last_headers, "Authorization") == "Bearer my-oauth-token");
+}
+
+TEST_CASE("OpenAIProvider: refresh_oauth_if_needed refreshes expired token", "[providers][openai][oauth]") {
+    MockHttpClient mock;
+    // First call: refresh endpoint returns new token
+    mock.response_queue.push_back({200, R"({
+        "access_token": "new-access-token",
+        "refresh_token": "new-refresh-token",
+        "expires_in": 3600
+    })"});
+    // Second call: chat endpoint
+    mock.response_queue.push_back({200, R"({
+        "model": "gpt-4",
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+    })"});
+
+    // Token already expired (epoch 1)
+    OpenAIProvider provider("api-key", mock, "",
+                            true, "old-token", "my-refresh", 1,
+                            "test-client", "https://auth.test/token");
+
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5);
+
+    // The chat call should use the refreshed token
+    REQUIRE(find_header(mock.last_headers, "Authorization") == "Bearer new-access-token");
+    REQUIRE(mock.call_count == 2);
+}
+
+TEST_CASE("OpenAIProvider: throws when token expired and no refresh token", "[providers][openai][oauth]") {
+    MockHttpClient mock;
+
+    // Token expired, no refresh token
+    OpenAIProvider provider("api-key", mock, "",
+                            true, "expired-token", "", 1);
+
+    REQUIRE_THROWS_AS(
+        provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5),
+        std::runtime_error);
+}
+
+TEST_CASE("OpenAIProvider: on_token_refresh callback fires after refresh", "[providers][openai][oauth]") {
+    MockHttpClient mock;
+    mock.response_queue.push_back({200, R"({
+        "access_token": "refreshed-token",
+        "refresh_token": "rotated-refresh",
+        "expires_in": 7200
+    })"});
+    mock.response_queue.push_back({200, R"({
+        "model": "gpt-4",
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+    })"});
+
+    OpenAIProvider provider("api-key", mock, "",
+                            true, "old-token", "old-refresh", 1,
+                            "client-id", "https://auth.test/token");
+
+    std::string cb_access, cb_refresh;
+    uint64_t cb_expires = 0;
+    provider.set_on_token_refresh([&](const std::string& at, const std::string& rt, uint64_t ea) {
+        cb_access = at;
+        cb_refresh = rt;
+        cb_expires = ea;
+    });
+
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5);
+
+    REQUIRE(cb_access == "refreshed-token");
+    REQUIRE(cb_refresh == "rotated-refresh");
+    REQUIRE(cb_expires > 0);
+}

@@ -2,6 +2,7 @@
 #include "../provider.hpp"
 #include "../http.hpp"
 #include <nlohmann/json.hpp>
+#include <functional>
 #include <string>
 
 namespace ptrclaw {
@@ -37,12 +38,17 @@ public:
     bool supports_streaming() const override { return true; }
     std::string provider_name() const override { return "openai"; }
 
+    using TokenRefreshCallback = std::function<void(const std::string& access_token,
+                                                     const std::string& refresh_token,
+                                                     uint64_t expires_at)>;
+    void set_on_token_refresh(TokenRefreshCallback cb) { on_token_refresh_ = std::move(cb); }
+
 protected:
     nlohmann::json build_request(const std::vector<ChatMessage>& messages,
                                  const std::vector<ToolSpec>& tools,
                                  const std::string& model,
                                  double temperature) const;
-    virtual std::vector<Header> build_headers() const;
+    virtual std::vector<Header> build_headers();
     std::string bearer_token();
     void refresh_oauth_if_needed();
 
@@ -55,6 +61,7 @@ protected:
     uint64_t oauth_expires_at_ = 0;
     std::string oauth_client_id_;
     std::string oauth_token_url_;
+    TokenRefreshCallback on_token_refresh_;
 };
 
 } // namespace ptrclaw
