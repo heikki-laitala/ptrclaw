@@ -1,6 +1,7 @@
 #pragma once
 #include "config.hpp"
 #include "http.hpp"
+#include <memory>
 #include <string>
 #include <vector>
 #include <utility>
@@ -8,6 +9,7 @@
 namespace ptrclaw {
 
 struct PendingOAuth;
+class Provider;
 
 // ── Constants ────────────────────────────────────────────────────
 constexpr const char* kDefaultOAuthClientId = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -49,5 +51,18 @@ std::string exchange_oauth_token(const std::string& code,
 
 // ── Config persistence ───────────────────────────────────────────
 bool persist_openai_oauth(const ProviderEntry& entry);
+
+// ── Apply OAuth result (shared between REPL + channel) ──────────
+struct OAuthApplyResult {
+    bool success = false;
+    bool persisted = false;
+    std::string error;
+    std::unique_ptr<Provider> provider;
+};
+
+OAuthApplyResult apply_oauth_result(const std::string& code,
+                                     const PendingOAuth& pending,
+                                     Config& config,
+                                     HttpClient& http);
 
 } // namespace ptrclaw

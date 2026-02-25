@@ -216,38 +216,17 @@ bool SessionManager::handle_auth_command(
     Agent& agent,
     const std::function<void(const std::string&)>& send_reply) {
 
-    auto apply_oauth_result = [&](const PendingOAuth& pending,
-                                  const std::string& code) {
-        auto openai_it = config_.providers.find("openai");
-        if (openai_it == config_.providers.end()) {
-            send_reply("OpenAI provider config missing.");
-            return;
-        }
-
-        ProviderEntry updated;
-        std::string err = exchange_oauth_token(
-            code, pending, openai_it->second, http_, updated);
-        if (!err.empty()) {
-            send_reply(err);
-            return;
-        }
-
-        config_.providers["openai"] = updated;
-        bool persisted = persist_openai_oauth(updated);
-
-        auto fresh = create_provider(
-            "openai", config_.api_key_for("openai"), http_,
-            config_.base_url_for("openai"),
-            config_.prompt_caching_for("openai"), &updated);
-        setup_oauth_refresh_callback(fresh.get());
-        agent.set_provider(std::move(fresh));
+    auto finish_oauth = [&](const PendingOAuth& pending,
+                             const std::string& code) {
+        auto r = apply_oauth_result(code, pending, config_, http_);
+        if (!r.success) { send_reply(r.error); return; }
+        setup_oauth_refresh_callback(r.provider.get());
+        agent.set_provider(std::move(r.provider));
         agent.set_model(kDefaultOAuthModel);
-
         clear_pending_oauth(ev.session_id);
-
         send_reply(std::string("OpenAI OAuth connected ✅ Model switched to ") +
                    kDefaultOAuthModel + "." +
-                   (persisted
+                   (r.persisted
                     ? " Saved to ~/.ptrclaw/config.json"
                     : " (warning: could not persist to config file)"));
     };
@@ -334,7 +313,7 @@ bool SessionManager::handle_auth_command(
                 return true;
             }
 
-            apply_oauth_result(*pending, parsed.code);
+            finish_oauth(*pending, parsed.code);
             return true;
         }
 
@@ -364,7 +343,7 @@ bool SessionManager::handle_auth_command(
                 return true;
             }
 
-            apply_oauth_result(*pending_oauth, parsed.code);
+            finish_oauth(*pending_oauth, parsed.code);
             return true;
         }
     }

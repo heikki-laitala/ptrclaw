@@ -326,38 +326,17 @@ int main(int argc, char* argv[]) try {
 
     std::optional<ptrclaw::PendingOAuth> pending_oauth;
 
-    auto apply_oauth_result = [&](const ptrclaw::PendingOAuth& pending,
-                                  const std::string& code) {
-        auto openai_it = config.providers.find("openai");
-        if (openai_it == config.providers.end()) {
-            std::cout << "OpenAI provider config missing.\n";
-            return;
-        }
-
-        ptrclaw::ProviderEntry updated;
-        std::string err = ptrclaw::exchange_oauth_token(
-            code, pending, openai_it->second, http_client, updated);
-        if (!err.empty()) {
-            std::cout << err << "\n";
-            return;
-        }
-
-        config.providers["openai"] = updated;
-        bool persisted = ptrclaw::persist_openai_oauth(updated);
-
-        auto fresh = ptrclaw::create_provider(
-            "openai", config.api_key_for("openai"), http_client,
-            config.base_url_for("openai"),
-            config.prompt_caching_for("openai"), &updated);
-        setup_repl_oauth_refresh(fresh.get(), config);
-        agent.set_provider(std::move(fresh));
+    auto finish_oauth = [&](const ptrclaw::PendingOAuth& pending,
+                             const std::string& code) {
+        auto r = ptrclaw::apply_oauth_result(code, pending, config, http_client);
+        if (!r.success) { std::cout << r.error << "\n"; return; }
+        setup_repl_oauth_refresh(r.provider.get(), config);
+        agent.set_provider(std::move(r.provider));
         agent.set_model(ptrclaw::kDefaultOAuthModel);
-
         pending_oauth.reset();
-
         std::cout << "OpenAI OAuth connected. Model switched to "
                   << ptrclaw::kDefaultOAuthModel << "."
-                  << (persisted
+                  << (r.persisted
                       ? " Saved to ~/.ptrclaw/config.json\n"
                       : " (warning: could not persist to config file)\n");
     };
@@ -390,7 +369,7 @@ int main(int argc, char* argv[]) try {
                 } else if (!parsed.state.empty() && parsed.state != pending_oauth->state) {
                     std::cout << "State mismatch. Please restart with /auth openai start\n";
                 } else {
-                    apply_oauth_result(*pending_oauth, parsed.code);
+                    finish_oauth(*pending_oauth, parsed.code);
                 }
                 continue;
             }
@@ -529,7 +508,7 @@ int main(int argc, char* argv[]) try {
                     } else if (!parsed.state.empty() && parsed.state != pending_oauth->state) {
                         std::cout << "State mismatch. Please restart with /auth openai start\n";
                     } else {
-                        apply_oauth_result(*pending_oauth, parsed.code);
+                        finish_oauth(*pending_oauth, parsed.code);
                     }
                 }
             } else if (line == "/auth") {

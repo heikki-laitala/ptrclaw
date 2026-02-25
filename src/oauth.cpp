@@ -1,4 +1,5 @@
 #include "oauth.hpp"
+#include "provider.hpp"
 #include "session.hpp"
 #include "util.hpp"
 
@@ -223,6 +224,32 @@ bool persist_openai_oauth(const ProviderEntry& entry) {
     o["oauth_token_url"] = entry.oauth_token_url;
 
     return atomic_write_file(path, j.dump(4) + "\n");
+}
+
+// ── Apply OAuth result (shared core) ─────────────────────────────
+
+OAuthApplyResult apply_oauth_result(const std::string& code,
+                                     const PendingOAuth& pending,
+                                     Config& config,
+                                     HttpClient& http) {
+    OAuthApplyResult result;
+    auto openai_it = config.providers.find("openai");
+    if (openai_it == config.providers.end()) {
+        result.error = "OpenAI provider config missing.";
+        return result;
+    }
+
+    ProviderEntry updated;
+    result.error = exchange_oauth_token(code, pending, openai_it->second, http, updated);
+    if (!result.error.empty()) return result;
+
+    config.providers["openai"] = updated;
+    result.persisted = persist_openai_oauth(updated);
+    result.provider = create_provider("openai", config.api_key_for("openai"), http,
+                                       config.base_url_for("openai"),
+                                       config.prompt_caching_for("openai"), &updated);
+    result.success = true;
+    return result;
 }
 
 } // namespace ptrclaw
