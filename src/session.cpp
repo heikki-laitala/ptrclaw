@@ -169,7 +169,7 @@ void SessionManager::subscribe_events() {
             // Handle /new command
             if (ev.message.content == "/new") {
                 agent.clear_history();
-                send_reply("Conversation cleared. What would you like to discuss?");
+                send_reply("Conversation history cleared. What would you like to discuss?");
                 return;
             }
 
