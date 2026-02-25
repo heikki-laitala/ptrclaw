@@ -752,3 +752,166 @@ TEST_CASE("OpenAIProvider: on_token_refresh callback fires after refresh", "[pro
     REQUIRE(cb_refresh == "rotated-refresh");
     REQUIRE(cb_expires > 0);
 }
+
+// ════════════════════════════════════════════════════════════════
+// OpenAI Provider: Responses API (codex models)
+// ════════════════════════════════════════════════════════════════
+
+TEST_CASE("OpenAIProvider: codex model hits /responses endpoint", "[providers][openai][responses]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-5-codex-mini",
+        "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": "Hello from codex!"}]}
+        ],
+        "usage": {"input_tokens": 8, "output_tokens": 4}
+    })"};
+
+    OpenAIProvider provider("test-key", mock, "");
+
+    std::vector<ChatMessage> messages = {
+        {Role::System, "Be helpful", std::nullopt, std::nullopt},
+        {Role::User, "Hi", std::nullopt, std::nullopt}
+    };
+    auto result = provider.chat(messages, {}, "gpt-5-codex-mini", 0.7);
+
+    // Verify URL is /responses, not /chat/completions
+    REQUIRE(mock.last_url == "https://api.openai.com/v1/responses");
+
+    // Verify request format uses "input" + "instructions" (not "messages")
+    auto body = json::parse(mock.last_body);
+    REQUIRE(body.contains("input"));
+    REQUIRE(body.contains("instructions"));
+    REQUIRE_FALSE(body.contains("messages"));
+    REQUIRE(body["instructions"] == "Be helpful");
+    REQUIRE(body["model"] == "gpt-5-codex-mini");
+
+    // Input should have only the user message (system extracted to instructions)
+    REQUIRE(body["input"].size() == 1);
+    REQUIRE(body["input"][0]["role"] == "user");
+
+    // Verify response parsing
+    REQUIRE(result.content.value_or("") == "Hello from codex!");
+    REQUIRE(result.model == "gpt-5-codex-mini");
+    REQUIRE(result.usage.prompt_tokens == 8);
+    REQUIRE(result.usage.completion_tokens == 4);
+    REQUIRE(result.usage.total_tokens == 12);
+}
+
+TEST_CASE("OpenAIProvider: non-codex model stays on Chat Completions", "[providers][openai][responses]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-4",
+        "choices": [{"message": {"content": "Hello!"}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+    })"};
+
+    OpenAIProvider provider("key", mock, "");
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5);
+
+    REQUIRE(mock.last_url == "https://api.openai.com/v1/chat/completions");
+}
+
+TEST_CASE("OpenAIProvider: Responses API parses tool calls", "[providers][openai][responses]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-5-codex-mini",
+        "output": [
+            {"type": "function_call", "call_id": "call_123", "name": "file_read", "arguments": "{\"path\":\"/tmp/test.txt\"}"}
+        ],
+        "usage": {"input_tokens": 12, "output_tokens": 8}
+    })"};
+
+    OpenAIProvider provider("key", mock, "");
+    auto result = provider.chat(
+        {{Role::User, "Read file", std::nullopt, std::nullopt}}, {}, "gpt-5-codex-mini", 0.5);
+
+    REQUIRE(result.has_tool_calls());
+    REQUIRE(result.tool_calls.size() == 1);
+    REQUIRE(result.tool_calls[0].id == "call_123");
+    REQUIRE(result.tool_calls[0].name == "file_read");
+    auto args = json::parse(result.tool_calls[0].arguments);
+    REQUIRE(args["path"] == "/tmp/test.txt");
+}
+
+TEST_CASE("OpenAIProvider: Responses API tool results sent as function_call_output", "[providers][openai][responses]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-5-codex",
+        "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": "Got it."}]}
+        ],
+        "usage": {"input_tokens": 20, "output_tokens": 3}
+    })"};
+
+    OpenAIProvider provider("key", mock, "");
+
+    std::vector<ChatMessage> messages = {
+        {Role::User, "Read file", std::nullopt, std::nullopt},
+        {Role::Tool, "file contents here", std::nullopt, std::string("call_123")}
+    };
+    provider.chat(messages, {}, "gpt-5-codex", 0.5);
+
+    auto body = json::parse(mock.last_body);
+    // Should have function_call_output item in input
+    bool found_output = false;
+    for (const auto& item : body["input"]) {
+        if (item.value("type", "") == "function_call_output") {
+            found_output = true;
+            REQUIRE(item["call_id"] == "call_123");
+            REQUIRE(item["output"] == "file contents here");
+        }
+    }
+    REQUIRE(found_output);
+}
+
+TEST_CASE("OpenAIProvider: Responses API tools use flat format", "[providers][openai][responses]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-5-codex-mini",
+        "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": "ok"}]}
+        ],
+        "usage": {"input_tokens": 5, "output_tokens": 2}
+    })"};
+
+    OpenAIProvider provider("key", mock, "");
+
+    std::vector<ToolSpec> tools = {
+        {"file_read", "Read a file", R"({"type":"object","properties":{"path":{"type":"string"}}})"}
+    };
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, tools, "gpt-5-codex-mini", 0.5);
+
+    auto body = json::parse(mock.last_body);
+    REQUIRE(body.contains("tools"));
+    REQUIRE(body["tools"].size() == 1);
+    // Flat format: name at top level (not nested under "function")
+    REQUIRE(body["tools"][0]["type"] == "function");
+    REQUIRE(body["tools"][0]["name"] == "file_read");
+    REQUIRE(body["tools"][0]["description"] == "Read a file");
+    REQUIRE(body["tools"][0]["parameters"]["type"] == "object");
+    REQUIRE_FALSE(body["tools"][0].contains("function"));
+}
+
+TEST_CASE("OpenAIProvider: chat_simple with codex model uses Responses API", "[providers][openai][responses]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-5-codex-mini",
+        "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": "42"}]}
+        ],
+        "usage": {"input_tokens": 5, "output_tokens": 1}
+    })"};
+
+    OpenAIProvider provider("key", mock, "");
+    auto result = provider.chat_simple("Be brief", "What is 6*7?", "gpt-5-codex-mini", 0.5);
+    REQUIRE(result == "42");
+
+    // Should hit /responses
+    REQUIRE(mock.last_url == "https://api.openai.com/v1/responses");
+
+    // System prompt → instructions
+    auto body = json::parse(mock.last_body);
+    REQUIRE(body["instructions"] == "Be brief");
+    REQUIRE_FALSE(body.contains("messages"));
+}
