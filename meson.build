@@ -174,6 +174,9 @@ endif
 if opt_telegram
   optional_test_sources += files('tests/test_telegram.cpp')
 endif
+if opt_telegram and opt_memory
+  optional_test_sources += files('tests/test_integration_telegram_memory.cpp')
+endif
 if opt_whatsapp
   optional_test_sources += files(
     'tests/test_whatsapp.cpp',
