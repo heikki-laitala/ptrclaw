@@ -10,7 +10,7 @@
 
 static ptrclaw::ProviderRegistrar reg_anthropic("anthropic",
     [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url,
-       bool prompt_caching) {
+       bool prompt_caching, const ptrclaw::ProviderEntry&) {
         return std::make_unique<ptrclaw::AnthropicProvider>(key, http, base_url,
                                                             prompt_caching);
     });

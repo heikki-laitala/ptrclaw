@@ -10,6 +10,14 @@ struct ProviderEntry {
     std::string api_key;
     std::string base_url;
     bool prompt_caching = false; // Anthropic-only, provider-side prompt caching
+
+    // OpenAI subscription OAuth (Codex) support
+    bool use_oauth = false;
+    std::string oauth_access_token;
+    std::string oauth_refresh_token;
+    uint64_t oauth_expires_at = 0; // epoch seconds
+    std::string oauth_client_id;
+    std::string oauth_token_url;
 };
 
 struct AgentConfig {

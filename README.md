@@ -142,6 +142,12 @@ Environment variables override the config file:
 | --- | --- |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `OPENAI_API_KEY` | OpenAI API key |
+| `OPENAI_USE_OAUTH` | Use OpenAI subscription OAuth token path (`true`/`1`) |
+| `OPENAI_OAUTH_ACCESS_TOKEN` | OpenAI OAuth access token |
+| `OPENAI_OAUTH_REFRESH_TOKEN` | OpenAI OAuth refresh token |
+| `OPENAI_OAUTH_EXPIRES_AT` | Access token expiry (epoch seconds) |
+| `OPENAI_OAUTH_CLIENT_ID` | OAuth client id (default `openai-codex`) |
+| `OPENAI_OAUTH_TOKEN_URL` | OAuth token endpoint (default `https://auth.openai.com/oauth/token`) |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 | `OLLAMA_BASE_URL` | Ollama server URL (default `http://localhost:11434`) |
 | `COMPATIBLE_BASE_URL` | Base URL for OpenAI-compatible endpoint |
@@ -153,10 +159,29 @@ Environment variables override the config file:
 | `WHATSAPP_WEBHOOK_LISTEN` | Bind address for built-in webhook server (e.g. `127.0.0.1:8080`) |
 | `WHATSAPP_WEBHOOK_SECRET` | Shared secret for proxy→local trust (`X-Webhook-Secret` header) |
 
+OpenAI subscription OAuth example:
+
+```json
+{
+  "provider": "openai",
+  "model": "gpt-5",
+  "providers": {
+    "openai": {
+      "use_oauth": true,
+      "oauth_access_token": "<access-token>",
+      "oauth_refresh_token": "<refresh-token>",
+      "oauth_expires_at": 1767225600,
+      "oauth_client_id": "openai-codex"
+    }
+  }
+}
+```
+
 Notes:
 - There is currently no `COMPATIBLE_API_KEY` env var; set `providers.compatible.api_key` in `~/.ptrclaw/config.json` when using the `compatible` provider.
 - `BASE_URL` overrides provider-specific base URLs for whichever provider is active.
 - `providers.anthropic.prompt_caching` controls Anthropic provider-side prompt caching (default: `true`). Set it to `false` to disable.
+- OpenAI OAuth tokens are refreshed in-memory when expired (if `oauth_refresh_token` is configured).
 
 ### How to get a Telegram bot token
 
