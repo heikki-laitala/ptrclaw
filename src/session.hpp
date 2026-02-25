@@ -19,6 +19,8 @@ struct Session {
     uint64_t last_active = 0;
 };
 
+constexpr uint64_t kPendingOAuthExpirySeconds = 600; // 10 minutes
+
 struct PendingOAuth {
     std::string provider;
     std::string state;
@@ -64,6 +66,7 @@ private:
     std::optional<PendingOAuth> get_pending_oauth(const std::string& session_id);
     void set_pending_oauth(const std::string& session_id, PendingOAuth pending);
     void clear_pending_oauth(const std::string& session_id);
+    void setup_oauth_refresh_callback(Provider* provider);
 };
 
 } // namespace ptrclaw

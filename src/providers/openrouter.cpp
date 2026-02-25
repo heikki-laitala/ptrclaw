@@ -14,7 +14,7 @@ OpenRouterProvider::OpenRouterProvider(const std::string& api_key, HttpClient& h
     : OpenAIProvider(api_key, http,
                      base_url.empty() ? "https://openrouter.ai/api/v1" : base_url) {}
 
-std::vector<Header> OpenRouterProvider::build_headers() const {
+std::vector<Header> OpenRouterProvider::build_headers() {
     auto headers = OpenAIProvider::build_headers();
     headers.emplace_back("HTTP-Referer", "https://ptrclaw.dev");
     headers.emplace_back("X-Title", "PtrClaw");

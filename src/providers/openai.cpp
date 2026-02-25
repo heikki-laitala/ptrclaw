@@ -162,11 +162,14 @@ void OpenAIProvider::refresh_oauth_if_needed() {
     if (!new_refresh.empty()) {
         oauth_refresh_token_ = new_refresh;
     }
+
+    if (on_token_refresh_) {
+        on_token_refresh_(oauth_access_token_, oauth_refresh_token_, oauth_expires_at_);
+    }
 }
 
-std::vector<Header> OpenAIProvider::build_headers() const {
-    auto* self = const_cast<OpenAIProvider*>(this);
-    std::string token = self->bearer_token();
+std::vector<Header> OpenAIProvider::build_headers() {
+    std::string token = bearer_token();
     return {
         {"Authorization", "Bearer " + token},
         {"Content-Type", "application/json"}
