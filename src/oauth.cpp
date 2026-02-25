@@ -130,7 +130,8 @@ std::string build_authorize_url(const std::string& client_id,
         "&code_challenge=" + oauth_url_encode(code_challenge) +
         "&code_challenge_method=S256"
         "&id_token_add_organizations=true"
-        "&codex_cli_simplified_flow=true";
+        "&codex_cli_simplified_flow=true"
+        "&originator=" + oauth_url_encode(kDefaultOriginator);
 }
 
 // ── OAuth input parsing ──────────────────────────────────────────

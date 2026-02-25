@@ -121,6 +121,7 @@ TEST_CASE("build_authorize_url: contains all required params", "[oauth]") {
     REQUIRE(url.find("state=test-state") != std::string::npos);
     REQUIRE(url.find("id_token_add_organizations=true") != std::string::npos);
     REQUIRE(url.find("codex_cli_simplified_flow=true") != std::string::npos);
+    REQUIRE(url.find("originator=codex_cli_rs") != std::string::npos);
 }
 
 TEST_CASE("build_authorize_url: starts with authorize base URL", "[oauth]") {
