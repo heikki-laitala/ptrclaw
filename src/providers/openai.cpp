@@ -182,6 +182,14 @@ bool OpenAIProvider::use_responses_api(const std::string& model) const {
     return model.find("codex") != std::string::npos;
 }
 
+std::string OpenAIProvider::responses_url(const std::string& model) const {
+    // OAuth codex models use the ChatGPT backend, not api.openai.com
+    if (use_oauth_ && model.find("codex") != std::string::npos) {
+        return "https://chatgpt.com/backend-api/codex/responses";
+    }
+    return base_url_ + "/responses";
+}
+
 // ── Responses API request building ──────────────────────────────
 
 json OpenAIProvider::build_responses_request(
@@ -322,7 +330,7 @@ ChatResponse OpenAIProvider::chat_responses(
 
     json request = build_responses_request(messages, tools, model, temperature);
 
-    std::string url = base_url_ + "/responses";
+    std::string url = responses_url(model);
     auto headers = build_headers();
 
     auto response = http_.post(url, request.dump(), headers);
@@ -346,7 +354,7 @@ ChatResponse OpenAIProvider::chat_stream_responses(
     json request = build_responses_request(messages, tools, model, temperature);
     request["stream"] = true;
 
-    std::string url = base_url_ + "/responses";
+    std::string url = responses_url(model);
     auto headers = build_headers();
 
     ChatResponse result;
