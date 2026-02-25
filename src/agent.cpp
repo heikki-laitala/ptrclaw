@@ -128,7 +128,7 @@ std::string Agent::process(const std::string& user_message) {
 
         ChatResponse response;
         try {
-            if (provider_->supports_streaming()) {
+            if (provider_->supports_streaming() && !config_.agent.disable_streaming) {
                 response = provider_->chat_stream(
                     history_, tool_specs, model_, config_.temperature,
                     [this, &stream_started](const std::string& delta) -> bool {

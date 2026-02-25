@@ -25,7 +25,8 @@ nlohmann::json Config::defaults_json() {
         {"agent", {
             {"max_tool_iterations", 10},
             {"max_history_messages", 50},
-            {"token_limit", 128000}
+            {"token_limit", 128000},
+            {"disable_streaming", false}
         }},
         {"channels", {
             {"telegram", {{"bot_token", ""}, {"allow_from", nlohmann::json::array()}, {"reply_in_private", true}, {"proxy", ""}}},
@@ -125,6 +126,8 @@ Config Config::load() {
             cfg.agent.max_history_messages = a["max_history_messages"].get<uint32_t>();
         if (a.contains("token_limit") && a["token_limit"].is_number_unsigned())
             cfg.agent.token_limit = a["token_limit"].get<uint32_t>();
+        if (a.contains("disable_streaming") && a["disable_streaming"].is_boolean())
+            cfg.agent.disable_streaming = a["disable_streaming"].get<bool>();
     }
 
     // Channel configurations — store raw JSON per channel name
