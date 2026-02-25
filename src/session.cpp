@@ -338,40 +338,6 @@ void SessionManager::subscribe_events() {
                     "The user wants to start hatching. Begin the interview."));
             };
 
-            auto apply_oauth_result = [&](const PendingOAuth& pending,
-                                          const std::string& code) {
-                auto openai_it = config_.providers.find("openai");
-                if (openai_it == config_.providers.end()) {
-                    send_reply("OpenAI provider config missing.");
-                    return;
-                }
-
-                ProviderEntry updated;
-                std::string err = exchange_oauth_token(
-                    code, pending, openai_it->second, http_, updated);
-                if (!err.empty()) {
-                    send_reply(err);
-                    return;
-                }
-
-                config_.providers["openai"] = updated;
-                bool persisted = persist_openai_oauth(updated);
-
-                auto fresh = create_provider(
-                    "openai", config_.api_key_for("openai"), http_,
-                    config_.base_url_for("openai"),
-                    config_.prompt_caching_for("openai"), &updated);
-                setup_oauth_refresh_callback(fresh.get());
-                agent.set_provider(std::move(fresh));
-
-                clear_pending_oauth(ev.session_id);
-
-                send_reply(std::string("OpenAI OAuth connected ✅") +
-                           (persisted
-                            ? " Saved to ~/.ptrclaw/config.json"
-                            : " (warning: could not persist to config file)"));
-            };
-
             // Handle /start command
             if (ev.message.content == "/start") {
                 if (agent.memory() && !agent.is_hatched()) {
@@ -414,130 +380,10 @@ void SessionManager::subscribe_events() {
                 return;
             }
 
-            // Handle auth commands
-            if (ev.message.content.rfind("/auth", 0) == 0) {
-                auto parts = split(ev.message.content, ' ');
-
-                if (parts.size() >= 2 && parts[1] == "status") {
-                    auto it = config_.providers.find("openai");
-                    if (it == config_.providers.end()) {
-                        send_reply("No OpenAI provider config found.");
-                        return;
-                    }
-                    const auto& openai = it->second;
-                    std::string status = "OpenAI auth: ";
-                    if (openai.use_oauth) {
-                        status += "OAuth enabled";
-                        if (!openai.oauth_access_token.empty()) {
-                            status += " (token present)";
-                        }
-                        if (openai.oauth_expires_at > 0) {
-                            status += "\nExpires at (epoch): " + std::to_string(openai.oauth_expires_at);
-                        }
-                    } else if (!openai.api_key.empty()) {
-                        status += "API key";
-                    } else {
-                        status += "not configured";
-                    }
-                    send_reply(status);
-                    return;
-                }
-
-                if (parts.size() >= 3 && parts[1] == "openai" && parts[2] == "start") {
-                    auto openai_it = config_.providers.find("openai");
-                    if (openai_it == config_.providers.end()) {
-                        send_reply("OpenAI provider config missing.");
-                        return;
-                    }
-
-                    std::string state = generate_id();
-                    std::string verifier = make_code_verifier();
-                    std::string challenge = make_code_challenge_s256(verifier);
-                    std::string redirect_uri = "http://127.0.0.1:1455/auth/callback";
-                    std::string client_id = openai_it->second.oauth_client_id.empty()
-                        ? "openai-codex"
-                        : openai_it->second.oauth_client_id;
-
-                    PendingOAuth pending;
-                    pending.provider = "openai";
-                    pending.state = state;
-                    pending.code_verifier = verifier;
-                    pending.redirect_uri = redirect_uri;
-                    pending.created_at = epoch_seconds();
-                    set_pending_oauth(ev.session_id, std::move(pending));
-
-                    std::string scope = "openid profile email offline_access";
-                    std::string url =
-                        "https://auth.openai.com/oauth/authorize"
-                        "?response_type=code"
-                        "&client_id=" + url_encode(client_id) +
-                        "&redirect_uri=" + url_encode(redirect_uri) +
-                        "&scope=" + url_encode(scope) +
-                        "&state=" + url_encode(state) +
-                        "&code_challenge=" + url_encode(challenge) +
-                        "&code_challenge_method=S256";
-
-                    send_reply(
-                        "Open this URL to authorize OpenAI:\n" + url +
-                        "\n\nThen paste the full callback URL with:\n"
-                        "/auth openai finish <callback_url>\n"
-                        "(or paste just the code)");
-                    return;
-                }
-
-                if (parts.size() >= 4 && parts[1] == "openai" && parts[2] == "finish") {
-                    auto pending = get_pending_oauth(ev.session_id);
-                    if (!pending || pending->provider != "openai") {
-                        send_reply("No pending OpenAI auth flow. Start with: /auth openai start");
-                        return;
-                    }
-
-                    std::string input = ev.message.content.substr(
-                        ev.message.content.find("finish") + 7);
-                    auto parsed = parse_oauth_input(input);
-
-                    if (parsed.code.empty()) {
-                        send_reply("Missing code. Paste callback URL or auth code.");
-                        return;
-                    }
-                    if (!parsed.state.empty() && parsed.state != pending->state) {
-                        send_reply("State mismatch. Please restart with /auth openai start");
-                        return;
-                    }
-
-                    apply_oauth_result(*pending, parsed.code);
-                    return;
-                }
-
-                send_reply("Auth commands:\n/auth status\n/auth openai start\n/auth openai finish <callback_url_or_code>");
-                return;
-            }
-
-            // If OpenAI OAuth is pending, accept raw callback URL/code directly.
-            auto pending_oauth = get_pending_oauth(ev.session_id);
-            if (pending_oauth && pending_oauth->provider == "openai") {
-                std::string raw = trim(ev.message.content);
-                bool looks_like_oauth_reply =
-                    (!raw.empty() &&
-                     (raw.find("code=") != std::string::npos ||
-                      raw.find("auth/callback") != std::string::npos ||
-                      raw.find("127.0.0.1:1455") != std::string::npos));
-
-                if (looks_like_oauth_reply && raw.rfind("/auth", 0) != 0) {
-                    auto parsed = parse_oauth_input(raw);
-
-                    if (parsed.code.empty()) {
-                        send_reply("Missing code. Paste callback URL or auth code.");
-                        return;
-                    }
-                    if (!parsed.state.empty() && parsed.state != pending_oauth->state) {
-                        send_reply("State mismatch. Please restart with /auth openai start");
-                        return;
-                    }
-
-                    apply_oauth_result(*pending_oauth, parsed.code);
-                    return;
-                }
+            // Handle auth commands + raw OAuth paste
+            if (ev.message.content.rfind("/auth", 0) == 0 ||
+                get_pending_oauth(ev.session_id).has_value()) {
+                if (handle_auth_command(ev, agent, send_reply)) return;
             }
 
             // Auto-hatch: if memory exists but no soul, enter hatching
@@ -548,6 +394,174 @@ void SessionManager::subscribe_events() {
 
             send_reply(agent.process(ev.message.content));
         });
+}
+
+bool SessionManager::handle_auth_command(
+    const MessageReceivedEvent& ev,
+    Agent& agent,
+    const std::function<void(const std::string&)>& send_reply) {
+
+    auto apply_oauth_result = [&](const PendingOAuth& pending,
+                                  const std::string& code) {
+        auto openai_it = config_.providers.find("openai");
+        if (openai_it == config_.providers.end()) {
+            send_reply("OpenAI provider config missing.");
+            return;
+        }
+
+        ProviderEntry updated;
+        std::string err = exchange_oauth_token(
+            code, pending, openai_it->second, http_, updated);
+        if (!err.empty()) {
+            send_reply(err);
+            return;
+        }
+
+        config_.providers["openai"] = updated;
+        bool persisted = persist_openai_oauth(updated);
+
+        auto fresh = create_provider(
+            "openai", config_.api_key_for("openai"), http_,
+            config_.base_url_for("openai"),
+            config_.prompt_caching_for("openai"), &updated);
+        setup_oauth_refresh_callback(fresh.get());
+        agent.set_provider(std::move(fresh));
+
+        clear_pending_oauth(ev.session_id);
+
+        send_reply(std::string("OpenAI OAuth connected ✅") +
+                   (persisted
+                    ? " Saved to ~/.ptrclaw/config.json"
+                    : " (warning: could not persist to config file)"));
+    };
+
+    // Handle /auth commands
+    if (ev.message.content.rfind("/auth", 0) == 0) {
+        auto parts = split(ev.message.content, ' ');
+
+        if (parts.size() >= 2 && parts[1] == "status") {
+            auto it = config_.providers.find("openai");
+            if (it == config_.providers.end()) {
+                send_reply("No OpenAI provider config found.");
+                return true;
+            }
+            const auto& openai = it->second;
+            std::string status = "OpenAI auth: ";
+            if (openai.use_oauth) {
+                status += "OAuth enabled";
+                if (!openai.oauth_access_token.empty()) {
+                    status += " (token present)";
+                }
+                if (openai.oauth_expires_at > 0) {
+                    status += "\nExpires at (epoch): " + std::to_string(openai.oauth_expires_at);
+                }
+            } else if (!openai.api_key.empty()) {
+                status += "API key";
+            } else {
+                status += "not configured";
+            }
+            send_reply(status);
+            return true;
+        }
+
+        if (parts.size() >= 3 && parts[1] == "openai" && parts[2] == "start") {
+            auto openai_it = config_.providers.find("openai");
+            if (openai_it == config_.providers.end()) {
+                send_reply("OpenAI provider config missing.");
+                return true;
+            }
+
+            std::string state = generate_id();
+            std::string verifier = make_code_verifier();
+            std::string challenge = make_code_challenge_s256(verifier);
+            std::string redirect_uri = "http://127.0.0.1:1455/auth/callback";
+            std::string client_id = openai_it->second.oauth_client_id.empty()
+                ? "openai-codex"
+                : openai_it->second.oauth_client_id;
+
+            PendingOAuth pending;
+            pending.provider = "openai";
+            pending.state = state;
+            pending.code_verifier = verifier;
+            pending.redirect_uri = redirect_uri;
+            pending.created_at = epoch_seconds();
+            set_pending_oauth(ev.session_id, std::move(pending));
+
+            std::string scope = "openid profile email offline_access";
+            std::string url =
+                "https://auth.openai.com/oauth/authorize"
+                "?response_type=code"
+                "&client_id=" + url_encode(client_id) +
+                "&redirect_uri=" + url_encode(redirect_uri) +
+                "&scope=" + url_encode(scope) +
+                "&state=" + url_encode(state) +
+                "&code_challenge=" + url_encode(challenge) +
+                "&code_challenge_method=S256";
+
+            send_reply(
+                "Open this URL to authorize OpenAI:\n" + url +
+                "\n\nThen paste the full callback URL with:\n"
+                "/auth openai finish <callback_url>\n"
+                "(or paste just the code)");
+            return true;
+        }
+
+        if (parts.size() >= 4 && parts[1] == "openai" && parts[2] == "finish") {
+            auto pending = get_pending_oauth(ev.session_id);
+            if (!pending || pending->provider != "openai") {
+                send_reply("No pending OpenAI auth flow. Start with: /auth openai start");
+                return true;
+            }
+
+            std::string input = ev.message.content.substr(
+                ev.message.content.find("finish") + 7);
+            auto parsed = parse_oauth_input(input);
+
+            if (parsed.code.empty()) {
+                send_reply("Missing code. Paste callback URL or auth code.");
+                return true;
+            }
+            if (!parsed.state.empty() && parsed.state != pending->state) {
+                send_reply("State mismatch. Please restart with /auth openai start");
+                return true;
+            }
+
+            apply_oauth_result(*pending, parsed.code);
+            return true;
+        }
+
+        send_reply("Auth commands:\n/auth status\n/auth openai start\n/auth openai finish <callback_url_or_code>");
+        return true;
+    }
+
+    // If OpenAI OAuth is pending, accept raw callback URL/code directly.
+    auto pending_oauth = get_pending_oauth(ev.session_id);
+    if (pending_oauth && pending_oauth->provider == "openai") {
+        std::string raw = trim(ev.message.content);
+        bool looks_like_oauth_reply =
+            (!raw.empty() &&
+             (raw.find("code=") != std::string::npos ||
+              raw.find("auth/callback") != std::string::npos ||
+              raw.find("127.0.0.1:1455") != std::string::npos));
+
+        if (looks_like_oauth_reply && raw.rfind("/auth", 0) != 0) {
+            auto parsed = parse_oauth_input(raw);
+
+            if (parsed.code.empty()) {
+                send_reply("Missing code. Paste callback URL or auth code.");
+                return true;
+            }
+            if (!parsed.state.empty() && parsed.state != pending_oauth->state) {
+                send_reply("State mismatch. Please restart with /auth openai start");
+                return true;
+            }
+
+            apply_oauth_result(*pending_oauth, parsed.code);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 } // namespace ptrclaw
