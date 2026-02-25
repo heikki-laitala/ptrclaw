@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <cstdint>
+#include <optional>
 
 namespace ptrclaw {
 
@@ -16,6 +17,14 @@ struct Session {
     std::string id;
     std::unique_ptr<Agent> agent;
     uint64_t last_active = 0;
+};
+
+struct PendingOAuth {
+    std::string provider;
+    std::string state;
+    std::string code_verifier;
+    std::string redirect_uri;
+    uint64_t created_at = 0;
 };
 
 class SessionManager {
@@ -50,6 +59,11 @@ private:
     mutable std::mutex mutex_;
     std::string binary_path_;
     EventBus* event_bus_ = nullptr;
+    std::unordered_map<std::string, PendingOAuth> pending_oauth_;
+
+    std::optional<PendingOAuth> get_pending_oauth(const std::string& session_id);
+    void set_pending_oauth(const std::string& session_id, PendingOAuth pending);
+    void clear_pending_oauth(const std::string& session_id);
 };
 
 } // namespace ptrclaw

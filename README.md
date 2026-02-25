@@ -177,6 +177,15 @@ OpenAI subscription OAuth example:
 }
 ```
 
+Interactive setup (REPL or Telegram):
+
+```text
+/auth openai start
+# open returned URL, approve, then paste callback URL
+/auth openai finish <callback_url_or_code>
+/auth status
+```
+
 Notes:
 - There is currently no `COMPATIBLE_API_KEY` env var; set `providers.compatible.api_key` in `~/.ptrclaw/config.json` when using the `compatible` provider.
 - `BASE_URL` overrides provider-specific base URLs for whichever provider is active.
