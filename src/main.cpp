@@ -85,7 +85,7 @@ static void print_usage() {
               << "  /clear               Clear conversation history\n"
               << "  /auth                OpenAI OAuth commands\n"
               << "  /help                Show available commands\n"
-              << "  /quit, /exit         Exit the REPL\n"
+              << "  /exit, /quit         Exit the REPL\n"
               << "\n"
               << "Environment variables:\n"
               << "  ANTHROPIC_API_KEY    API key for Anthropic\n"
@@ -316,7 +316,7 @@ int main(int argc, char* argv[]) try {
     std::cout << "PtrClaw AI Assistant\n"
               << "Provider: " << agent.provider_name()
               << " | Model: " << agent.model() << "\n"
-              << "Type /help for commands, /quit to exit.\n\n";
+              << "Type /help for commands, /exit to exit.\n\n";
 
     // Auto-detect unhatched agent
     if (agent.memory() && !agent.is_hatched()) {
@@ -552,8 +552,7 @@ int main(int argc, char* argv[]) try {
                     std::cout << "  /soul            Show current soul/identity data\n";
                 }
                 std::cout << "  /hatch           Create or re-create assistant identity\n"
-                          << "  /quit            Exit\n"
-                          << "  /exit            Exit\n"
+                          << "  /exit, /quit     Exit\n"
                           << "  /help            Show this help\n";
             } else {
                 std::cout << "Unknown command: " << line << "\n";
