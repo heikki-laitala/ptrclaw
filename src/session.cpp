@@ -195,6 +195,91 @@ void SessionManager::subscribe_events() {
                 return;
             }
 
+            // Handle /models command
+            if (ev.message.content == "/models") {
+                auto current_prov = agent.provider_name();
+                bool on_codex = (current_prov == "openai" &&
+                                 config_.providers.count("openai") &&
+                                 config_.providers.at("openai").use_oauth);
+
+                std::string result = "Configured providers:\n";
+                for (const auto& [name, entry] : config_.providers) {
+                    if (name == "openai") {
+                        if (!entry.api_key.empty()) {
+                            bool active = (current_prov == "openai" && !on_codex);
+                            result += (active ? "* " : "  ");
+                            result += "openai — API key";
+                            if (active) result += "  [model: " + agent.model() + "]";
+                            result += "\n";
+                        }
+                        if (!entry.oauth_access_token.empty()) {
+                            bool active = on_codex;
+                            result += (active ? "* " : "  ");
+                            result += "openai-codex — OAuth";
+                            if (active) result += "  [model: " + agent.model() + "]";
+                            result += "\n";
+                        }
+                        continue;
+                    }
+                    bool has_creds = !entry.api_key.empty() || !entry.base_url.empty();
+                    if (!has_creds) continue;
+                    std::string auth = !entry.api_key.empty() ? "API key" : "local";
+                    bool active = (name == current_prov);
+                    result += (active ? "* " : "  ");
+                    result += name;
+                    result += " — ";
+                    result += auth;
+                    if (active) result += "  [model: " + agent.model() + "]";
+                    result += "\n";
+                }
+                result += "\nSwitch: /provider <name> [model]";
+                send_reply(result);
+                return;
+            }
+
+            // Handle /provider command
+            if (ev.message.content.rfind("/provider ", 0) == 0) {
+                auto args = trim(ev.message.content.substr(10));
+                auto space = args.find(' ');
+                std::string prov_name = (space == std::string::npos) ? args : args.substr(0, space);
+                std::string model_arg = (space == std::string::npos) ? "" : trim(args.substr(space + 1));
+
+                if (prov_name == "openai-codex") {
+                    auto it = config_.providers.find("openai");
+                    if (it == config_.providers.end() || it->second.oauth_access_token.empty()) {
+                        send_reply("OpenAI OAuth not configured. Run /auth openai start");
+                    } else {
+                        auto fresh = create_provider("openai", config_.api_key_for("openai"), http_,
+                            config_.base_url_for("openai"), config_.prompt_caching_for("openai"), &it->second);
+                        setup_oauth_refresh_callback(fresh.get());
+                        agent.set_provider(std::move(fresh));
+                        agent.set_model(model_arg.empty() ? std::string(kDefaultOAuthModel) : model_arg);
+                        send_reply("Switched to openai-codex | Model: " + agent.model());
+                    }
+                } else {
+                    auto it = config_.providers.find(prov_name);
+                    if (it == config_.providers.end()) {
+                        send_reply("Unknown provider: " + prov_name);
+                    } else if (it->second.api_key.empty() && it->second.base_url.empty()) {
+                        send_reply("No credentials for " + prov_name);
+                    } else {
+                        const ProviderEntry* ep = &it->second;
+                        ProviderEntry no_oauth;
+                        if (prov_name == "openai") {
+                            no_oauth = it->second;
+                            no_oauth.use_oauth = false;
+                            ep = &no_oauth;
+                        }
+                        auto fresh = create_provider(prov_name, config_.api_key_for(prov_name), http_,
+                            config_.base_url_for(prov_name), config_.prompt_caching_for(prov_name), ep);
+                        agent.set_provider(std::move(fresh));
+                        if (!model_arg.empty()) agent.set_model(model_arg);
+                        send_reply("Switched to " + prov_name + " | Model: " + agent.model());
+                    }
+                }
+                return;
+            }
+
             // Handle auth commands + raw OAuth paste
             if (ev.message.content.rfind("/auth", 0) == 0 ||
                 get_pending_oauth(ev.session_id).has_value()) {
