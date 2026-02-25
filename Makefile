@@ -28,7 +28,7 @@ MINDIR := builddir-minimal
 COVDIR := builddir-cov
 PIPEDIR := builddir-pipe
 
-.PHONY: deps setup build build-minimal build-static run test coverage coverage-summary lint clean clear-memory
+.PHONY: deps setup build build-minimal build-static run test coverage coverage-summary lint clean clear-memory memory-clean
 
 deps:
 ifeq ($(shell uname),Darwin)
@@ -79,6 +79,8 @@ lint: build
 clear-memory:
 	rm -f ~/.ptrclaw/memory.json ~/.ptrclaw/memory.db ~/.ptrclaw/memory.db-shm ~/.ptrclaw/memory.db-wal
 	@echo "Memory cleared"
+
+memory-clean: clear-memory
 
 clean:
 	rm -rf $(BUILDDIR) $(STATICDIR) $(MINDIR) $(COVDIR) $(PIPEDIR)

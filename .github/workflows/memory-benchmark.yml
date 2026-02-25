@@ -37,6 +37,10 @@ jobs:
           meson setup builddir --buildtype=release -Dwith_pipe=true
           meson compile -C builddir
 
+      - name: Clear memory before benchmark
+        shell: bash
+        run: make memory-clean
+
       - name: Run memory benchmark
         shell: bash
         run: |
@@ -45,6 +49,11 @@ jobs:
           python3 tests/e2e/memory_benchmark.py ./builddir/ptrclaw \
             --output benchmark-results/results.json \
             2> >(tee benchmark-results/benchmark.log >&2)
+
+      - name: Clear memory after benchmark
+        if: always()
+        shell: bash
+        run: make memory-clean
 
       - name: Redact secrets from logs
         if: always()
