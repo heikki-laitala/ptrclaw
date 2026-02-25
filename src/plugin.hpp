@@ -17,7 +17,8 @@ namespace ptrclaw {
 
 // Factory function types
 using ProviderFactory = std::function<std::unique_ptr<Provider>(
-    const std::string& api_key, HttpClient& http, const std::string& base_url)>;
+    const std::string& api_key, HttpClient& http, const std::string& base_url,
+    bool prompt_caching)>;
 
 using ToolFactory = std::function<std::unique_ptr<Tool>()>;
 
@@ -42,7 +43,8 @@ public:
     std::unique_ptr<Provider> create_provider(const std::string& name,
                                               const std::string& api_key,
                                               HttpClient& http,
-                                              const std::string& base_url) const;
+                                              const std::string& base_url,
+                                              bool prompt_caching) const;
 
     std::vector<std::unique_ptr<Tool>> create_all_tools() const;
 

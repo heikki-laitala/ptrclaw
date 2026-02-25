@@ -56,14 +56,15 @@ TEST_CASE("PluginRegistry: at least one provider is registered", "[plugin]") {
 TEST_CASE("PluginRegistry: register and create custom provider", "[plugin]") {
     auto& reg = PluginRegistry::instance();
 
-    reg.register_provider("_test_prov", [](const std::string&, HttpClient&, const std::string&) {
+    reg.register_provider("_test_prov", [](const std::string&, HttpClient&, const std::string&,
+                                             bool) {
         return std::make_unique<PluginTestProvider>("_test_prov");
     });
 
     REQUIRE(reg.has_provider("_test_prov"));
 
     MockHttpClient http;
-    auto provider = reg.create_provider("_test_prov", "", http, "");
+    auto provider = reg.create_provider("_test_prov", "", http, "", false);
     REQUIRE(provider != nullptr);
     REQUIRE(provider->provider_name() == "_test_prov");
 }
@@ -71,7 +72,7 @@ TEST_CASE("PluginRegistry: register and create custom provider", "[plugin]") {
 TEST_CASE("PluginRegistry: create unknown provider throws", "[plugin]") {
     MockHttpClient http;
     REQUIRE_THROWS_AS(
-        PluginRegistry::instance().create_provider("_nonexistent_prov", "", http, ""),
+        PluginRegistry::instance().create_provider("_nonexistent_prov", "", http, "", false),
         std::invalid_argument);
 }
 
@@ -130,7 +131,8 @@ TEST_CASE("PluginRegistry: create unknown channel throws", "[plugin]") {
 // ── Registrar structs ───────────────────────────────────────────
 
 TEST_CASE("PluginRegistry: ProviderRegistrar auto-registers", "[plugin]") {
-    ProviderRegistrar reg("_auto_prov", [](const std::string&, HttpClient&, const std::string&) {
+    ProviderRegistrar reg("_auto_prov", [](const std::string&, HttpClient&, const std::string&,
+                                             bool) {
         return std::make_unique<PluginTestProvider>("_auto_prov");
     });
     REQUIRE(PluginRegistry::instance().has_provider("_auto_prov"));

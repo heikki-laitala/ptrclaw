@@ -128,7 +128,10 @@ Minimal config (Anthropic only):
   "provider": "anthropic",
   "model": "claude-sonnet-4-6",
   "providers": {
-    "anthropic": { "api_key": "sk-ant-..." }
+    "anthropic": {
+      "api_key": "sk-ant-...",
+      "prompt_caching": true
+    }
   }
 }
 ```
@@ -153,6 +156,7 @@ Environment variables override the config file:
 Notes:
 - There is currently no `COMPATIBLE_API_KEY` env var; set `providers.compatible.api_key` in `~/.ptrclaw/config.json` when using the `compatible` provider.
 - `BASE_URL` overrides provider-specific base URLs for whichever provider is active.
+- `providers.anthropic.prompt_caching` controls Anthropic provider-side prompt caching (default: `true`). Set it to `false` to disable.
 
 ### How to get a Telegram bot token
 

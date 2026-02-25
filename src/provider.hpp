@@ -87,6 +87,7 @@ class HttpClient; // forward declaration
 std::unique_ptr<Provider> create_provider(const std::string& name,
                                           const std::string& api_key,
                                           HttpClient& http,
-                                          const std::string& base_url = "");
+                                          const std::string& base_url = "",
+                                          bool prompt_caching = false);
 
 } // namespace ptrclaw

@@ -9,6 +9,7 @@ namespace ptrclaw {
 struct ProviderEntry {
     std::string api_key;
     std::string base_url;
+    bool prompt_caching = false; // Anthropic-only, provider-side prompt caching
 };
 
 struct AgentConfig {
@@ -59,6 +60,9 @@ struct Config {
 
     // Get base URL for a provider name (empty = use provider default)
     std::string base_url_for(const std::string& provider) const;
+
+    // Provider-specific prompt caching toggle (currently Anthropic)
+    bool prompt_caching_for(const std::string& provider) const;
 
     // Get JSON config for a channel name (empty object if absent)
     nlohmann::json channel_config(const std::string& name) const;
