@@ -146,7 +146,7 @@ Environment variables override the config file:
 | `OPENAI_OAUTH_ACCESS_TOKEN` | OpenAI OAuth access token |
 | `OPENAI_OAUTH_REFRESH_TOKEN` | OpenAI OAuth refresh token |
 | `OPENAI_OAUTH_EXPIRES_AT` | Access token expiry (epoch seconds) |
-| `OPENAI_OAUTH_CLIENT_ID` | OAuth client id (default `openai-codex`) |
+| `OPENAI_OAUTH_CLIENT_ID` | OAuth client id (default `app_EMoamEEZ73f0CkXaXp7hrann`) |
 | `OPENAI_OAUTH_TOKEN_URL` | OAuth token endpoint (default `https://auth.openai.com/oauth/token`) |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 | `OLLAMA_BASE_URL` | Ollama server URL (default `http://localhost:11434`) |
@@ -171,7 +171,7 @@ OpenAI subscription OAuth example:
       "oauth_access_token": "<access-token>",
       "oauth_refresh_token": "<refresh-token>",
       "oauth_expires_at": 1767225600,
-      "oauth_client_id": "openai-codex"
+      "oauth_client_id": "app_EMoamEEZ73f0CkXaXp7hrann"
     }
   }
 }

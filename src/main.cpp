@@ -10,6 +10,9 @@
 #include "event_bus.hpp"
 #include "session.hpp"
 #include "stream_relay.hpp"
+#include "oauth.hpp"
+#include "util.hpp"
+#include "providers/openai.hpp"
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -80,6 +83,7 @@ static void print_usage() {
               << "  /status              Show current model, provider, history info\n"
               << "  /model NAME          Switch model\n"
               << "  /clear               Clear conversation history\n"
+              << "  /auth                OpenAI OAuth commands\n"
               << "  /help                Show available commands\n"
               << "  /quit, /exit         Exit the REPL\n"
               << "\n"
@@ -159,6 +163,19 @@ static int run_channel(const std::string& channel_name,
 
     std::cerr << "[" << channel_name << "] Shutting down.\n";
     return 0;
+}
+
+static void setup_repl_oauth_refresh(ptrclaw::Provider* provider, ptrclaw::Config& config) {
+    auto* oai = dynamic_cast<ptrclaw::OpenAIProvider*>(provider);
+    if (!oai) return;
+    oai->set_on_token_refresh(
+        [&config](const std::string& at, const std::string& rt, uint64_t ea) {
+            auto& entry = config.providers["openai"];
+            entry.oauth_access_token = at;
+            entry.oauth_refresh_token = rt;
+            entry.oauth_expires_at = ea;
+            ptrclaw::persist_openai_oauth(entry);
+        });
 }
 
 int main(int argc, char* argv[]) try {
@@ -241,15 +258,20 @@ int main(int argc, char* argv[]) try {
     // Create provider and agent (pipe, -m, REPL modes)
     std::unique_ptr<ptrclaw::Provider> provider;
     try {
+        auto provider_it = config.providers.find(config.provider);
         provider = ptrclaw::create_provider(
             config.provider,
             config.api_key_for(config.provider),
             http_client,
-            config.base_url_for(config.provider));
+            config.base_url_for(config.provider),
+            config.prompt_caching_for(config.provider),
+            provider_it != config.providers.end() ? &provider_it->second : nullptr);
     } catch (const std::exception& e) {
         std::cerr << "Error creating provider: " << e.what() << "\n";
         return 1;
     }
+    setup_repl_oauth_refresh(provider.get(), config);
+
     auto tools = ptrclaw::create_builtin_tools();
     ptrclaw::Agent agent(std::move(provider), std::move(tools), config);
     agent.set_binary_path(binary_path);
@@ -302,6 +324,42 @@ int main(int argc, char* argv[]) try {
         agent.start_hatch();
     }
 
+    std::optional<ptrclaw::PendingOAuth> pending_oauth;
+
+    auto apply_oauth_result = [&](const ptrclaw::PendingOAuth& pending,
+                                  const std::string& code) {
+        auto openai_it = config.providers.find("openai");
+        if (openai_it == config.providers.end()) {
+            std::cout << "OpenAI provider config missing.\n";
+            return;
+        }
+
+        ptrclaw::ProviderEntry updated;
+        std::string err = ptrclaw::exchange_oauth_token(
+            code, pending, openai_it->second, http_client, updated);
+        if (!err.empty()) {
+            std::cout << err << "\n";
+            return;
+        }
+
+        config.providers["openai"] = updated;
+        bool persisted = ptrclaw::persist_openai_oauth(updated);
+
+        auto fresh = ptrclaw::create_provider(
+            "openai", config.api_key_for("openai"), http_client,
+            config.base_url_for("openai"),
+            config.prompt_caching_for("openai"), &updated);
+        setup_repl_oauth_refresh(fresh.get(), config);
+        agent.set_provider(std::move(fresh));
+
+        pending_oauth.reset();
+
+        std::cout << "OpenAI OAuth connected."
+                  << (persisted
+                      ? " Saved to ~/.ptrclaw/config.json\n"
+                      : " (warning: could not persist to config file)\n");
+    };
+
     std::string line;
     while (true) {
         std::cout << "ptrclaw> " << std::flush;
@@ -314,6 +372,27 @@ int main(int argc, char* argv[]) try {
 
         // Skip empty lines
         if (line.empty()) continue;
+
+        // Raw OAuth paste detection (when auth flow is pending)
+        if (pending_oauth && line[0] != '/') {
+            std::string raw = ptrclaw::trim(line);
+            bool looks_like_oauth =
+                (!raw.empty() &&
+                 (raw.find("code=") != std::string::npos ||
+                  raw.find("auth/callback") != std::string::npos ||
+                  raw.find("localhost:1455") != std::string::npos));
+            if (looks_like_oauth) {
+                auto parsed = ptrclaw::parse_oauth_input(raw);
+                if (parsed.code.empty()) {
+                    std::cout << "Missing code. Paste callback URL or auth code.\n";
+                } else if (!parsed.state.empty() && parsed.state != pending_oauth->state) {
+                    std::cout << "State mismatch. Please restart with /auth openai start\n";
+                } else {
+                    apply_oauth_result(*pending_oauth, parsed.code);
+                }
+                continue;
+            }
+        }
 
         // Handle slash commands
         if (line[0] == '/') {
@@ -382,6 +461,80 @@ int main(int argc, char* argv[]) try {
             } else if (line == "/hatch") {
                 agent.start_hatch();
                 std::cout << "Entering hatching mode...\n";
+
+            // ── /auth commands ───────────────────────────────────
+            } else if (line == "/auth status") {
+                auto it = config.providers.find("openai");
+                if (it == config.providers.end()) {
+                    std::cout << "No OpenAI provider config found.\n";
+                } else {
+                    const auto& openai = it->second;
+                    std::cout << "OpenAI auth: ";
+                    if (openai.use_oauth) {
+                        std::cout << "OAuth enabled";
+                        if (!openai.oauth_access_token.empty()) {
+                            std::cout << " (token present)";
+                        }
+                        if (openai.oauth_expires_at > 0) {
+                            std::cout << "\nExpires at (epoch): "
+                                      << openai.oauth_expires_at;
+                        }
+                    } else if (!openai.api_key.empty()) {
+                        std::cout << "API key";
+                    } else {
+                        std::cout << "not configured";
+                    }
+                    std::cout << "\n";
+                }
+            } else if (line == "/auth openai start") {
+                auto openai_it = config.providers.find("openai");
+                if (openai_it == config.providers.end()) {
+                    std::cout << "OpenAI provider config missing.\n";
+                } else {
+                    std::string state = ptrclaw::generate_id();
+                    std::string verifier = ptrclaw::make_code_verifier();
+                    std::string challenge = ptrclaw::make_code_challenge_s256(verifier);
+                    std::string client_id = openai_it->second.oauth_client_id.empty()
+                        ? ptrclaw::kDefaultOAuthClientId
+                        : openai_it->second.oauth_client_id;
+
+                    ptrclaw::PendingOAuth pending;
+                    pending.provider = "openai";
+                    pending.state = state;
+                    pending.code_verifier = verifier;
+                    pending.redirect_uri = ptrclaw::kDefaultRedirectUri;
+                    pending.created_at = ptrclaw::epoch_seconds();
+                    pending_oauth = std::move(pending);
+
+                    std::string url = ptrclaw::build_authorize_url(
+                        client_id, ptrclaw::kDefaultRedirectUri, challenge, state);
+
+                    std::cout << "Open this URL to authorize OpenAI:\n" << url
+                              << "\n\nThen paste the full callback URL with:\n"
+                              << "/auth openai finish <callback_url>\n"
+                              << "(or paste just the code)\n";
+                }
+            } else if (line.rfind("/auth openai finish ", 0) == 0) {
+                if (!pending_oauth || pending_oauth->provider != "openai") {
+                    std::cout << "No pending OpenAI auth flow. Start with: /auth openai start\n";
+                } else {
+                    std::string input = line.substr(
+                        line.find("finish") + 7);
+                    auto parsed = ptrclaw::parse_oauth_input(input);
+
+                    if (parsed.code.empty()) {
+                        std::cout << "Missing code. Paste callback URL or auth code.\n";
+                    } else if (!parsed.state.empty() && parsed.state != pending_oauth->state) {
+                        std::cout << "State mismatch. Please restart with /auth openai start\n";
+                    } else {
+                        apply_oauth_result(*pending_oauth, parsed.code);
+                    }
+                }
+            } else if (line == "/auth") {
+                std::cout << "Auth commands:\n"
+                          << "  /auth status                Show OpenAI auth status\n"
+                          << "  /auth openai start          Start OAuth flow\n"
+                          << "  /auth openai finish <url>   Complete OAuth with callback URL or code\n";
             } else if (line == "/help") {
                 std::cout << "Commands:\n"
                           << "  /status          Show current status\n"
@@ -389,7 +542,10 @@ int main(int argc, char* argv[]) try {
                           << "  /clear           Clear conversation history\n"
                           << "  /memory          Show memory status\n"
                           << "  /memory export   Export memories as JSON\n"
-                          << "  /memory import P Import memories from JSON file\n";
+                          << "  /memory import P Import memories from JSON file\n"
+                          << "  /auth            OpenAI OAuth commands\n"
+                          << "  /auth status     Show OpenAI auth status\n"
+                          << "  /auth openai start   Start OAuth flow\n";
                 if (config.dev) {
                     std::cout << "  /soul            Show current soul/identity data\n";
                 }

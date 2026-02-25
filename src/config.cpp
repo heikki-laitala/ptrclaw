@@ -23,7 +23,7 @@ nlohmann::json Config::defaults_json() {
                 {"oauth_access_token", ""},
                 {"oauth_refresh_token", ""},
                 {"oauth_expires_at", 0},
-                {"oauth_client_id", "openai-codex"},
+                {"oauth_client_id", "app_EMoamEEZ73f0CkXaXp7hrann"},
                 {"oauth_token_url", "https://auth.openai.com/oauth/token"}
             }},
             {"openrouter", {{"api_key", ""}}},

@@ -72,7 +72,7 @@ endif
 # ── Core sources (always compiled) ─────────────────────────────
 core_sources = files(
   'src/agent.cpp', 'src/channel.cpp', 'src/config.cpp', 'src/dispatcher.cpp',
-  'src/event_bus.cpp', 'src/plugin.cpp', 'src/prompt.cpp',
+  'src/event_bus.cpp', 'src/oauth.cpp', 'src/plugin.cpp', 'src/prompt.cpp',
   'src/provider.cpp', 'src/session.cpp', 'src/stream_relay.cpp',
   'src/tool.cpp', 'src/util.cpp',
   'src/providers/reliable.cpp',
@@ -168,6 +168,7 @@ core_test_sources = files(
   'tests/test_channel.cpp',
   'tests/test_event_bus.cpp',
   'tests/test_plugin.cpp',
+  'tests/test_oauth.cpp',
 )
 
 optional_test_sources = []

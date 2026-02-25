@@ -1,6 +1,7 @@
 #include "openai.hpp"
 #include "sse.hpp"
 #include "../http.hpp"
+#include "../oauth.hpp"
 #include "../plugin.hpp"
 #include <nlohmann/json.hpp>
 #include <stdexcept>
@@ -40,7 +41,7 @@ OpenAIProvider::OpenAIProvider(const std::string& api_key, HttpClient& http,
       oauth_access_token_(oauth_access_token),
       oauth_refresh_token_(oauth_refresh_token),
       oauth_expires_at_(oauth_expires_at),
-      oauth_client_id_(oauth_client_id.empty() ? "openai-codex" : oauth_client_id),
+      oauth_client_id_(oauth_client_id.empty() ? kDefaultOAuthClientId : oauth_client_id),
       oauth_token_url_(oauth_token_url.empty()
                        ? "https://auth.openai.com/oauth/token"
                        : oauth_token_url) {}
@@ -131,17 +132,16 @@ void OpenAIProvider::refresh_oauth_if_needed() {
         throw std::runtime_error("OpenAI OAuth access token expired and no refresh token is configured");
     }
 
-    json refresh_req;
-    refresh_req["grant_type"] = "refresh_token";
-    refresh_req["refresh_token"] = oauth_refresh_token_;
-    if (!oauth_client_id_.empty()) {
-        refresh_req["client_id"] = oauth_client_id_;
-    }
+    std::string body = ptrclaw::form_encode({
+        {"grant_type", "refresh_token"},
+        {"refresh_token", oauth_refresh_token_},
+        {"client_id", oauth_client_id_}
+    });
 
     auto refresh_resp = http_.post(
         oauth_token_url_,
-        refresh_req.dump(),
-        {{"Content-Type", "application/json"}});
+        body,
+        {{"Content-Type", "application/x-www-form-urlencoded"}});
 
     if (refresh_resp.status_code < 200 || refresh_resp.status_code >= 300) {
         throw std::runtime_error("OpenAI OAuth refresh failed (HTTP " +
