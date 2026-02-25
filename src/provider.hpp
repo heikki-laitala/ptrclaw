@@ -9,6 +9,8 @@
 
 namespace ptrclaw {
 
+struct ProviderEntry;
+
 enum class Role { System, User, Assistant, Tool };
 
 inline const char* role_to_string(Role role) {
@@ -88,6 +90,7 @@ std::unique_ptr<Provider> create_provider(const std::string& name,
                                           const std::string& api_key,
                                           HttpClient& http,
                                           const std::string& base_url = "",
-                                          bool prompt_caching = false);
+                                          bool prompt_caching = false,
+                                          const ProviderEntry* provider_entry = nullptr);
 
 } // namespace ptrclaw

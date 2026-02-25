@@ -17,7 +17,15 @@ nlohmann::json Config::defaults_json() {
         {"base_url", ""},
         {"providers", {
             {"anthropic", {{"api_key", ""}, {"prompt_caching", true}}},
-            {"openai", {{"api_key", ""}}},
+            {"openai", {
+                {"api_key", ""},
+                {"use_oauth", false},
+                {"oauth_access_token", ""},
+                {"oauth_refresh_token", ""},
+                {"oauth_expires_at", 0},
+                {"oauth_client_id", "openai-codex"},
+                {"oauth_token_url", "https://auth.openai.com/oauth/token"}
+            }},
             {"openrouter", {{"api_key", ""}}},
             {"ollama", {{"base_url", "http://localhost:11434"}}},
             {"compatible", {{"base_url", ""}}}
@@ -114,6 +122,18 @@ Config Config::load() {
                 entry.base_url = obj["base_url"].get<std::string>();
             if (obj.contains("prompt_caching") && obj["prompt_caching"].is_boolean())
                 entry.prompt_caching = obj["prompt_caching"].get<bool>();
+            if (obj.contains("use_oauth") && obj["use_oauth"].is_boolean())
+                entry.use_oauth = obj["use_oauth"].get<bool>();
+            if (obj.contains("oauth_access_token") && obj["oauth_access_token"].is_string())
+                entry.oauth_access_token = obj["oauth_access_token"].get<std::string>();
+            if (obj.contains("oauth_refresh_token") && obj["oauth_refresh_token"].is_string())
+                entry.oauth_refresh_token = obj["oauth_refresh_token"].get<std::string>();
+            if (obj.contains("oauth_expires_at") && obj["oauth_expires_at"].is_number_unsigned())
+                entry.oauth_expires_at = obj["oauth_expires_at"].get<uint64_t>();
+            if (obj.contains("oauth_client_id") && obj["oauth_client_id"].is_string())
+                entry.oauth_client_id = obj["oauth_client_id"].get<std::string>();
+            if (obj.contains("oauth_token_url") && obj["oauth_token_url"].is_string())
+                entry.oauth_token_url = obj["oauth_token_url"].get<std::string>();
             cfg.providers[name] = std::move(entry);
         }
     }
@@ -170,6 +190,19 @@ Config Config::load() {
         cfg.providers["anthropic"].api_key = v;
     if (const char* v = std::getenv("OPENAI_API_KEY"))
         cfg.providers["openai"].api_key = v;
+    if (const char* v = std::getenv("OPENAI_USE_OAUTH"))
+        cfg.providers["openai"].use_oauth =
+            (std::string(v) == "1" || std::string(v) == "true" || std::string(v) == "TRUE");
+    if (const char* v = std::getenv("OPENAI_OAUTH_ACCESS_TOKEN"))
+        cfg.providers["openai"].oauth_access_token = v;
+    if (const char* v = std::getenv("OPENAI_OAUTH_REFRESH_TOKEN"))
+        cfg.providers["openai"].oauth_refresh_token = v;
+    if (const char* v = std::getenv("OPENAI_OAUTH_EXPIRES_AT"))
+        cfg.providers["openai"].oauth_expires_at = std::strtoull(v, nullptr, 10);
+    if (const char* v = std::getenv("OPENAI_OAUTH_CLIENT_ID"))
+        cfg.providers["openai"].oauth_client_id = v;
+    if (const char* v = std::getenv("OPENAI_OAUTH_TOKEN_URL"))
+        cfg.providers["openai"].oauth_token_url = v;
     if (const char* v = std::getenv("OPENROUTER_API_KEY"))
         cfg.providers["openrouter"].api_key = v;
     if (const char* v = std::getenv("BASE_URL"))

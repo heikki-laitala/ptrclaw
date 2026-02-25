@@ -34,13 +34,14 @@ std::unique_ptr<Provider> PluginRegistry::create_provider(const std::string& nam
                                                            const std::string& api_key,
                                                            HttpClient& http,
                                                            const std::string& base_url,
-                                                           bool prompt_caching) const {
+                                                           bool prompt_caching,
+                                                           const ProviderEntry& provider_entry) const {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = providers_.find(name);
     if (it == providers_.end()) {
         throw std::invalid_argument("Unknown provider: " + name);
     }
-    return it->second(api_key, http, base_url, prompt_caching);
+    return it->second(api_key, http, base_url, prompt_caching, provider_entry);
 }
 
 std::vector<std::unique_ptr<Tool>> PluginRegistry::create_all_tools() const {

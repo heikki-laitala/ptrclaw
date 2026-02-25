@@ -5,20 +5,45 @@
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <map>
+#include <chrono>
 
 static ptrclaw::ProviderRegistrar reg_openai("openai",
     [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url,
-       bool /* prompt_caching */) {
-        return std::make_unique<ptrclaw::OpenAIProvider>(key, http, base_url);
+       bool /* prompt_caching */, const ptrclaw::ProviderEntry& entry) {
+        return std::make_unique<ptrclaw::OpenAIProvider>(
+            key,
+            http,
+            base_url,
+            entry.use_oauth,
+            entry.oauth_access_token,
+            entry.oauth_refresh_token,
+            entry.oauth_expires_at,
+            entry.oauth_client_id,
+            entry.oauth_token_url);
     });
 
 using json = nlohmann::json;
 
 namespace ptrclaw {
 
-OpenAIProvider::OpenAIProvider(const std::string& api_key, HttpClient& http, const std::string& base_url)
+OpenAIProvider::OpenAIProvider(const std::string& api_key, HttpClient& http,
+                               const std::string& base_url,
+                               bool use_oauth,
+                               const std::string& oauth_access_token,
+                               const std::string& oauth_refresh_token,
+                               uint64_t oauth_expires_at,
+                               const std::string& oauth_client_id,
+                               const std::string& oauth_token_url)
     : api_key_(api_key), http_(http),
-      base_url_(base_url.empty() ? "https://api.openai.com/v1" : base_url) {}
+      base_url_(base_url.empty() ? "https://api.openai.com/v1" : base_url),
+      use_oauth_(use_oauth),
+      oauth_access_token_(oauth_access_token),
+      oauth_refresh_token_(oauth_refresh_token),
+      oauth_expires_at_(oauth_expires_at),
+      oauth_client_id_(oauth_client_id.empty() ? "openai-codex" : oauth_client_id),
+      oauth_token_url_(oauth_token_url.empty()
+                       ? "https://auth.openai.com/oauth/token"
+                       : oauth_token_url) {}
 
 json OpenAIProvider::build_request(const std::vector<ChatMessage>& messages,
                                     const std::vector<ToolSpec>& tools,
@@ -82,9 +107,68 @@ json OpenAIProvider::build_request(const std::vector<ChatMessage>& messages,
     return request;
 }
 
+std::string OpenAIProvider::bearer_token() {
+    if (use_oauth_) {
+        refresh_oauth_if_needed();
+        return oauth_access_token_;
+    }
+    return api_key_;
+}
+
+void OpenAIProvider::refresh_oauth_if_needed() {
+    if (!use_oauth_) return;
+
+    auto now = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    // Keep 60s safety buffer.
+    bool expired_or_missing = oauth_access_token_.empty() ||
+        (oauth_expires_at_ > 0 && now + 60 >= oauth_expires_at_);
+
+    if (!expired_or_missing) return;
+    if (oauth_refresh_token_.empty()) {
+        throw std::runtime_error("OpenAI OAuth access token expired and no refresh token is configured");
+    }
+
+    json refresh_req;
+    refresh_req["grant_type"] = "refresh_token";
+    refresh_req["refresh_token"] = oauth_refresh_token_;
+    if (!oauth_client_id_.empty()) {
+        refresh_req["client_id"] = oauth_client_id_;
+    }
+
+    auto refresh_resp = http_.post(
+        oauth_token_url_,
+        refresh_req.dump(),
+        {{"Content-Type", "application/json"}});
+
+    if (refresh_resp.status_code < 200 || refresh_resp.status_code >= 300) {
+        throw std::runtime_error("OpenAI OAuth refresh failed (HTTP " +
+            std::to_string(refresh_resp.status_code) + "): " + refresh_resp.body);
+    }
+
+    auto token_json = json::parse(refresh_resp.body);
+    oauth_access_token_ = token_json.value("access_token", "");
+    if (oauth_access_token_.empty()) {
+        throw std::runtime_error("OpenAI OAuth refresh response missing access_token");
+    }
+
+    auto expires_in = token_json.value("expires_in", 3600u);
+    oauth_expires_at_ = now + static_cast<uint64_t>(expires_in);
+
+    // Some providers rotate refresh token.
+    std::string new_refresh = token_json.value("refresh_token", "");
+    if (!new_refresh.empty()) {
+        oauth_refresh_token_ = new_refresh;
+    }
+}
+
 std::vector<Header> OpenAIProvider::build_headers() const {
+    auto* self = const_cast<OpenAIProvider*>(this);
+    std::string token = self->bearer_token();
     return {
-        {"Authorization", "Bearer " + api_key_},
+        {"Authorization", "Bearer " + token},
         {"Content-Type", "application/json"}
     };
 }

@@ -3,7 +3,7 @@
 
 static ptrclaw::ProviderRegistrar reg_compatible("compatible",
     [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url,
-       bool /* prompt_caching */) {
+       bool /* prompt_caching */, const ptrclaw::ProviderEntry&) {
         return std::make_unique<ptrclaw::CompatibleProvider>(key, http, base_url);
     });
 
