@@ -115,13 +115,13 @@ TEST_CASE("build_authorize_url: contains all required params", "[oauth]") {
     REQUIRE(url.find("response_type=code") != std::string::npos);
     REQUIRE(url.find("client_id=test-client") != std::string::npos);
     REQUIRE(url.find("redirect_uri=") != std::string::npos);
-    REQUIRE(url.find("scope=") != std::string::npos);
+    REQUIRE(url.find("scope=openid+profile+email+offline_access") != std::string::npos);
     REQUIRE(url.find("code_challenge=test-challenge") != std::string::npos);
     REQUIRE(url.find("code_challenge_method=S256") != std::string::npos);
     REQUIRE(url.find("state=test-state") != std::string::npos);
     REQUIRE(url.find("id_token_add_organizations=true") != std::string::npos);
     REQUIRE(url.find("codex_cli_simplified_flow=true") != std::string::npos);
-    REQUIRE(url.find("originator=codex_cli_rs") != std::string::npos);
+    REQUIRE(url.find("originator=pi") != std::string::npos);
 }
 
 TEST_CASE("build_authorize_url: starts with authorize base URL", "[oauth]") {

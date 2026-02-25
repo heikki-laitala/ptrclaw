@@ -9,6 +9,7 @@
 #include <openssl/sha.h>
 #endif
 #include <nlohmann/json.hpp>
+#include <random>
 #include <sstream>
 #include <iomanip>
 #include <fstream>
@@ -98,8 +99,13 @@ std::string form_encode(const std::vector<std::pair<std::string, std::string>>& 
 // ── PKCE helpers ─────────────────────────────────────────────────
 
 std::string make_code_verifier() {
-    auto id = generate_id() + generate_id();
-    return base64url_encode(reinterpret_cast<const unsigned char*>(id.data()), id.size());
+    // 32 random bytes → base64url (43 chars), matching OpenAI Codex PKCE spec
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    std::uniform_int_distribution<unsigned> dist(0, 255);
+    unsigned char buf[32];
+    for (auto& b : buf) b = static_cast<unsigned char>(dist(gen));
+    return base64url_encode(buf, sizeof(buf));
 }
 
 std::string make_code_challenge_s256(const std::string& verifier) {
@@ -120,15 +126,17 @@ std::string build_authorize_url(const std::string& client_id,
                                 const std::string& redirect_uri,
                                 const std::string& code_challenge,
                                 const std::string& state) {
-    std::string scope = "openid profile email offline_access";
+    // Use '+' for spaces (application/x-www-form-urlencoded) to match
+    // JavaScript URLSearchParams behavior used by working implementations.
+    std::string scope = "openid+profile+email+offline_access";
     return std::string(kDefaultAuthorizeBaseUrl) +
         "?response_type=code"
         "&client_id=" + oauth_url_encode(client_id) +
         "&redirect_uri=" + oauth_url_encode(redirect_uri) +
-        "&scope=" + oauth_url_encode(scope) +
-        "&state=" + oauth_url_encode(state) +
+        "&scope=" + scope +
         "&code_challenge=" + oauth_url_encode(code_challenge) +
         "&code_challenge_method=S256"
+        "&state=" + oauth_url_encode(state) +
         "&id_token_add_organizations=true"
         "&codex_cli_simplified_flow=true"
         "&originator=" + oauth_url_encode(kDefaultOriginator);

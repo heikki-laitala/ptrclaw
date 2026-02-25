@@ -17,7 +17,7 @@ constexpr const char* kDefaultRedirectUri = "http://localhost:1455/auth/callback
 constexpr const char* kDefaultTokenUrl = "https://auth.openai.com/oauth/token";
 constexpr const char* kDefaultAuthorizeBaseUrl = "https://auth.openai.com/oauth/authorize";
 constexpr const char* kDefaultOAuthModel = "gpt-5-codex-mini";
-constexpr const char* kDefaultOriginator = "codex_cli_rs";
+constexpr const char* kDefaultOriginator = "pi";
 
 // ── URL encoding ─────────────────────────────────────────────────
 std::string oauth_url_encode(const std::string& s);
