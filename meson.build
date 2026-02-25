@@ -22,6 +22,13 @@ else
   http_impl_source = files('src/http.cpp')
 endif
 
+# SHA-256 for PKCE S256 code challenge.
+# macOS: use CommonCrypto (system framework, no extra deps, no Keychain prompts).
+# Linux: OpenSSL is already linked via http_dep.
+if host_system != 'linux'
+  add_project_arguments('-DPTRCLAW_USE_COMMONCRYPTO', language: 'cpp')
+endif
+
 inc = include_directories('include', 'src')
 
 # ── Feature flag dependency resolution ─────────────────────────

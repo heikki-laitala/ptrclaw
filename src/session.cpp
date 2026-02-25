@@ -5,7 +5,11 @@
 #include "util.hpp"
 
 #include <nlohmann/json.hpp>
+#ifdef PTRCLAW_USE_COMMONCRYPTO
+#include <CommonCrypto/CommonDigest.h>
+#else
 #include <openssl/sha.h>
+#endif
 #include <sstream>
 #include <iomanip>
 #include <fstream>
@@ -67,9 +71,15 @@ std::string make_code_verifier() {
 }
 
 std::string make_code_challenge_s256(const std::string& verifier) {
+#ifdef PTRCLAW_USE_COMMONCRYPTO
+    unsigned char hash[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(verifier.data(), static_cast<CC_LONG>(verifier.size()), hash);
+    return base64url_encode(hash, CC_SHA256_DIGEST_LENGTH);
+#else
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256(reinterpret_cast<const unsigned char*>(verifier.data()), verifier.size(), hash);
     return base64url_encode(hash, SHA256_DIGEST_LENGTH);
+#endif
 }
 
 std::string query_param(const std::string& input, const std::string& key) {
