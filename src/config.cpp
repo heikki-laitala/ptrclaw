@@ -26,7 +26,7 @@ nlohmann::json Config::defaults_json() {
             {"max_tool_iterations", 10},
             {"max_history_messages", 50},
             {"token_limit", 128000},
-            {"disable_streaming", false}
+            {"disable_streaming", true}
         }},
         {"channels", {
             {"telegram", {{"bot_token", ""}, {"allow_from", nlohmann::json::array()}, {"reply_in_private", true}, {"proxy", ""}}},
