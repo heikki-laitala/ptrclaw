@@ -8,10 +8,12 @@
 #include <mutex>
 #include <cstdint>
 #include <optional>
+#include <functional>
 
 namespace ptrclaw {
 
 class EventBus; // forward declaration
+struct MessageReceivedEvent; // forward declaration
 
 struct Session {
     std::string id;
@@ -67,6 +69,9 @@ private:
     void set_pending_oauth(const std::string& session_id, PendingOAuth pending);
     void clear_pending_oauth(const std::string& session_id);
     void setup_oauth_refresh_callback(Provider* provider);
+    bool handle_auth_command(const MessageReceivedEvent& ev,
+                             Agent& agent,
+                             const std::function<void(const std::string&)>& send_reply);
 };
 
 } // namespace ptrclaw
