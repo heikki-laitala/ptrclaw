@@ -200,7 +200,7 @@ json OpenAIProvider::build_responses_request(
 
     json request;
     request["model"] = model;
-    request["temperature"] = temperature;
+    request["store"] = false;
 
     // Extract system prompt → "instructions"
     std::string instructions;
