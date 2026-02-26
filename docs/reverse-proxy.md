@@ -13,7 +13,7 @@ Meta Cloud API ──► reverse proxy (TLS, rate-limit) ──► 127.0.0.1:808
 - A server with a public IP and a domain name (e.g. `bot.example.com`)
 - A TLS certificate (e.g. [Let's Encrypt](https://letsencrypt.org/))
 - A reverse proxy installed (nginx or Caddy)
-- Meta WhatsApp Business credentials (see [README](../README.md#how-to-get-whatsapp-cloud-api-credentials))
+- Meta WhatsApp Business credentials (see [whatsapp.md](whatsapp.md))
 
 ## Step-by-step setup
 

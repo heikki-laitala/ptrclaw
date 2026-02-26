@@ -256,44 +256,11 @@ Optional hardening:
   - **Enable** privacy mode for group chats where you only want commands/mentions.
   - **Disable** privacy mode if your bot needs to read all group messages.
 
-### How to get WhatsApp Cloud API credentials
+### WhatsApp setup
 
-> **Note:** WhatsApp is not included in the default build. Enable it with `-Dwith_whatsapp=true` at configure time (see [Feature flags](#feature-flags)).
+WhatsApp is not included in the default build — enable it with `-Dwith_whatsapp=true`. It requires Meta Cloud API credentials and a webhook server behind a reverse proxy.
 
-Use Meta's WhatsApp Business Platform (Cloud API).
-
-1. Go to [Meta for Developers](https://developers.facebook.com/), create/select an app.
-2. Add the **WhatsApp** product to the app.
-3. In **WhatsApp > API Setup**, copy:
-   - **Temporary access token** (for testing) or create a **system user permanent token**
-   - **Phone number ID**
-4. Configure webhook in **WhatsApp > Configuration**:
-   - Callback URL: your public webhook endpoint
-   - Verify token: choose a secret string (you define this)
-   - Subscribe to `messages` (and other events you need)
-5. Add values to env/config:
-
-```sh
-export WHATSAPP_ACCESS_TOKEN="EAA..."
-export WHATSAPP_PHONE_ID="123456789"
-export WHATSAPP_VERIFY_TOKEN="your-verify-secret"
-```
-
-6. Configure the webhook server (required — WhatsApp delivers messages via webhooks):
-
-```sh
-export WHATSAPP_WEBHOOK_LISTEN="127.0.0.1:8080"
-export WHATSAPP_WEBHOOK_SECRET="$(openssl rand -hex 32)"
-./builddir/ptrclaw --channel whatsapp
-```
-
-PtrClaw includes a built-in HTTP server that receives webhook calls from Meta.
-It binds to localhost and must sit behind a reverse proxy (nginx, Caddy) that
-handles TLS and rate-limiting. See [`docs/reverse-proxy.md`](docs/reverse-proxy.md) for full setup.
-
-Notes:
-- Temporary tokens expire; use a long-lived token for production.
-- Point Meta's webhook callback URL at your reverse proxy's public HTTPS endpoint.
+See [`docs/whatsapp.md`](docs/whatsapp.md) for credentials setup and [`docs/reverse-proxy.md`](docs/reverse-proxy.md) for proxy configuration.
 
 ## Usage
 
@@ -447,7 +414,8 @@ src/
 tests/                  Catch2 unit tests
 docs/
   openai-oauth.md       OpenAI OAuth PKCE flow, token refresh, and config format
-  reverse-proxy.md      Reverse-proxy setup for WhatsApp webhooks (nginx, Caddy, Docker)
+  reverse-proxy.md      Reverse-proxy setup for WhatsApp webhooks (nginx, Caddy)
+  whatsapp.md           WhatsApp Cloud API credentials and webhook setup
 meson_options.txt       Compile-time feature flags
 ```
 
