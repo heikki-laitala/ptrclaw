@@ -197,21 +197,34 @@ void SessionManager::subscribe_events() {
 
             // Handle /models command
             if (ev.message.content == "/models") {
-                auto infos = list_providers(config_, agent.provider_name());
+                // Current state
+                std::string auth_mode = "API key";
+                if (agent.provider_name() == "openai") {
+                    auto oai = config_.providers.find("openai");
+                    if (oai != config_.providers.end() && oai->second.use_oauth)
+                        auth_mode = "OAuth";
+                } else if (config_.providers.count(agent.provider_name()) &&
+                           config_.providers.at(agent.provider_name()).api_key.empty()) {
+                    auth_mode = "local";
+                }
+                std::string result = "Current: ";
+                result += agent.provider_name();
+                result += " — ";
+                result += agent.model();
+                result += " (";
+                result += auth_mode;
+                result += ")\n\nProviders:\n";
 
-                std::string result = "Configured providers:\n";
+                // Provider list
+                auto infos = list_providers(config_, agent.provider_name());
                 for (const auto& info : infos) {
-                    result += info.active ? "* " : "  ";
+                    result += "  ";
                     result += info.name;
-                    if (info.has_api_key && info.has_oauth)
-                        result += " — API key + OAuth";
-                    else if (info.has_api_key)
-                        result += " — API key";
-                    else if (info.has_oauth)
-                        result += " — OAuth";
-                    else if (info.is_local)
-                        result += " — local";
-                    if (info.active) result += "  [model: " + agent.model() + "]";
+                    result += " — ";
+                    if (info.has_api_key) result += "API key";
+                    if (info.has_api_key && info.has_oauth) result += ", ";
+                    if (info.has_oauth) result += "OAuth (codex models)";
+                    if (info.is_local) result += "local";
                     result += "\n";
                 }
                 result += "\nSwitch: /provider <name> [model]";

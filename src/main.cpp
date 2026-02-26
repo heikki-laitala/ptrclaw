@@ -410,21 +410,30 @@ int main(int argc, char* argv[]) try {
                 agent.set_model(new_model);
                 std::cout << "Model set to: " << new_model << "\n";
             } else if (line == "/models") {
-                auto infos = ptrclaw::list_providers(config, agent.provider_name());
+                // Current state
+                std::string auth_mode = "API key";
+                if (agent.provider_name() == "openai") {
+                    auto oai = config.providers.find("openai");
+                    if (oai != config.providers.end() && oai->second.use_oauth)
+                        auth_mode = "OAuth";
+                } else if (config.providers.count(agent.provider_name()) &&
+                           config.providers.at(agent.provider_name()).api_key.empty()) {
+                    auth_mode = "local";
+                }
+                std::cout << "Current: " << agent.provider_name()
+                          << " — " << agent.model()
+                          << " (" << auth_mode << ")\n\n";
 
-                std::cout << "Configured providers:\n";
+                // Provider list
+                auto infos = ptrclaw::list_providers(config, agent.provider_name());
+                std::cout << "Providers:\n";
                 for (const auto& info : infos) {
-                    std::cout << (info.active ? "* " : "  ") << info.name;
-                    for (size_t i = info.name.size(); i < 15; ++i) std::cout << ' ';
-                    if (info.has_api_key && info.has_oauth)
-                        std::cout << "API key + OAuth";
-                    else if (info.has_api_key)
-                        std::cout << "API key";
-                    else if (info.has_oauth)
-                        std::cout << "OAuth";
-                    else if (info.is_local)
-                        std::cout << "local";
-                    if (info.active) std::cout << "    model: " << agent.model();
+                    std::cout << "  " << info.name;
+                    for (size_t i = info.name.size(); i < 13; ++i) std::cout << ' ';
+                    if (info.has_api_key) std::cout << "API key";
+                    if (info.has_api_key && info.has_oauth) std::cout << ", ";
+                    if (info.has_oauth) std::cout << "OAuth (codex models)";
+                    if (info.is_local) std::cout << "local";
                     std::cout << "\n";
                 }
                 std::cout << "\nSwitch: /provider <name> [model]\n";
