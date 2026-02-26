@@ -4,8 +4,6 @@
 #include "event_bus.hpp"
 #include "prompt.hpp"
 #include "util.hpp"
-#include "providers/openai.hpp"
-
 #include <nlohmann/json.hpp>
 
 namespace ptrclaw {
@@ -43,7 +41,7 @@ Agent& SessionManager::get_session(const std::string& session_id) {
         config_.base_url_for(config_.provider),
         config_.prompt_caching_for(config_.provider),
         ep);
-    setup_oauth_refresh_callback(provider.get());
+    setup_oauth_refresh(provider.get(), config_);
 
     auto tools = create_builtin_tools();
 
@@ -126,18 +124,6 @@ void SessionManager::clear_pending_oauth(const std::string& session_id) {
     pending_oauth_.erase(session_id);
 }
 
-void SessionManager::setup_oauth_refresh_callback(Provider* provider) {
-    auto* oai = dynamic_cast<OpenAIProvider*>(provider);
-    if (!oai) return;
-    oai->set_on_token_refresh(
-        [this](const std::string& at, const std::string& rt, uint64_t ea) {
-            auto& entry = config_.providers["openai"];
-            entry.oauth_access_token = at;
-            entry.oauth_refresh_token = rt;
-            entry.oauth_expires_at = ea;
-            persist_openai_oauth(entry);
-        });
-}
 
 void SessionManager::subscribe_events() {
     if (!event_bus_) return;
@@ -208,15 +194,8 @@ void SessionManager::subscribe_events() {
 
             // Handle /models command
             if (ev.message.content == "/models") {
-                // Current state
-                std::string auth_mode = "API key";
-                if (agent.provider_name() == "openai") {
-                    if (agent.model().find("codex") != std::string::npos)
-                        auth_mode = "OAuth";
-                } else if (config_.providers.count(agent.provider_name()) &&
-                           config_.providers.at(agent.provider_name()).api_key.empty()) {
-                    auth_mode = "local";
-                }
+                std::string auth_mode = auth_mode_label(
+                    agent.provider_name(), agent.model(), config_);
                 std::string result = "Current: ";
                 result += agent.provider_name();
                 result += " — ";
@@ -253,7 +232,7 @@ void SessionManager::subscribe_events() {
                 if (!sr.error.empty()) {
                     send_reply(sr.error);
                 } else {
-                    setup_oauth_refresh_callback(sr.provider.get());
+                    setup_oauth_refresh(sr.provider.get(), config_);
                     agent.set_provider(std::move(sr.provider));
                     if (!sr.model.empty()) agent.set_model(sr.model);
                     config_.provider = prov_name;
@@ -289,7 +268,7 @@ bool SessionManager::handle_auth_command(
                              const std::string& code) {
         auto r = apply_oauth_result(code, pending, config_, http_);
         if (!r.success) { send_reply(r.error); return; }
-        setup_oauth_refresh_callback(r.provider.get());
+        setup_oauth_refresh(r.provider.get(), config_);
         agent.set_provider(std::move(r.provider));
         agent.set_model(kDefaultOAuthModel);
         clear_pending_oauth(ev.session_id);
