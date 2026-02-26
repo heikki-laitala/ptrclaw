@@ -332,6 +332,16 @@ void Agent::clear_history() {
     last_prompt_tokens_ = 0;
 }
 
+void Agent::set_model(const std::string& model) {
+    model_ = model;
+    if (system_prompt_injected_ && !history_.empty()) {
+        if (history_[0].role == Role::System) {
+            history_.erase(history_.begin());
+        }
+        system_prompt_injected_ = false;
+    }
+}
+
 void Agent::set_provider(std::unique_ptr<Provider> provider) {
     provider_ = std::move(provider);
     // Re-inject system prompt on next process() call since tool support may differ
