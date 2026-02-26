@@ -133,8 +133,7 @@ void SessionManager::subscribe_events() {
 
             auto begin_hatch = [&]() {
                 agent.start_hatch();
-                send_reply(agent.process(
-                    "The user wants to start hatching. Begin the interview."));
+                send_reply(agent.process("Begin the hatching interview."));
             };
 
             // Handle /start command

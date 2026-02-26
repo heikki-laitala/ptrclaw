@@ -183,32 +183,20 @@ bool setup_provider(Config& config, HttpClient& http) {
         read_line(url);
         if (url.empty()) url = current_url;
         config.providers[chosen].base_url = url;
-    } else if (chosen == "openai") {
-        // OpenAI: offer API key or OAuth login
-        std::cout << "Authentication method:\n"
-                  << "  1. API key\n"
-                  << "  2. OAuth login (ChatGPT subscription)\n"
-                  << "> " << std::flush;
-        int auth_choice = read_choice(2);
-        if (auth_choice == 2) {
-            return setup_openai_oauth(config, http);
-        }
-        // Fall through to API key prompt
-        std::cout << "Enter your OpenAI API key: " << std::flush;
-        std::string api_key;
-        if (!read_line(api_key) || api_key.empty()) {
-            std::cout << "No API key provided.\n";
-            return false;
-        }
-        config.providers[chosen].api_key = api_key;
-        persist_provider_key(chosen, api_key);
     } else {
-        // Prompt for API key
-        std::string key_name = chosen;
-        if (chosen == "anthropic") key_name = "Anthropic";
-        else if (chosen == "openrouter") key_name = "OpenRouter";
+        // OpenAI: offer OAuth as alternative to API key
+        if (chosen == "openai") {
+            std::cout << "Authentication method:\n"
+                      << "  1. API key\n"
+                      << "  2. OAuth login (ChatGPT subscription)\n"
+                      << "> " << std::flush;
+            int auth_choice = read_choice(2);
+            if (auth_choice == 2) {
+                return setup_openai_oauth(config, http);
+            }
+        }
 
-        std::cout << "Enter your " << key_name << " API key: " << std::flush;
+        std::cout << "Enter your " << provider_label(chosen) << " API key: " << std::flush;
         std::string api_key;
         if (!read_line(api_key) || api_key.empty()) {
             std::cout << "No API key provided.\n";
