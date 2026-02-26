@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <cstdint>
+#include <functional>
 #include <unordered_map>
 #include <nlohmann/json.hpp>
 
@@ -79,5 +80,9 @@ struct Config {
     // Persist provider + model selection to config file
     bool persist_selection() const;
 };
+
+// Read-modify-write ~/.ptrclaw/config.json atomically.
+// The callback receives a mutable reference to the parsed JSON.
+bool modify_config_json(const std::function<void(nlohmann::json&)>& modifier);
 
 } // namespace ptrclaw

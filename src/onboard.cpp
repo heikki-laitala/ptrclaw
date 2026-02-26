@@ -6,7 +6,6 @@
 #include <vector>
 #include <algorithm>
 #include <nlohmann/json.hpp>
-#include <fstream>
 
 namespace ptrclaw {
 
@@ -59,51 +58,33 @@ int read_choice(int max) {
     try {
         int n = std::stoi(line);
         if (n >= 1 && n <= max) return n;
-    } catch (...) { return false; }
+    } catch (...) { return 0; }
     return 0;
 }
 
 // Persist a provider's API key to config.json
 bool persist_provider_key(const std::string& provider, const std::string& api_key) {
-    std::string path = expand_home("~/.ptrclaw/config.json");
-    nlohmann::json j;
-    {
-        std::ifstream in(path);
-        if (!in.is_open()) return false;
-        try { in >> j; } catch (...) { return false; }
-    }
-
-    if (!j.contains("providers") || !j["providers"].is_object())
-        j["providers"] = nlohmann::json::object();
-    if (!j["providers"].contains(provider) || !j["providers"][provider].is_object())
-        j["providers"][provider] = nlohmann::json::object();
-
-    j["providers"][provider]["api_key"] = api_key;
-    return atomic_write_file(path, j.dump(4) + "\n");
+    return modify_config_json([&](nlohmann::json& j) {
+        if (!j.contains("providers") || !j["providers"].is_object())
+            j["providers"] = nlohmann::json::object();
+        if (!j["providers"].contains(provider) || !j["providers"][provider].is_object())
+            j["providers"][provider] = nlohmann::json::object();
+        j["providers"][provider]["api_key"] = api_key;
+    });
 }
 
 // Persist a channel's config to config.json
 bool persist_channel_token(const std::string& channel,
                            const nlohmann::json& channel_json) {
-    std::string path = expand_home("~/.ptrclaw/config.json");
-    nlohmann::json j;
-    {
-        std::ifstream in(path);
-        if (!in.is_open()) return false;
-        try { in >> j; } catch (...) { return false; }
-    }
-
-    if (!j.contains("channels") || !j["channels"].is_object())
-        j["channels"] = nlohmann::json::object();
-    if (!j["channels"].contains(channel) || !j["channels"][channel].is_object())
-        j["channels"][channel] = nlohmann::json::object();
-
-    // Merge new values into existing channel config
-    for (auto& [key, val] : channel_json.items()) {
-        j["channels"][channel][key] = val;
-    }
-
-    return atomic_write_file(path, j.dump(4) + "\n");
+    return modify_config_json([&](nlohmann::json& j) {
+        if (!j.contains("channels") || !j["channels"].is_object())
+            j["channels"] = nlohmann::json::object();
+        if (!j["channels"].contains(channel) || !j["channels"][channel].is_object())
+            j["channels"][channel] = nlohmann::json::object();
+        for (auto& [key, val] : channel_json.items()) {
+            j["channels"][channel][key] = val;
+        }
+    });
 }
 
 // Step 1: Provider setup
