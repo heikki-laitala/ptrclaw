@@ -31,7 +31,7 @@ public:
     void clear_history();
 
     // Switch model
-    void set_model(const std::string& model) { model_ = model; }
+    void set_model(const std::string& model);
     const std::string& model() const { return model_; }
 
     // Switch provider
