@@ -332,8 +332,7 @@ void Agent::clear_history() {
     last_prompt_tokens_ = 0;
 }
 
-void Agent::set_model(const std::string& model) {
-    model_ = model;
+void Agent::invalidate_system_prompt() {
     if (system_prompt_injected_ && !history_.empty()) {
         if (history_[0].role == Role::System) {
             history_.erase(history_.begin());
@@ -342,16 +341,14 @@ void Agent::set_model(const std::string& model) {
     }
 }
 
+void Agent::set_model(const std::string& model) {
+    model_ = model;
+    invalidate_system_prompt();
+}
+
 void Agent::set_provider(std::unique_ptr<Provider> provider) {
     provider_ = std::move(provider);
-    // Re-inject system prompt on next process() call since tool support may differ
-    if (system_prompt_injected_ && !history_.empty()) {
-        // Remove the old system prompt
-        if (history_[0].role == Role::System) {
-            history_.erase(history_.begin());
-        }
-        system_prompt_injected_ = false;
-    }
+    invalidate_system_prompt();
 }
 
 std::string Agent::provider_name() const {
