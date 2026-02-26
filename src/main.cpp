@@ -424,8 +424,7 @@ int main(int argc, char* argv[]) try {
                 // Current state
                 std::string auth_mode = "API key";
                 if (agent.provider_name() == "openai") {
-                    auto oai = config.providers.find("openai");
-                    if (oai != config.providers.end() && oai->second.use_oauth)
+                    if (agent.model().find("codex") != std::string::npos)
                         auth_mode = "OAuth";
                 } else if (config.providers.count(agent.provider_name()) &&
                            config.providers.at(agent.provider_name()).api_key.empty()) {

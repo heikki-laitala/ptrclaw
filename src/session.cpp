@@ -211,8 +211,7 @@ void SessionManager::subscribe_events() {
                 // Current state
                 std::string auth_mode = "API key";
                 if (agent.provider_name() == "openai") {
-                    auto oai = config_.providers.find("openai");
-                    if (oai != config_.providers.end() && oai->second.use_oauth)
+                    if (agent.model().find("codex") != std::string::npos)
                         auth_mode = "OAuth";
                 } else if (config_.providers.count(agent.provider_name()) &&
                            config_.providers.at(agent.provider_name()).api_key.empty()) {
