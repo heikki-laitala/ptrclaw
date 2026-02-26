@@ -20,7 +20,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 
 - **LLM streaming** — real-time token streaming with progressive message editing in channels
 - **Event-driven architecture** — publish/subscribe event bus decouples agent, channels, and streaming
-- **Interactive REPL** with slash commands (`/status`, `/model`, `/models`, `/provider`, `/clear`, `/memory`, `/auth`, `/hatch`, `/help`, `/quit`; `/soul` available in `--dev` mode)
+- **Interactive REPL** with slash commands (`/status`, `/model`, `/models`, `/provider`, `/clear`, `/memory`, `/auth`, `/onboard`, `/hatch`, `/help`, `/quit`; `/soul` available in `--dev` mode)
 - **Single-message mode** — pipe a question in and get an answer back
 - **Automatic history compaction** when token usage approaches the context limit
 - **Persistent memory** — knowledge graph with bidirectional links, three-space semantics (core/knowledge/conversation), graph-aware context enrichment, automatic conversation synthesis
@@ -37,12 +37,21 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 git clone https://github.com/heikki-laitala/ptrclaw.git && cd ptrclaw
 make deps    # install build dependencies
 make build   # compile (output: builddir/ptrclaw)
+./builddir/ptrclaw
+```
 
+On first run, PtrClaw detects that no provider credentials are configured and launches an interactive setup wizard. It walks you through choosing a provider, entering credentials (API key or OAuth), optionally setting up a messaging channel, and creating a personality for your assistant.
+
+You can re-run the wizard at any time with `/onboard`, or set credentials individually with `/auth <provider>`.
+
+If you prefer manual setup, set an environment variable or create a config file (see [Configuration](#configuration)):
+
+```sh
 export ANTHROPIC_API_KEY=sk-ant-...
 ./builddir/ptrclaw
 ```
 
-That's it. No virtual environments, no package managers at runtime.
+No virtual environments, no package managers at runtime.
 
 ## Requirements
 
@@ -160,45 +169,55 @@ Environment variables override the config file:
 | `WHATSAPP_WEBHOOK_LISTEN` | Bind address for built-in webhook server (e.g. `127.0.0.1:8080`) |
 | `WHATSAPP_WEBHOOK_SECRET` | Shared secret for proxy→local trust (`X-Webhook-Secret` header) |
 
+### Setting credentials with `/auth`
+
+```text
+/auth                    Show auth status for all providers
+/auth <provider>         Set credentials interactively
+```
+
+```text
+ptrclaw> /auth
+Auth status:
+  Anthropic (Claude)         not configured
+  OpenAI (GPT)               not configured
+  OpenRouter (multi-model)   not configured
+  Ollama (local)             http://localhost:11434
+
+Set credentials: /auth <provider>
+
+ptrclaw> /auth anthropic
+Enter your Anthropic (Claude) API key: sk-ant-...
+Saved.
+```
+
+For OpenAI, `/auth openai` offers a choice between API key and OAuth login:
+
+```text
+ptrclaw> /auth openai
+Authentication method:
+  1. API key
+  2. OAuth login (ChatGPT subscription)
+> 2
+
+Open this URL to authorize:
+https://auth.openai.com/oauth/authorize?...
+
+Paste the callback URL or code: http://localhost:1455/auth/callback?code=...
+OAuth connected. Model switched to gpt-5-codex-mini.
+```
+
+For Ollama, `/auth ollama` prompts for the base URL.
+
+In Telegram and other channels, use `/auth <provider> <api_key>` to set a key directly. OAuth uses the two-step flow: `/auth openai start` then `/auth openai finish <callback_url>`.
+
 ### OpenAI OAuth (codex models)
 
 OpenAI's codex models (e.g. `gpt-5-codex-mini`) can be accessed via OAuth using your OpenAI subscription (Plus, Pro, or Team) or via a regular API key. Some newer codex models (e.g. `gpt-5.3-codex`) are only available through OAuth. PtrClaw automatically prefers OAuth when tokens are available, falling back to the API key otherwise.
 
 **How it works:** PtrClaw runs a PKCE OAuth flow against `auth.openai.com`. You authorize in your browser, and PtrClaw exchanges the callback code for access and refresh tokens. Tokens are saved to `~/.ptrclaw/config.json` and refreshed automatically when they expire.
 
-**Setup (interactive — REPL or Telegram):**
-
-1. Run `/auth openai start` — PtrClaw prints an authorization URL
-2. Open the URL in your browser and sign in with your OpenAI account
-3. After approving, your browser redirects to `localhost:1455/auth/callback?code=...`
-   - The page won't load (there's no local server) — that's expected
-   - Copy the full URL from your browser's address bar
-4. Paste it back: `/auth openai finish <callback_url>`
-   - You can also paste just the `code` parameter value
-5. PtrClaw exchanges the code for tokens, saves them, and switches to the codex model
-
-```text
-ptrclaw> /auth openai start
-Open this URL to authorize OpenAI:
-https://auth.openai.com/oauth/authorize?response_type=code&client_id=...
-
-Then paste the full callback URL with:
-/auth openai finish <callback_url>
-(or paste just the code)
-
-ptrclaw> /auth openai finish http://localhost:1455/auth/callback?code=abc123&state=xyz
-OpenAI OAuth connected. Model switched to gpt-5-codex-mini. Saved to ~/.ptrclaw/config.json
-```
-
-In Telegram, the same flow works — send `/auth openai start` as a message, open the URL, and paste the callback URL back in the chat. You can also paste the callback URL directly without the `/auth openai finish` prefix while an auth flow is pending.
-
 **Auth mode auto-detection:** For codex models, PtrClaw uses OAuth when tokens are available and falls back to the API key. Non-codex models always use the API key. All codex models use the Responses API; other models use Chat Completions. You can have both API key and OAuth tokens configured and switch freely.
-
-**Checking auth status:**
-
-```text
-/auth status       # shows current OpenAI auth state and token expiry
-```
 
 **Config after OAuth setup:**
 
@@ -400,8 +419,9 @@ Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux stat
 
 ```text
 src/
-  main.cpp              CLI entry point and REPL
+  main.cpp              CLI entry point, REPL, and slash command handling
   agent.hpp/cpp         Agentic loop — chat, tool dispatch, history compaction
+  onboard.hpp/cpp       First-run setup wizard (provider, channel, personality)
   provider.hpp/cpp      Provider interface, types, listing, and runtime switching
   tool.hpp/cpp          Tool interface, ToolSpec, ToolResult
   channel.hpp/cpp       Channel interface, ChannelMessage
