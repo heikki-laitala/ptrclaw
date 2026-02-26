@@ -413,12 +413,16 @@ int main(int argc, char* argv[]) try {
                             setup_repl_oauth_refresh(sr.provider.get(), config);
                             agent.set_provider(std::move(sr.provider));
                             if (!sr.model.empty()) agent.set_model(sr.model);
+                            config.model = agent.model();
+                            config.persist_selection();
                             std::cout << "Model set to: " << agent.model() << "\n";
                         }
                         continue;
                     }
                 }
                 agent.set_model(new_model);
+                config.model = new_model;
+                config.persist_selection();
                 std::cout << "Model set to: " << new_model << "\n";
             } else if (line == "/models") {
                 // Current state
@@ -460,6 +464,9 @@ int main(int argc, char* argv[]) try {
                     setup_repl_oauth_refresh(sr.provider.get(), config);
                     agent.set_provider(std::move(sr.provider));
                     if (!sr.model.empty()) agent.set_model(sr.model);
+                    config.provider = prov_name;
+                    config.model = agent.model();
+                    config.persist_selection();
                     std::cout << "Switched to " << prov_name << " | Model: " << agent.model() << "\n";
                 }
             } else if (line == "/memory") {

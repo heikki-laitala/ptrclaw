@@ -256,6 +256,9 @@ void SessionManager::subscribe_events() {
                     setup_oauth_refresh_callback(sr.provider.get());
                     agent.set_provider(std::move(sr.provider));
                     if (!sr.model.empty()) agent.set_model(sr.model);
+                    config_.provider = prov_name;
+                    config_.model = agent.model();
+                    config_.persist_selection();
                     send_reply("Switched to " + prov_name + " | Model: " + agent.model());
                 }
                 return;

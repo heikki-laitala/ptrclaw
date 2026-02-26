@@ -254,4 +254,19 @@ nlohmann::json Config::channel_config(const std::string& name) const {
     return nlohmann::json::object();
 }
 
+bool Config::persist_selection() const {
+    std::string path = expand_home("~/.ptrclaw/config.json");
+    nlohmann::json j;
+    {
+        std::ifstream in(path);
+        if (!in.is_open()) return false;
+        try { in >> j; } catch (...) { return false; }
+    }
+
+    j["provider"] = provider;
+    j["model"] = model;
+
+    return atomic_write_file(path, j.dump(4) + "\n");
+}
+
 } // namespace ptrclaw

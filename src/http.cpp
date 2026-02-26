@@ -82,12 +82,15 @@ static size_t stream_write_callback(char* ptr, size_t size, size_t nmemb, void* 
 struct RawStreamContext {
     RawChunkCallback* callback;
     bool aborted = false;
+    std::string body;  // accumulate raw bytes for error reporting
 };
 
 static size_t raw_stream_write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
     size_t total = size * nmemb;
     auto* ctx = static_cast<RawStreamContext*>(userdata);
     if (ctx->aborted) return 0;
+
+    ctx->body.append(ptr, total);
 
     if (!(*ctx->callback)(ptr, total)) {
         ctx->aborted = true;
@@ -225,7 +228,9 @@ HttpResponse http_stream_post_raw(const std::string& url,
     ctx.callback = &callback;
     curl_easy_setopt(req.curl, CURLOPT_WRITEFUNCTION, raw_stream_write_callback);
     curl_easy_setopt(req.curl, CURLOPT_WRITEDATA, &ctx);
-    return perform(req.curl);
+    auto response = perform(req.curl);
+    response.body = std::move(ctx.body);
+    return response;
 }
 
 } // namespace ptrclaw
