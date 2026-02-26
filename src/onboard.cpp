@@ -235,9 +235,9 @@ void setup_channel(Config& config, HttpClient& http) {
 
     if (all_channels.empty()) return;
 
-    std::cout << "\nWould you like to set up a messaging channel? (y/n) [n]: "
+    std::cout << "\nWould you like to set up a messaging channel? (y/n) [y]: "
               << std::flush;
-    if (!ask_yes_no(false)) return;
+    if (!ask_yes_no(true)) return;
 
     std::cout << "\nAvailable channels:\n";
     for (size_t i = 0; i < all_channels.size(); ++i) {
