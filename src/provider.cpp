@@ -40,10 +40,12 @@ std::vector<ProviderInfo> list_providers(
             }
             continue;
         }
-        bool has_creds = !entry.api_key.empty() || !entry.base_url.empty();
-        if (!has_creds) continue;
-        std::string auth = !entry.api_key.empty() ? "API key" : "local";
-        result.push_back({name, auth, name == current_provider});
+        if (!entry.api_key.empty()) {
+            result.push_back({name, "API key", name == current_provider});
+        } else if (!entry.base_url.empty() && name == current_provider) {
+            // base_url-only providers (ollama, compatible) — only show when active
+            result.push_back({name, "local", true});
+        }
     }
     return result;
 }
