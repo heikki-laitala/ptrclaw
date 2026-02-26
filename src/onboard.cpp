@@ -308,7 +308,6 @@ bool run_onboard(Config& config, HttpClient& http, bool& hatch_requested) {
 bool needs_onboard(const Config& config) {
     for (const auto& [name, entry] : config.providers) {
         if (!entry.api_key.empty()) return false;
-        if (!entry.base_url.empty() && name == "ollama") return false;
         if (!entry.oauth_access_token.empty()) return false;
     }
     return true;
