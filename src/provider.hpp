@@ -101,12 +101,11 @@ struct ProviderInfo {
     bool active = false;
 };
 
-// Returns providers with valid credentials. current_provider and
-// current_use_oauth are used to mark the active entry.
+// Returns providers with valid credentials. current_provider is
+// used to mark the active entry.
 std::vector<ProviderInfo> list_providers(
     const Config& config,
-    const std::string& current_provider,
-    bool current_use_oauth);
+    const std::string& current_provider);
 
 // ── Provider switching ──────────────────────────────────────────
 struct SwitchProviderResult {
