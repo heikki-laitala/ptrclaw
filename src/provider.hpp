@@ -96,27 +96,29 @@ std::unique_ptr<Provider> create_provider(const std::string& name,
 
 // ── Provider listing ────────────────────────────────────────────
 struct ProviderInfo {
-    std::string name;   // display name (e.g. "openai-codex")
-    std::string auth;   // "API key", "OAuth", or "local"
+    std::string name;
     bool active = false;
+    bool has_api_key = false;
+    bool has_oauth = false;
+    bool is_local = false;
 };
 
-// Returns providers with valid credentials. current_provider is
-// used to mark the active entry.
 std::vector<ProviderInfo> list_providers(
     const Config& config,
     const std::string& current_provider);
 
 // ── Provider switching ──────────────────────────────────────────
+// For openai, auto-selects OAuth when the model name contains
+// "codex", otherwise uses the API key.
 struct SwitchProviderResult {
     std::unique_ptr<Provider> provider; // null on error
     std::string model;                  // resolved model name
-    std::string display_name;           // e.g. "openai-codex"
     std::string error;                  // non-empty on failure
 };
 
 SwitchProviderResult switch_provider(const std::string& name,
                                      const std::string& model_arg,
+                                     const std::string& current_model,
                                      Config& config,
                                      HttpClient& http);
 

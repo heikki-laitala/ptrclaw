@@ -389,6 +389,24 @@ int main(int argc, char* argv[]) try {
                 std::cout << "History cleared.\n";
             } else if (line.substr(0, 7) == "/model ") {
                 std::string new_model = line.substr(7);
+                // On openai, auto-switch auth mode if needed
+                if (agent.provider_name() == "openai") {
+                    bool on_oauth = config.providers.count("openai") &&
+                                    config.providers.at("openai").use_oauth;
+                    bool needs_oauth = new_model.find("codex") != std::string::npos;
+                    if (on_oauth != needs_oauth) {
+                        auto sr = ptrclaw::switch_provider("openai", new_model, agent.model(), config, http_client);
+                        if (!sr.error.empty()) {
+                            std::cout << sr.error << "\n";
+                        } else {
+                            setup_repl_oauth_refresh(sr.provider.get(), config);
+                            agent.set_provider(std::move(sr.provider));
+                            if (!sr.model.empty()) agent.set_model(sr.model);
+                            std::cout << "Model set to: " << agent.model() << "\n";
+                        }
+                        continue;
+                    }
+                }
                 agent.set_model(new_model);
                 std::cout << "Model set to: " << new_model << "\n";
             } else if (line == "/models") {
@@ -398,7 +416,14 @@ int main(int argc, char* argv[]) try {
                 for (const auto& info : infos) {
                     std::cout << (info.active ? "* " : "  ") << info.name;
                     for (size_t i = info.name.size(); i < 15; ++i) std::cout << ' ';
-                    std::cout << info.auth;
+                    if (info.has_api_key && info.has_oauth)
+                        std::cout << "API key + OAuth";
+                    else if (info.has_api_key)
+                        std::cout << "API key";
+                    else if (info.has_oauth)
+                        std::cout << "OAuth";
+                    else if (info.is_local)
+                        std::cout << "local";
                     if (info.active) std::cout << "    model: " << agent.model();
                     std::cout << "\n";
                 }
@@ -409,14 +434,14 @@ int main(int argc, char* argv[]) try {
                 std::string prov_name = (space == std::string::npos) ? args : args.substr(0, space);
                 std::string model_arg = (space == std::string::npos) ? "" : ptrclaw::trim(args.substr(space + 1));
 
-                auto sr = ptrclaw::switch_provider(prov_name, model_arg, config, http_client);
+                auto sr = ptrclaw::switch_provider(prov_name, model_arg, agent.model(), config, http_client);
                 if (!sr.error.empty()) {
                     std::cout << sr.error << "\n";
                 } else {
                     setup_repl_oauth_refresh(sr.provider.get(), config);
                     agent.set_provider(std::move(sr.provider));
                     if (!sr.model.empty()) agent.set_model(sr.model);
-                    std::cout << "Switched to " << sr.display_name << " | Model: " << agent.model() << "\n";
+                    std::cout << "Switched to " << prov_name << " | Model: " << agent.model() << "\n";
                 }
             } else if (line == "/memory") {
                 auto* mem = agent.memory();

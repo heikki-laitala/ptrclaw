@@ -203,8 +203,14 @@ void SessionManager::subscribe_events() {
                 for (const auto& info : infos) {
                     result += info.active ? "* " : "  ";
                     result += info.name;
-                    result += " — ";
-                    result += info.auth;
+                    if (info.has_api_key && info.has_oauth)
+                        result += " — API key + OAuth";
+                    else if (info.has_api_key)
+                        result += " — API key";
+                    else if (info.has_oauth)
+                        result += " — OAuth";
+                    else if (info.is_local)
+                        result += " — local";
                     if (info.active) result += "  [model: " + agent.model() + "]";
                     result += "\n";
                 }
@@ -220,14 +226,14 @@ void SessionManager::subscribe_events() {
                 std::string prov_name = (space == std::string::npos) ? args : args.substr(0, space);
                 std::string model_arg = (space == std::string::npos) ? "" : trim(args.substr(space + 1));
 
-                auto sr = switch_provider(prov_name, model_arg, config_, http_);
+                auto sr = switch_provider(prov_name, model_arg, agent.model(), config_, http_);
                 if (!sr.error.empty()) {
                     send_reply(sr.error);
                 } else {
                     setup_oauth_refresh_callback(sr.provider.get());
                     agent.set_provider(std::move(sr.provider));
                     if (!sr.model.empty()) agent.set_model(sr.model);
-                    send_reply("Switched to " + sr.display_name + " | Model: " + agent.model());
+                    send_reply("Switched to " + prov_name + " | Model: " + agent.model());
                 }
                 return;
             }
