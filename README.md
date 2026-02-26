@@ -20,7 +20,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 
 - **LLM streaming** — real-time token streaming with progressive message editing in channels
 - **Event-driven architecture** — publish/subscribe event bus decouples agent, channels, and streaming
-- **Interactive REPL** with slash commands (`/status`, `/model`, `/clear`, `/memory`, `/hatch`, `/help`, `/quit`; `/soul` available in `--dev` mode)
+- **Interactive REPL** with slash commands (`/status`, `/model`, `/models`, `/provider`, `/clear`, `/memory`, `/auth`, `/hatch`, `/help`, `/quit`; `/soul` available in `--dev` mode)
 - **Single-message mode** — pipe a question in and get an answer back
 - **Automatic history compaction** when token usage approaches the context limit
 - **Persistent memory** — knowledge graph with bidirectional links, three-space semantics (core/knowledge/conversation), graph-aware context enrichment, automatic conversation synthesis
@@ -91,7 +91,8 @@ Create `~/.ptrclaw/config.json`:
   "agent": {
     "max_tool_iterations": 10,
     "max_history_messages": 50,
-    "token_limit": 128000
+    "token_limit": 128000,
+    "disable_streaming": false
   },
   "memory": {
     "backend": "sqlite",
@@ -159,17 +160,57 @@ Environment variables override the config file:
 | `WHATSAPP_WEBHOOK_LISTEN` | Bind address for built-in webhook server (e.g. `127.0.0.1:8080`) |
 | `WHATSAPP_WEBHOOK_SECRET` | Shared secret for proxy→local trust (`X-Webhook-Secret` header) |
 
-OpenAI subscription OAuth example:
+### OpenAI OAuth (codex models)
+
+OpenAI's codex models (e.g. `gpt-5-codex-mini`) require OAuth authentication through your OpenAI subscription instead of an API key. This uses the same auth that powers ChatGPT and Codex CLI. You need an active OpenAI subscription (Plus, Pro, or Team) — API credits alone are not enough for codex models.
+
+**How it works:** PtrClaw runs a PKCE OAuth flow against `auth.openai.com`. You authorize in your browser, and PtrClaw exchanges the callback code for access and refresh tokens. Tokens are saved to `~/.ptrclaw/config.json` and refreshed automatically when they expire.
+
+**Setup (interactive — REPL or Telegram):**
+
+1. Run `/auth openai start` — PtrClaw prints an authorization URL
+2. Open the URL in your browser and sign in with your OpenAI account
+3. After approving, your browser redirects to `localhost:1455/auth/callback?code=...`
+   - The page won't load (there's no local server) — that's expected
+   - Copy the full URL from your browser's address bar
+4. Paste it back: `/auth openai finish <callback_url>`
+   - You can also paste just the `code` parameter value
+5. PtrClaw exchanges the code for tokens, saves them, and switches to the codex model
+
+```text
+ptrclaw> /auth openai start
+Open this URL to authorize OpenAI:
+https://auth.openai.com/oauth/authorize?response_type=code&client_id=...
+
+Then paste the full callback URL with:
+/auth openai finish <callback_url>
+(or paste just the code)
+
+ptrclaw> /auth openai finish http://localhost:1455/auth/callback?code=abc123&state=xyz
+OpenAI OAuth connected. Model switched to gpt-5-codex-mini. Saved to ~/.ptrclaw/config.json
+```
+
+In Telegram, the same flow works — send `/auth openai start` as a message, open the URL, and paste the callback URL back in the chat. You can also paste the callback URL directly without the `/auth openai finish` prefix while an auth flow is pending.
+
+**Auth mode auto-detection:** PtrClaw selects OAuth or API key based on the model name. Models containing "codex" use OAuth and the Responses API; all other OpenAI models use the API key and Chat Completions API. You can have both configured and switch freely.
+
+**Checking auth status:**
+
+```text
+/auth status       # shows current OpenAI auth state and token expiry
+```
+
+**Config after OAuth setup:**
 
 ```json
 {
   "provider": "openai",
-  "model": "gpt-5",
+  "model": "gpt-5-codex-mini",
   "providers": {
     "openai": {
-      "use_oauth": true,
-      "oauth_access_token": "<access-token>",
-      "oauth_refresh_token": "<refresh-token>",
+      "api_key": "sk-...",
+      "oauth_access_token": "<managed automatically>",
+      "oauth_refresh_token": "<managed automatically>",
       "oauth_expires_at": 1767225600,
       "oauth_client_id": "app_EMoamEEZ73f0CkXaXp7hrann"
     }
@@ -177,20 +218,27 @@ OpenAI subscription OAuth example:
 }
 ```
 
-Interactive setup (REPL or Telegram):
+You don't need to edit the OAuth fields manually — the `/auth` flow and automatic token refresh handle them. The `api_key` field is independent and used for non-codex OpenAI models.
+
+### Switching providers and models
 
 ```text
-/auth openai start
-# open returned URL, approve, then paste callback URL
-/auth openai finish <callback_url_or_code>
-/auth status
+/models                              # list configured providers and current model
+/provider openai gpt-4o-mini         # switch to OpenAI API key
+/provider openai gpt-5-codex-mini    # switch to OpenAI OAuth (codex)
+/provider anthropic claude-sonnet-4-6  # switch to Anthropic
+/model gpt-4o                        # switch model within current provider
 ```
 
-Notes:
+Provider and model changes are persisted to `~/.ptrclaw/config.json`.
+
+### Configuration notes
+
 - There is currently no `COMPATIBLE_API_KEY` env var; set `providers.compatible.api_key` in `~/.ptrclaw/config.json` when using the `compatible` provider.
 - `BASE_URL` overrides provider-specific base URLs for whichever provider is active.
 - `providers.anthropic.prompt_caching` controls Anthropic provider-side prompt caching (default: `true`). Set it to `false` to disable.
-- OpenAI OAuth tokens are refreshed in-memory when expired (if `oauth_refresh_token` is configured).
+- OpenAI OAuth tokens are refreshed automatically when they expire (requires `oauth_refresh_token`).
+- The `use_oauth` field in config is managed automatically — you don't need to set it manually.
 
 ### How to get a Telegram bot token
 
@@ -354,7 +402,7 @@ Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux stat
 src/
   main.cpp              CLI entry point and REPL
   agent.hpp/cpp         Agentic loop — chat, tool dispatch, history compaction
-  provider.hpp/cpp      Provider interface and types (ChatMessage, ChatResponse, ToolCall)
+  provider.hpp/cpp      Provider interface, types, listing, and runtime switching
   tool.hpp/cpp          Tool interface, ToolSpec, ToolResult
   channel.hpp/cpp       Channel interface, ChannelMessage
   config.hpp/cpp        Config loading (~/.ptrclaw/config.json + env vars)
@@ -364,6 +412,7 @@ src/
   stream_relay.hpp/cpp  Bridges stream events to progressive channel message editing
   dispatcher.hpp/cpp    XML tool-call parsing for non-native providers
   session.hpp/cpp       Multi-session management with idle eviction
+  oauth.hpp/cpp         OpenAI OAuth PKCE flow, token exchange, and refresh wiring
   prompt.hpp/cpp        System prompt builder
   http.hpp              HttpClient interface
   http_socket.cpp       Linux HTTP backend (POSIX sockets + OpenSSL)
@@ -375,7 +424,7 @@ src/
     webhook_server.hpp/cpp  Minimal HTTP server for receiving webhooks behind a reverse proxy
   providers/
     anthropic.cpp       Anthropic Messages API (streaming)
-    openai.cpp          OpenAI Chat Completions API (streaming)
+    openai.cpp          OpenAI Chat Completions + Responses API (streaming, OAuth)
     openrouter.cpp      OpenRouter (inherits OpenAI)
     ollama.cpp          Ollama local inference
     compatible.cpp      Generic OpenAI-compatible endpoint
