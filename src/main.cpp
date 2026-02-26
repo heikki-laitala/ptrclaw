@@ -570,9 +570,7 @@ int main(int argc, char* argv[]) try {
                 for (const auto& n : all) {
                     if (n == prov) { known = true; break; }
                 }
-                for (const auto& h : ptrclaw::kHiddenProviders) {
-                    if (h == prov) { known = false; break; }
-                }
+                if (ptrclaw::is_hidden_provider(prov)) known = false;
                 if (!known) {
                     std::cout << "Unknown provider: " << prov << "\n";
                 } else if (prov == "ollama") {
@@ -659,35 +657,8 @@ int main(int argc, char* argv[]) try {
                     }
                 }
             } else if (line == "/auth") {
-                // Show auth status for all providers
-                auto& reg = ptrclaw::PluginRegistry::instance();
-                auto all = reg.provider_names();
-                std::cout << "Auth status:\n";
-                for (const auto& name : all) {
-                    bool hidden = false;
-                    for (const auto& h : ptrclaw::kHiddenProviders) {
-                        if (h == name) { hidden = true; break; }
-                    }
-                    if (hidden) continue;
-                    auto it = config.providers.find(name);
-                    std::cout << "  " << ptrclaw::provider_label(name);
-                    // Pad to align status
-                    size_t label_len = std::string(ptrclaw::provider_label(name)).size();
-                    for (size_t i = label_len; i < 26; ++i) std::cout << ' ';
-                    if (it != config.providers.end() && name == "ollama") {
-                        std::cout << it->second.base_url;
-                    } else if (it != config.providers.end() && it->second.use_oauth) {
-                        std::cout << "OAuth";
-                        if (!it->second.oauth_access_token.empty())
-                            std::cout << " (token present)";
-                    } else if (it != config.providers.end() && !it->second.api_key.empty()) {
-                        std::cout << "API key";
-                    } else {
-                        std::cout << "not configured";
-                    }
-                    std::cout << "\n";
-                }
-                std::cout << "\nSet credentials: /auth <provider>\n";
+                std::cout << ptrclaw::format_auth_status(config)
+                          << "\nSet credentials: /auth <provider>\n";
             } else if (line == "/help") {
                 std::cout << "Commands:\n"
                           << "  /status          Show current status\n"

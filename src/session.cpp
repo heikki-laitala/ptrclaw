@@ -322,9 +322,7 @@ bool SessionManager::handle_auth_command(
             for (const auto& n : PluginRegistry::instance().provider_names()) {
                 if (n == prov) { known = true; break; }
             }
-            for (const auto& h : kHiddenProviders) {
-                if (h == prov) { known = false; break; }
-            }
+            if (is_hidden_provider(prov)) known = false;
             if (!known) {
                 send_reply("Unknown provider: " + prov);
             } else if (prov == "ollama") {
@@ -340,31 +338,9 @@ bool SessionManager::handle_auth_command(
         }
 
         // /auth — show status
-        std::string status = "Auth status:\n";
-        for (const auto& name : PluginRegistry::instance().provider_names()) {
-            bool hidden = false;
-            for (const auto& h : kHiddenProviders) {
-                if (h == name) { hidden = true; break; }
-            }
-            if (hidden) continue;
-            auto it = config_.providers.find(name);
-            status += "  " + std::string(provider_label(name)) + ": ";
-            if (it != config_.providers.end() && name == "ollama") {
-                status += it->second.base_url;
-            } else if (it != config_.providers.end() && it->second.use_oauth) {
-                status += "OAuth";
-                if (!it->second.oauth_access_token.empty())
-                    status += " (token present)";
-            } else if (it != config_.providers.end() && !it->second.api_key.empty()) {
-                status += "API key";
-            } else {
-                status += "not configured";
-            }
-            status += "\n";
-        }
-        status += "\nSet credentials: /auth <provider> <api_key>\n"
-                  "OAuth: /auth openai start";
-        send_reply(status);
+        send_reply(format_auth_status(config_) +
+                   "\nSet credentials: /auth <provider> <api_key>\n"
+                   "OAuth: /auth openai start");
         return true;
     }
 

@@ -12,6 +12,13 @@ namespace ptrclaw {
 
 const std::vector<std::string> kHiddenProviders = {"reliable", "compatible"};
 
+bool is_hidden_provider(const std::string& name) {
+    for (const auto& h : kHiddenProviders) {
+        if (h == name) return true;
+    }
+    return false;
+}
+
 const char* provider_label(const std::string& name) {
     if (name == "anthropic") return "Anthropic (Claude)";
     if (name == "openai") return "OpenAI (GPT)";
@@ -28,6 +35,33 @@ bool persist_provider_key(const std::string& provider, const std::string& api_ke
             j["providers"][provider] = nlohmann::json::object();
         j["providers"][provider]["api_key"] = api_key;
     });
+}
+
+std::string format_auth_status(const Config& config) {
+    auto& reg = PluginRegistry::instance();
+    std::string status = "Auth status:\n";
+    for (const auto& name : reg.provider_names()) {
+        if (is_hidden_provider(name)) continue;
+        auto it = config.providers.find(name);
+        status += "  ";
+        status += provider_label(name);
+        // Pad to align status column
+        size_t label_len = std::string(provider_label(name)).size();
+        for (size_t i = label_len; i < 26; ++i) status += ' ';
+        if (it != config.providers.end() && name == "ollama") {
+            status += it->second.base_url;
+        } else if (it != config.providers.end() && it->second.use_oauth) {
+            status += "OAuth";
+            if (!it->second.oauth_access_token.empty())
+                status += " (token present)";
+        } else if (it != config.providers.end() && !it->second.api_key.empty()) {
+            status += "API key";
+        } else {
+            status += "not configured";
+        }
+        status += "\n";
+    }
+    return status;
 }
 
 namespace {
@@ -133,10 +167,7 @@ bool setup_provider(Config& config, HttpClient& http) {
     // Filter to user-facing providers
     std::vector<std::string> names;
     for (const auto& name : all_names) {
-        bool hidden = std::find(kHiddenProviders.begin(),
-                                kHiddenProviders.end(), name)
-                      != kHiddenProviders.end();
-        if (!hidden) names.push_back(name);
+        if (!is_hidden_provider(name)) names.push_back(name);
     }
 
     // Sort: anthropic, openai, openrouter, ollama
