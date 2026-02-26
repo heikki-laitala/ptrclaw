@@ -1,7 +1,9 @@
 #include "session.hpp"
 #include "oauth.hpp"
+#include "onboard.hpp"
 #include "event.hpp"
 #include "event_bus.hpp"
+#include "plugin.hpp"
 #include "prompt.hpp"
 #include "util.hpp"
 #include <nlohmann/json.hpp>
@@ -269,31 +271,7 @@ bool SessionManager::handle_auth_command(
     if (ev.message.content.rfind("/auth", 0) == 0) {
         auto parts = split(ev.message.content, ' ');
 
-        if (parts.size() >= 2 && parts[1] == "status") {
-            auto it = config_.providers.find("openai");
-            if (it == config_.providers.end()) {
-                send_reply("No OpenAI provider config found.");
-                return true;
-            }
-            const auto& openai = it->second;
-            std::string status = "OpenAI auth: ";
-            if (openai.use_oauth) {
-                status += "OAuth enabled";
-                if (!openai.oauth_access_token.empty()) {
-                    status += " (token present)";
-                }
-                if (openai.oauth_expires_at > 0) {
-                    status += "\nExpires at (epoch): " + std::to_string(openai.oauth_expires_at);
-                }
-            } else if (!openai.api_key.empty()) {
-                status += "API key";
-            } else {
-                status += "not configured";
-            }
-            send_reply(status);
-            return true;
-        }
-
+        // /auth openai start — two-step OAuth flow
         if (parts.size() >= 3 && parts[1] == "openai" && parts[2] == "start") {
             auto openai_it = config_.providers.find("openai");
             if (openai_it == config_.providers.end()) {
@@ -304,16 +282,15 @@ bool SessionManager::handle_auth_command(
             auto flow = start_oauth_flow(openai_it->second);
             set_pending_oauth(ev.session_id, std::move(flow.pending));
 
-            const auto& url = flow.authorize_url;
-
             send_reply(
-                "Open this URL to authorize OpenAI:\n" + url +
+                "Open this URL to authorize OpenAI:\n" + flow.authorize_url +
                 "\n\nThen paste the full callback URL with:\n"
                 "/auth openai finish <callback_url>\n"
                 "(or paste just the code)");
             return true;
         }
 
+        // /auth openai finish <url_or_code>
         if (parts.size() >= 4 && parts[1] == "openai" && parts[2] == "finish") {
             auto pending = get_pending_oauth(ev.session_id);
             if (!pending || pending->provider != "openai") {
@@ -338,7 +315,56 @@ bool SessionManager::handle_auth_command(
             return true;
         }
 
-        send_reply("Auth commands:\n/auth status\n/auth openai start\n/auth openai finish <callback_url_or_code>");
+        // /auth <provider> <key> — set API key for any provider
+        if (parts.size() >= 3) {
+            const std::string& prov = parts[1];
+            bool known = false;
+            for (const auto& n : PluginRegistry::instance().provider_names()) {
+                if (n == prov) { known = true; break; }
+            }
+            for (const auto& h : kHiddenProviders) {
+                if (h == prov) { known = false; break; }
+            }
+            if (!known) {
+                send_reply("Unknown provider: " + prov);
+            } else if (prov == "ollama") {
+                send_reply("Ollama is local and doesn't need an API key. "
+                           "Set base_url in ~/.ptrclaw/config.json");
+            } else {
+                const std::string& api_key = parts[2];
+                config_.providers[prov].api_key = api_key;
+                persist_provider_key(prov, api_key);
+                send_reply("API key saved for " + std::string(provider_label(prov)) + ".");
+            }
+            return true;
+        }
+
+        // /auth — show status
+        std::string status = "Auth status:\n";
+        for (const auto& name : PluginRegistry::instance().provider_names()) {
+            bool hidden = false;
+            for (const auto& h : kHiddenProviders) {
+                if (h == name) { hidden = true; break; }
+            }
+            if (hidden) continue;
+            auto it = config_.providers.find(name);
+            status += "  " + std::string(provider_label(name)) + ": ";
+            if (it != config_.providers.end() && name == "ollama") {
+                status += it->second.base_url;
+            } else if (it != config_.providers.end() && it->second.use_oauth) {
+                status += "OAuth";
+                if (!it->second.oauth_access_token.empty())
+                    status += " (token present)";
+            } else if (it != config_.providers.end() && !it->second.api_key.empty()) {
+                status += "API key";
+            } else {
+                status += "not configured";
+            }
+            status += "\n";
+        }
+        status += "\nSet credentials: /auth <provider> <api_key>\n"
+                  "OAuth: /auth openai start";
+        send_reply(status);
         return true;
     }
 
