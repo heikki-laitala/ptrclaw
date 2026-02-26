@@ -59,6 +59,7 @@ public:
 private:
     void compact_history();
     void inject_system_prompt();
+    void invalidate_system_prompt();
     void wire_memory_tools();
     void run_synthesis();
     void maybe_synthesize();
