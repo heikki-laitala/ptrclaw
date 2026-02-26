@@ -75,6 +75,9 @@ struct Config {
 
     // Get JSON config for a channel name (empty object if absent)
     nlohmann::json channel_config(const std::string& name) const;
+
+    // Persist provider + model selection to config file
+    bool persist_selection() const;
 };
 
 } // namespace ptrclaw
