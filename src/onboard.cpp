@@ -10,12 +10,8 @@
 
 namespace ptrclaw {
 
-namespace {
-
-// Providers hidden from onboarding (internal / advanced)
 const std::vector<std::string> kHiddenProviders = {"reliable", "compatible"};
 
-// Human-readable labels for providers
 const char* provider_label(const std::string& name) {
     if (name == "anthropic") return "Anthropic (Claude)";
     if (name == "openai") return "OpenAI (GPT)";
@@ -23,6 +19,18 @@ const char* provider_label(const std::string& name) {
     if (name == "ollama") return "Ollama (local, no API key)";
     return name.c_str();
 }
+
+bool persist_provider_key(const std::string& provider, const std::string& api_key) {
+    return modify_config_json([&](nlohmann::json& j) {
+        if (!j.contains("providers") || !j["providers"].is_object())
+            j["providers"] = nlohmann::json::object();
+        if (!j["providers"].contains(provider) || !j["providers"][provider].is_object())
+            j["providers"][provider] = nlohmann::json::object();
+        j["providers"][provider]["api_key"] = api_key;
+    });
+}
+
+namespace {
 
 // Default model for each provider
 const char* default_model(const std::string& name) {
@@ -61,17 +69,6 @@ int read_choice(int max) {
         if (n >= 1 && n <= max) return n;
     } catch (...) { return 0; }
     return 0;
-}
-
-// Persist a provider's API key to config.json
-bool persist_provider_key(const std::string& provider, const std::string& api_key) {
-    return modify_config_json([&](nlohmann::json& j) {
-        if (!j.contains("providers") || !j["providers"].is_object())
-            j["providers"] = nlohmann::json::object();
-        if (!j["providers"].contains(provider) || !j["providers"][provider].is_object())
-            j["providers"][provider] = nlohmann::json::object();
-        j["providers"][provider]["api_key"] = api_key;
-    });
 }
 
 // Persist a channel's config to config.json
