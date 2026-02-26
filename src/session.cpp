@@ -302,23 +302,10 @@ bool SessionManager::handle_auth_command(
                 return true;
             }
 
-            std::string state = generate_id();
-            std::string verifier = make_code_verifier();
-            std::string challenge = make_code_challenge_s256(verifier);
-            std::string client_id = openai_it->second.oauth_client_id.empty()
-                ? kDefaultOAuthClientId
-                : openai_it->second.oauth_client_id;
+            auto flow = start_oauth_flow(openai_it->second);
+            set_pending_oauth(ev.session_id, std::move(flow.pending));
 
-            PendingOAuth pending;
-            pending.provider = "openai";
-            pending.state = state;
-            pending.code_verifier = verifier;
-            pending.redirect_uri = kDefaultRedirectUri;
-            pending.created_at = epoch_seconds();
-            set_pending_oauth(ev.session_id, std::move(pending));
-
-            std::string url = build_authorize_url(client_id, kDefaultRedirectUri,
-                                                   challenge, state);
+            const auto& url = flow.authorize_url;
 
             send_reply(
                 "Open this URL to authorize OpenAI:\n" + url +

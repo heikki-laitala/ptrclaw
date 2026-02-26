@@ -2,11 +2,11 @@
 #include "agent.hpp"
 #include "config.hpp"
 #include "http.hpp"
+#include "oauth.hpp"
 #include <string>
 #include <memory>
 #include <unordered_map>
 #include <mutex>
-#include <cstdint>
 #include <optional>
 #include <functional>
 
@@ -19,16 +19,6 @@ struct Session {
     std::string id;
     std::unique_ptr<Agent> agent;
     uint64_t last_active = 0;
-};
-
-constexpr uint64_t kPendingOAuthExpirySeconds = 600; // 10 minutes
-
-struct PendingOAuth {
-    std::string provider;
-    std::string state;
-    std::string code_verifier;
-    std::string redirect_uri;
-    uint64_t created_at = 0;
 };
 
 class SessionManager {

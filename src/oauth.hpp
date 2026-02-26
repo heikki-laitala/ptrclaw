@@ -8,7 +8,6 @@
 
 namespace ptrclaw {
 
-struct PendingOAuth;
 class Provider;
 
 // ── Constants ────────────────────────────────────────────────────
@@ -18,6 +17,16 @@ constexpr const char* kDefaultTokenUrl = "https://auth.openai.com/oauth/token";
 constexpr const char* kDefaultAuthorizeBaseUrl = "https://auth.openai.com/oauth/authorize";
 constexpr const char* kDefaultOAuthModel = "gpt-5-codex-mini";
 constexpr const char* kDefaultOriginator = "pi";
+constexpr uint64_t kPendingOAuthExpirySeconds = 600; // 10 minutes
+
+// ── Pending OAuth state ──────────────────────────────────────────
+struct PendingOAuth {
+    std::string provider;
+    std::string state;
+    std::string code_verifier;
+    std::string redirect_uri;
+    uint64_t created_at = 0;
+};
 
 // ── URL encoding ─────────────────────────────────────────────────
 std::string oauth_url_encode(const std::string& s);
@@ -34,6 +43,13 @@ std::string build_authorize_url(const std::string& client_id,
                                 const std::string& redirect_uri,
                                 const std::string& code_challenge,
                                 const std::string& state);
+
+// ── Start OAuth flow (PKCE + authorize URL) ─────────────────────
+struct OAuthFlowStart {
+    PendingOAuth pending;
+    std::string authorize_url;
+};
+OAuthFlowStart start_oauth_flow(const ProviderEntry& openai_entry);
 
 // ── OAuth input parsing ──────────────────────────────────────────
 struct ParsedOAuthInput {

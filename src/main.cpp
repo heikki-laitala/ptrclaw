@@ -549,25 +549,10 @@ int main(int argc, char* argv[]) try {
                 if (openai_it == config.providers.end()) {
                     std::cout << "OpenAI provider config missing.\n";
                 } else {
-                    std::string state = ptrclaw::generate_id();
-                    std::string verifier = ptrclaw::make_code_verifier();
-                    std::string challenge = ptrclaw::make_code_challenge_s256(verifier);
-                    std::string client_id = openai_it->second.oauth_client_id.empty()
-                        ? ptrclaw::kDefaultOAuthClientId
-                        : openai_it->second.oauth_client_id;
+                    auto flow = ptrclaw::start_oauth_flow(openai_it->second);
+                    pending_oauth = std::move(flow.pending);
 
-                    ptrclaw::PendingOAuth pending;
-                    pending.provider = "openai";
-                    pending.state = state;
-                    pending.code_verifier = verifier;
-                    pending.redirect_uri = ptrclaw::kDefaultRedirectUri;
-                    pending.created_at = ptrclaw::epoch_seconds();
-                    pending_oauth = std::move(pending);
-
-                    std::string url = ptrclaw::build_authorize_url(
-                        client_id, ptrclaw::kDefaultRedirectUri, challenge, state);
-
-                    std::cout << "Open this URL to authorize OpenAI:\n" << url
+                    std::cout << "Open this URL to authorize OpenAI:\n" << flow.authorize_url
                               << "\n\nThen paste the full callback URL with:\n"
                               << "/auth openai finish <callback_url>\n"
                               << "(or paste just the code)\n";
