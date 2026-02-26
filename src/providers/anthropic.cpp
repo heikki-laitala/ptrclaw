@@ -318,7 +318,7 @@ ChatResponse AnthropicProvider::chat_stream(const std::vector<ChatMessage>& mess
                 continue;
             }
             throw std::runtime_error("Anthropic API error (HTTP " +
-                std::to_string(http_response.status_code) + ")");
+                std::to_string(http_response.status_code) + "): " + http_response.body);
         }
 
         // Assemble result

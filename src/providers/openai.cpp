@@ -183,8 +183,9 @@ bool OpenAIProvider::use_responses_api(const std::string& model) const {
 }
 
 std::string OpenAIProvider::responses_url(const std::string& model) const {
-    // OAuth codex models use the ChatGPT backend, not api.openai.com
-    if (use_oauth_ && model.find("codex") != std::string::npos) {
+    // OAuth codex models use the ChatGPT backend unless base_url is overridden
+    if (use_oauth_ && model.find("codex") != std::string::npos &&
+        base_url_ == "https://api.openai.com/v1") {
         return "https://chatgpt.com/backend-api/codex/responses";
     }
     return base_url_ + "/responses";
@@ -431,7 +432,7 @@ ChatResponse OpenAIProvider::chat_stream_responses(
     if (http_response.status_code != 0 &&
         (http_response.status_code < 200 || http_response.status_code >= 300)) {
         throw std::runtime_error(provider_name() + " API error (HTTP " +
-            std::to_string(http_response.status_code) + ")");
+            std::to_string(http_response.status_code) + "): " + http_response.body);
     }
 
     if (!accumulated_text.empty()) {
@@ -607,7 +608,7 @@ ChatResponse OpenAIProvider::chat_stream(const std::vector<ChatMessage>& message
     if (http_response.status_code != 0 &&
         (http_response.status_code < 200 || http_response.status_code >= 300)) {
         throw std::runtime_error(provider_name() + " API error (HTTP " +
-            std::to_string(http_response.status_code) + ")");
+            std::to_string(http_response.status_code) + "): " + http_response.body);
     }
 
     if (!accumulated_text.empty()) {
