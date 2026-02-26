@@ -253,7 +253,8 @@ int main(int argc, char* argv[]) try {
         ptrclaw::ProviderEntry adjusted;
         if (config.provider == "openai" && ep) {
             adjusted = *ep;
-            adjusted.use_oauth = config.model.find("codex") != std::string::npos;
+            bool is_codex = config.model.find("codex") != std::string::npos;
+            adjusted.use_oauth = is_codex && !adjusted.oauth_access_token.empty();
             ep = &adjusted;
         }
 
@@ -387,12 +388,15 @@ int main(int argc, char* argv[]) try {
                 std::cout << "History cleared.\n";
             } else if (line.substr(0, 7) == "/model ") {
                 std::string new_model = line.substr(7);
-                // On openai, auto-switch auth mode if needed
+                // On openai, re-create provider if auth mode changes
                 if (agent.provider_name() == "openai") {
-                    bool on_oauth = config.providers.count("openai") &&
-                                    config.providers.at("openai").use_oauth;
-                    bool needs_oauth = new_model.find("codex") != std::string::npos;
-                    if (on_oauth != needs_oauth) {
+                    auto oai_it = config.providers.find("openai");
+                    bool on_oauth = oai_it != config.providers.end() &&
+                                    oai_it->second.use_oauth;
+                    bool want_oauth = new_model.find("codex") != std::string::npos &&
+                                      oai_it != config.providers.end() &&
+                                      !oai_it->second.oauth_access_token.empty();
+                    if (on_oauth != want_oauth) {
                         auto sr = ptrclaw::switch_provider("openai", new_model, agent.model(), config, http_client);
                         if (!sr.error.empty()) {
                             std::cout << sr.error << "\n";

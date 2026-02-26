@@ -162,7 +162,7 @@ Environment variables override the config file:
 
 ### OpenAI OAuth (codex models)
 
-OpenAI's codex models (e.g. `gpt-5-codex-mini`) require OAuth authentication through your OpenAI subscription instead of an API key. This uses the same auth that powers ChatGPT and Codex CLI. You need an active OpenAI subscription (Plus, Pro, or Team) — API credits alone are not enough for codex models.
+OpenAI's codex models (e.g. `gpt-5-codex-mini`) can be accessed via OAuth using your OpenAI subscription (Plus, Pro, or Team) or via a regular API key. Some newer codex models (e.g. `gpt-5.3-codex`) are only available through OAuth. PtrClaw automatically prefers OAuth when tokens are available, falling back to the API key otherwise.
 
 **How it works:** PtrClaw runs a PKCE OAuth flow against `auth.openai.com`. You authorize in your browser, and PtrClaw exchanges the callback code for access and refresh tokens. Tokens are saved to `~/.ptrclaw/config.json` and refreshed automatically when they expire.
 
@@ -192,7 +192,7 @@ OpenAI OAuth connected. Model switched to gpt-5-codex-mini. Saved to ~/.ptrclaw/
 
 In Telegram, the same flow works — send `/auth openai start` as a message, open the URL, and paste the callback URL back in the chat. You can also paste the callback URL directly without the `/auth openai finish` prefix while an auth flow is pending.
 
-**Auth mode auto-detection:** PtrClaw selects OAuth or API key based on the model name. Models containing "codex" use OAuth and the Responses API; all other OpenAI models use the API key and Chat Completions API. You can have both configured and switch freely.
+**Auth mode auto-detection:** For codex models, PtrClaw uses OAuth when tokens are available and falls back to the API key. Non-codex models always use the API key. All codex models use the Responses API; other models use Chat Completions. You can have both API key and OAuth tokens configured and switch freely.
 
 **Checking auth status:**
 

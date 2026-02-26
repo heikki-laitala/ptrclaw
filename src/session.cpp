@@ -30,7 +30,8 @@ Agent& SessionManager::get_session(const std::string& session_id) {
     ProviderEntry adjusted;
     if (config_.provider == "openai" && ep) {
         adjusted = *ep;
-        adjusted.use_oauth = config_.model.find("codex") != std::string::npos;
+        bool is_codex = config_.model.find("codex") != std::string::npos;
+        adjusted.use_oauth = is_codex && !adjusted.oauth_access_token.empty();
         ep = &adjusted;
     }
 
