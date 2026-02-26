@@ -197,9 +197,7 @@ void SessionManager::subscribe_events() {
 
             // Handle /models command
             if (ev.message.content == "/models") {
-                auto oai_it = config_.providers.find("openai");
-                bool use_oauth = oai_it != config_.providers.end() && oai_it->second.use_oauth;
-                auto infos = list_providers(config_, agent.provider_name(), use_oauth);
+                auto infos = list_providers(config_, agent.provider_name());
 
                 std::string result = "Configured providers:\n";
                 for (const auto& info : infos) {

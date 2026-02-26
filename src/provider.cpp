@@ -19,10 +19,13 @@ std::unique_ptr<Provider> create_provider(const std::string& name,
 
 std::vector<ProviderInfo> list_providers(
     const Config& config,
-    const std::string& current_provider,
-    bool current_use_oauth) {
+    const std::string& current_provider) {
 
-    bool on_codex = (current_provider == "openai" && current_use_oauth);
+    bool on_codex = false;
+    if (current_provider == "openai") {
+        auto it = config.providers.find("openai");
+        on_codex = (it != config.providers.end() && it->second.use_oauth);
+    }
     std::vector<ProviderInfo> result;
 
     for (const auto& [name, entry] : config.providers) {

@@ -392,9 +392,7 @@ int main(int argc, char* argv[]) try {
                 agent.set_model(new_model);
                 std::cout << "Model set to: " << new_model << "\n";
             } else if (line == "/models") {
-                auto oai_it = config.providers.find("openai");
-                bool use_oauth = oai_it != config.providers.end() && oai_it->second.use_oauth;
-                auto infos = ptrclaw::list_providers(config, agent.provider_name(), use_oauth);
+                auto infos = ptrclaw::list_providers(config, agent.provider_name());
 
                 std::cout << "Configured providers:\n";
                 for (const auto& info : infos) {
