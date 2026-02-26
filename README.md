@@ -4,7 +4,7 @@ An AI assistant you can actually deploy anywhere. Single static binary, no runti
 
 Built in C++17 because infrastructure should be small, fast, and boring to operate.
 
-**~551 KB static binary (macOS arm64), ~6.8 MB (Linux x86_64, statically linked with OpenSSL + sqlite3). 6 LLM providers. 9 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph. Compile-time feature flags to strip what you don't need.**
+**~681 KB static binary (macOS arm64), ~6.8 MB (Linux x86_64, statically linked with OpenSSL + sqlite3). 6 LLM providers. 9 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph. Compile-time feature flags to strip what you don't need.**
 
 ## Why PtrClaw?
 
@@ -14,7 +14,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Swap providers freely** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Switch with a config change, no code modifications
 - **Real tool use** — file I/O, shell execution (with stdin piping), cron scheduling, and a persistent knowledge graph memory system. Providers with native function calling use it directly; others fall back to XML-based parsing
 - **Extend without forking** — providers, channels, tools, and memory backends self-register via a plugin system. Add a new one by implementing an interface and dropping in a `.cpp` file
-- **Build only what you need** — 11 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~485 KB)
+- **Build only what you need** — 12 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~599 KB)
 
 ## Features
 
@@ -213,31 +213,9 @@ In Telegram and other channels, use `/auth <provider> <api_key>` to set a key di
 
 ### OpenAI OAuth (codex models)
 
-OpenAI's codex models (e.g. `gpt-5-codex-mini`) can be accessed via OAuth using your OpenAI subscription (Plus, Pro, or Team) or via a regular API key. Some newer codex models (e.g. `gpt-5.3-codex`) are only available through OAuth. PtrClaw automatically prefers OAuth when tokens are available, falling back to the API key otherwise.
+OpenAI codex models (e.g. `gpt-5-codex-mini`) can be accessed via OAuth using your ChatGPT subscription (Plus, Pro, or Team). Use `/auth openai` and choose "OAuth login". PtrClaw automatically prefers OAuth for codex models when tokens are available, falling back to the API key otherwise. Non-codex models always use the API key.
 
-**How it works:** PtrClaw runs a PKCE OAuth flow against `auth.openai.com`. You authorize in your browser, and PtrClaw exchanges the callback code for access and refresh tokens. Tokens are saved to `~/.ptrclaw/config.json` and refreshed automatically when they expire.
-
-**Auth mode auto-detection:** For codex models, PtrClaw uses OAuth when tokens are available and falls back to the API key. Non-codex models always use the API key. All codex models use the Responses API; other models use Chat Completions. You can have both API key and OAuth tokens configured and switch freely.
-
-**Config after OAuth setup:**
-
-```json
-{
-  "provider": "openai",
-  "model": "gpt-5-codex-mini",
-  "providers": {
-    "openai": {
-      "api_key": "sk-...",
-      "oauth_access_token": "<managed automatically>",
-      "oauth_refresh_token": "<managed automatically>",
-      "oauth_expires_at": 1767225600,
-      "oauth_client_id": "app_EMoamEEZ73f0CkXaXp7hrann"
-    }
-  }
-}
-```
-
-You don't need to edit the OAuth fields manually — the `/auth` flow and automatic token refresh handle them. The `api_key` field is independent and used for non-codex OpenAI models.
+For details on the PKCE flow, token refresh, environment variables, and config format, see [`docs/openai-oauth.md`](docs/openai-oauth.md).
 
 ### Switching providers and models
 
@@ -379,6 +357,7 @@ Every provider, channel, and tool is a compile-time feature flag in `meson_optio
 | `with_ollama` | Ollama provider | `true` |
 | `with_telegram` | Telegram channel | `true` |
 | `with_whatsapp` | WhatsApp channel | `false` |
+| `with_pipe` | Pipe channel (JSONL stdin/stdout) | `false` |
 | `with_tools` | All built-in tools | `true` |
 | `with_memory` | Memory system (JsonMemory) | `true` |
 | `with_sqlite_memory` | SQLite+FTS5 memory backend | `true` |
@@ -409,9 +388,9 @@ ninja -C builddir
 
 | Configuration | macOS arm64 | Linux x86_64 |
 | ------------- | ----------- | ------------ |
-| Default (`make build`) | ~735 KB | ~735 KB |
-| Static (`make build-static`, stripped) | ~551 KB | ~6.8 MB |
-| Minimal (`make build-minimal`, stripped) | ~485 KB | ~568 KB |
+| Default (`make build`) | ~916 KB | ~916 KB |
+| Static (`make build-static`, stripped) | ~681 KB | ~6.8 MB |
+| Minimal (`make build-minimal`, stripped) | ~599 KB | ~650 KB |
 
 Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux static binaries are larger because they bundle OpenSSL and sqlite3. The dynamically linked build is the same size as macOS. LTO is enabled by default. Distribution builds are stripped and size-optimized.
 
@@ -467,10 +446,11 @@ src/
     memory_link.cpp     Create/remove bidirectional links between entries
 tests/                  Catch2 unit tests
 docs/
+  openai-oauth.md       OpenAI OAuth PKCE flow, token refresh, and config format
   reverse-proxy.md      Reverse-proxy setup for WhatsApp webhooks (nginx, Caddy, Docker)
 meson_options.txt       Compile-time feature flags
 ```
 
 ## Acknowledgements
 
-PtrClaw started as a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw) and has since diverged into its own architecture with an event bus, plugin system, and streaming pipeline. Nullclaw is a far more feature-rich project — if you need a battle-tested assistant with a broader tool ecosystem, check it out. PtrClaw trades breadth for a smaller footprint: our dynamically linked binary is ~735 KB vs nullclaw's ~1.9 MB, with the goal of staying minimal and easy to embed or deploy on constrained environments.
+PtrClaw started as a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw) and has since diverged into its own architecture with an event bus, plugin system, and streaming pipeline. Nullclaw is a far more feature-rich project — if you need a battle-tested assistant with a broader tool ecosystem, check it out. PtrClaw trades breadth for a smaller footprint: our dynamically linked binary is ~916 KB vs nullclaw's ~1.9 MB, with the goal of staying minimal and easy to embed or deploy on constrained environments.
