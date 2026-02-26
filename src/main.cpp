@@ -11,6 +11,7 @@
 #include "session.hpp"
 #include "stream_relay.hpp"
 #include "oauth.hpp"
+#include "onboard.hpp"
 #include "util.hpp"
 #include <iostream>
 #include <fstream>
@@ -242,6 +243,13 @@ int main(int argc, char* argv[]) try {
         }
     }
 
+    // Auto-onboard if no provider has credentials (first run, REPL only)
+    bool onboard_ran = false;
+    bool onboard_hatch = false;
+    if (message.empty() && channel_name.empty() && ptrclaw::needs_onboard(config)) {
+        onboard_ran = ptrclaw::run_onboard(config, http_client, onboard_hatch);
+    }
+
     // Create provider and agent (pipe, -m, REPL modes)
     std::unique_ptr<ptrclaw::Provider> provider;
     try {
@@ -317,10 +325,17 @@ int main(int argc, char* argv[]) try {
               << " | Model: " << agent.model() << "\n"
               << "Type /help for commands, /exit to exit.\n\n";
 
-    // Auto-detect unhatched agent
+    // Auto-detect unhatched agent (skip if onboarding ran and user declined)
     if (agent.memory() && !agent.is_hatched()) {
-        std::cout << "Your assistant doesn't have an identity yet. Starting hatching...\n\n";
-        agent.start_hatch();
+        if (onboard_ran) {
+            if (onboard_hatch) {
+                std::cout << "Starting hatching...\n\n";
+                agent.start_hatch();
+            }
+        } else {
+            std::cout << "Your assistant doesn't have an identity yet. Starting hatching...\n\n";
+            agent.start_hatch();
+        }
     }
 
     std::optional<ptrclaw::PendingOAuth> pending_oauth;
@@ -501,6 +516,30 @@ int main(int argc, char* argv[]) try {
                         std::cout << display;
                     }
                 }
+            } else if (line == "/onboard") {
+                bool hatch_req = false;
+                if (ptrclaw::run_onboard(config, http_client, hatch_req)) {
+                    auto pit = config.providers.find(config.provider);
+                    const ptrclaw::ProviderEntry* ep2 =
+                        pit != config.providers.end() ? &pit->second : nullptr;
+                    ptrclaw::ProviderEntry adj2;
+                    if (config.provider == "openai" && ep2) {
+                        adj2 = *ep2;
+                        bool codex = config.model.find("codex") != std::string::npos;
+                        adj2.use_oauth = codex && !adj2.oauth_access_token.empty();
+                        ep2 = &adj2;
+                    }
+                    auto fresh = ptrclaw::create_provider(
+                        config.provider, config.api_key_for(config.provider), http_client,
+                        config.base_url_for(config.provider),
+                        config.prompt_caching_for(config.provider), ep2);
+                    ptrclaw::setup_oauth_refresh(fresh.get(), config);
+                    agent.set_provider(std::move(fresh));
+                    agent.set_model(config.model);
+                    std::cout << "Provider: " << agent.provider_name()
+                              << " | Model: " << agent.model() << "\n";
+                    if (hatch_req) agent.start_hatch();
+                }
             } else if (line == "/hatch") {
                 agent.start_hatch();
                 std::cout << "Entering hatching mode...\n";
@@ -595,6 +634,7 @@ int main(int argc, char* argv[]) try {
                     std::cout << "  /soul            Show current soul/identity data\n";
                 }
                 std::cout << "  /hatch           Create or re-create assistant identity\n"
+                          << "  /onboard         Run setup wizard\n"
                           << "  /exit, /quit     Exit\n"
                           << "  /help            Show this help\n";
             } else {
