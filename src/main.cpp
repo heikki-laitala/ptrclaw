@@ -311,14 +311,20 @@ int main(int argc, char* argv[]) try {
 
     // Auto-detect unhatched agent (skip if onboarding ran and user declined)
     if (agent.memory() && !agent.is_hatched()) {
+        bool do_hatch = false;
         if (onboard_ran) {
             if (onboard_hatch) {
                 std::cout << "Starting hatching...\n\n";
-                agent.start_hatch();
+                do_hatch = true;
             }
         } else {
             std::cout << "Your assistant doesn't have an identity yet. Starting hatching...\n\n";
+            do_hatch = true;
+        }
+        if (do_hatch) {
             agent.start_hatch();
+            std::string response = agent.process("Begin the hatching interview.");
+            std::cout << response << "\n\n";
         }
     }
 
@@ -518,7 +524,8 @@ int main(int argc, char* argv[]) try {
                 }
             } else if (line == "/hatch") {
                 agent.start_hatch();
-                std::cout << "Entering hatching mode...\n";
+                std::string hatch_response = agent.process("Begin the hatching interview.");
+                std::cout << hatch_response << "\n";
 
             // ── /auth commands ───────────────────────────────────
             } else if (line == "/auth status") {
