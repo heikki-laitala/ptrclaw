@@ -21,30 +21,22 @@ std::vector<ProviderInfo> list_providers(
     const Config& config,
     const std::string& current_provider) {
 
-    bool on_codex = false;
-    if (current_provider == "openai") {
-        auto it = config.providers.find("openai");
-        on_codex = (it != config.providers.end() && it->second.use_oauth);
-    }
     std::vector<ProviderInfo> result;
 
     for (const auto& [name, entry] : config.providers) {
         if (name == "openai") {
-            if (!entry.api_key.empty()) {
-                result.push_back({
-                    "openai", "API key",
-                    current_provider == "openai" && !on_codex});
-            }
-            if (!entry.oauth_access_token.empty()) {
-                result.push_back({"openai-codex", "OAuth", on_codex});
-            }
+            bool has_key = !entry.api_key.empty();
+            bool has_oauth = !entry.oauth_access_token.empty();
+            if (!has_key && !has_oauth) continue;
+            result.push_back({name, name == current_provider,
+                              has_key, has_oauth, false});
             continue;
         }
         if (!entry.api_key.empty()) {
-            result.push_back({name, "API key", name == current_provider});
+            result.push_back({name, name == current_provider,
+                              true, false, false});
         } else if (!entry.base_url.empty() && name == current_provider) {
-            // base_url-only providers (ollama, compatible) — only show when active
-            result.push_back({name, "local", true});
+            result.push_back({name, true, false, false, true});
         }
     }
     return result;
@@ -52,42 +44,53 @@ std::vector<ProviderInfo> list_providers(
 
 SwitchProviderResult switch_provider(const std::string& name,
                                      const std::string& model_arg,
+                                     const std::string& current_model,
                                      Config& config,
                                      HttpClient& http) {
     SwitchProviderResult result;
-    result.display_name = name;
-
-    if (name == "openai-codex") {
-        auto it = config.providers.find("openai");
-        if (it == config.providers.end() || it->second.oauth_access_token.empty()) {
-            result.error = "OpenAI OAuth not configured. Run /auth openai start";
-            return result;
-        }
-        result.provider = create_provider("openai", config.api_key_for("openai"), http,
-            config.base_url_for("openai"), config.prompt_caching_for("openai"), &it->second);
-        result.model = model_arg.empty() ? std::string(kDefaultOAuthModel) : model_arg;
-        return result;
-    }
 
     auto it = config.providers.find(name);
     if (it == config.providers.end()) {
         result.error = "Unknown provider: " + name;
         return result;
     }
-    if (it->second.api_key.empty() && it->second.base_url.empty()) {
+
+    const auto& entry = it->second;
+
+    // OpenAI: auto-select OAuth vs API key based on model name
+    if (name == "openai") {
+        std::string effective = model_arg.empty() ? current_model : model_arg;
+        bool needs_oauth = effective.find("codex") != std::string::npos;
+
+        if (needs_oauth) {
+            if (entry.oauth_access_token.empty()) {
+                result.error = "OpenAI OAuth not configured. Run /auth openai start";
+                return result;
+            }
+            result.provider = create_provider("openai", config.api_key_for("openai"), http,
+                config.base_url_for("openai"), config.prompt_caching_for("openai"), &entry);
+            result.model = model_arg.empty() ? effective : model_arg;
+        } else {
+            if (entry.api_key.empty()) {
+                result.error = "No API key for openai";
+                return result;
+            }
+            ProviderEntry no_oauth = entry;
+            no_oauth.use_oauth = false;
+            result.provider = create_provider("openai", config.api_key_for("openai"), http,
+                config.base_url_for("openai"), config.prompt_caching_for("openai"), &no_oauth);
+            result.model = model_arg;
+        }
+        return result;
+    }
+
+    if (entry.api_key.empty() && entry.base_url.empty()) {
         result.error = "No credentials for " + name;
         return result;
     }
 
-    const ProviderEntry* ep = &it->second;
-    ProviderEntry no_oauth;
-    if (name == "openai") {
-        no_oauth = it->second;
-        no_oauth.use_oauth = false;
-        ep = &no_oauth;
-    }
     result.provider = create_provider(name, config.api_key_for(name), http,
-        config.base_url_for(name), config.prompt_caching_for(name), ep);
+        config.base_url_for(name), config.prompt_caching_for(name), &entry);
     result.model = model_arg;
     return result;
 }
