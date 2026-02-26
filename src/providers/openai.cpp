@@ -196,7 +196,7 @@ std::string OpenAIProvider::responses_url(const std::string& model) const {
 json OpenAIProvider::build_responses_request(
     const std::vector<ChatMessage>& messages,
     const std::vector<ToolSpec>& tools,
-    const std::string& model, double temperature) const {
+    const std::string& model, double /*temperature*/) const {
 
     json request;
     request["model"] = model;
