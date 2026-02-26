@@ -255,6 +255,13 @@ nlohmann::json Config::channel_config(const std::string& name) const {
 }
 
 bool Config::persist_selection() const {
+    return modify_config_json([&](nlohmann::json& j) {
+        j["provider"] = provider;
+        j["model"] = model;
+    });
+}
+
+bool modify_config_json(const std::function<void(nlohmann::json&)>& modifier) {
     std::string path = expand_home("~/.ptrclaw/config.json");
     nlohmann::json j;
     {
@@ -262,10 +269,7 @@ bool Config::persist_selection() const {
         if (!in.is_open()) return false;
         try { in >> j; } catch (...) { return false; }
     }
-
-    j["provider"] = provider;
-    j["model"] = model;
-
+    modifier(j);
     return atomic_write_file(path, j.dump(4) + "\n");
 }
 

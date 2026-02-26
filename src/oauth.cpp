@@ -13,7 +13,6 @@
 #include <random>
 #include <sstream>
 #include <iomanip>
-#include <fstream>
 
 namespace ptrclaw {
 
@@ -210,30 +209,20 @@ std::string exchange_oauth_token(const std::string& code,
 // ── Config persistence ───────────────────────────────────────────
 
 bool persist_openai_oauth(const ProviderEntry& entry) {
-    std::string path = expand_home("~/.ptrclaw/config.json");
-    json j;
-    {
-        std::ifstream in(path);
-        if (!in.is_open()) return false;
-        try { in >> j; } catch (...) { return false; }
-    }
+    return modify_config_json([&](json& j) {
+        if (!j.contains("providers") || !j["providers"].is_object())
+            j["providers"] = json::object();
+        if (!j["providers"].contains("openai") || !j["providers"]["openai"].is_object())
+            j["providers"]["openai"] = json::object();
 
-    if (!j.contains("providers") || !j["providers"].is_object()) {
-        j["providers"] = json::object();
-    }
-    if (!j["providers"].contains("openai") || !j["providers"]["openai"].is_object()) {
-        j["providers"]["openai"] = json::object();
-    }
-
-    auto& o = j["providers"]["openai"];
-    o["use_oauth"] = entry.use_oauth;
-    o["oauth_access_token"] = entry.oauth_access_token;
-    o["oauth_refresh_token"] = entry.oauth_refresh_token;
-    o["oauth_expires_at"] = entry.oauth_expires_at;
-    o["oauth_client_id"] = entry.oauth_client_id;
-    o["oauth_token_url"] = entry.oauth_token_url;
-
-    return atomic_write_file(path, j.dump(4) + "\n");
+        auto& o = j["providers"]["openai"];
+        o["use_oauth"] = entry.use_oauth;
+        o["oauth_access_token"] = entry.oauth_access_token;
+        o["oauth_refresh_token"] = entry.oauth_refresh_token;
+        o["oauth_expires_at"] = entry.oauth_expires_at;
+        o["oauth_client_id"] = entry.oauth_client_id;
+        o["oauth_token_url"] = entry.oauth_token_url;
+    });
 }
 
 // ── Apply OAuth result (shared core) ─────────────────────────────
