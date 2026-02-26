@@ -22,26 +22,12 @@ Agent& SessionManager::get_session(const std::string& session_id) {
     }
 
     // Create new session
-    auto provider_it = config_.providers.find(config_.provider);
-    const ProviderEntry* ep =
-        provider_it != config_.providers.end() ? &provider_it->second : nullptr;
-
-    // OpenAI: auto-select auth based on model name
-    ProviderEntry adjusted;
-    if (config_.provider == "openai" && ep) {
-        adjusted = *ep;
-        bool is_codex = config_.model.find("codex") != std::string::npos;
-        adjusted.use_oauth = is_codex && !adjusted.oauth_access_token.empty();
-        ep = &adjusted;
+    auto sr = switch_provider(
+        config_.provider, config_.model, config_.model, config_, http_);
+    if (!sr.provider) {
+        throw std::runtime_error("Cannot create provider: " + sr.error);
     }
-
-    auto provider = create_provider(
-        config_.provider,
-        config_.api_key_for(config_.provider),
-        http_,
-        config_.base_url_for(config_.provider),
-        config_.prompt_caching_for(config_.provider),
-        ep);
+    auto provider = std::move(sr.provider);
     setup_oauth_refresh(provider.get(), config_);
 
     auto tools = create_builtin_tools();
