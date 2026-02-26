@@ -1,7 +1,6 @@
 #include "oauth.hpp"
 #include "provider.hpp"
 #include "providers/openai.hpp"
-#include "session.hpp"
 #include "util.hpp"
 
 #ifdef PTRCLAW_USE_COMMONCRYPTO
@@ -140,6 +139,28 @@ std::string build_authorize_url(const std::string& client_id,
         "&id_token_add_organizations=true"
         "&codex_cli_simplified_flow=true"
         "&originator=" + oauth_url_encode(kDefaultOriginator);
+}
+
+// ── Start OAuth flow (PKCE + authorize URL) ─────────────────────
+
+OAuthFlowStart start_oauth_flow(const ProviderEntry& openai_entry) {
+    std::string client_id = openai_entry.oauth_client_id.empty()
+        ? kDefaultOAuthClientId
+        : openai_entry.oauth_client_id;
+
+    std::string state = generate_id();
+    std::string verifier = make_code_verifier();
+    std::string challenge = make_code_challenge_s256(verifier);
+
+    OAuthFlowStart result;
+    result.pending.provider = "openai";
+    result.pending.state = state;
+    result.pending.code_verifier = verifier;
+    result.pending.redirect_uri = kDefaultRedirectUri;
+    result.pending.created_at = epoch_seconds();
+    result.authorize_url = build_authorize_url(
+        client_id, kDefaultRedirectUri, challenge, state);
+    return result;
 }
 
 // ── OAuth input parsing ──────────────────────────────────────────

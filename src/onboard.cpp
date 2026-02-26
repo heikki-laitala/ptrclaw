@@ -1,7 +1,6 @@
 #include "onboard.hpp"
 #include "oauth.hpp"
 #include "plugin.hpp"
-#include "session.hpp"
 #include "util.hpp"
 #include <iostream>
 #include <string>
@@ -91,25 +90,9 @@ bool persist_channel_token(const std::string& channel,
 
 // OpenAI OAuth inline flow — returns true if OAuth was completed
 bool setup_openai_oauth(Config& config, HttpClient& http) {
-    std::string client_id = config.providers["openai"].oauth_client_id.empty()
-        ? kDefaultOAuthClientId
-        : config.providers["openai"].oauth_client_id;
+    auto flow = start_oauth_flow(config.providers["openai"]);
 
-    std::string state = generate_id();
-    std::string verifier = make_code_verifier();
-    std::string challenge = make_code_challenge_s256(verifier);
-
-    PendingOAuth pending;
-    pending.provider = "openai";
-    pending.state = state;
-    pending.code_verifier = verifier;
-    pending.redirect_uri = kDefaultRedirectUri;
-    pending.created_at = epoch_seconds();
-
-    std::string url = build_authorize_url(
-        client_id, kDefaultRedirectUri, challenge, state);
-
-    std::cout << "\nOpen this URL to authorize:\n" << url
+    std::cout << "\nOpen this URL to authorize:\n" << flow.authorize_url
               << "\n\nPaste the callback URL or code: " << std::flush;
 
     std::string input;
@@ -123,12 +106,12 @@ bool setup_openai_oauth(Config& config, HttpClient& http) {
         std::cout << "Could not extract auth code.\n";
         return false;
     }
-    if (!parsed.state.empty() && parsed.state != state) {
+    if (!parsed.state.empty() && parsed.state != flow.pending.state) {
         std::cout << "State mismatch. Please try again.\n";
         return false;
     }
 
-    auto result = apply_oauth_result(parsed.code, pending, config, http);
+    auto result = apply_oauth_result(parsed.code, flow.pending, config, http);
     if (!result.success) {
         std::cout << result.error << "\n";
         return false;
