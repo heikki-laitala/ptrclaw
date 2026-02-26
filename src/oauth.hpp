@@ -66,4 +66,9 @@ OAuthApplyResult apply_oauth_result(const std::string& code,
                                      Config& config,
                                      HttpClient& http);
 
+// ── OAuth refresh callback wiring ────────────────────────────────
+// Sets up automatic token refresh on an OpenAI provider, persisting
+// new tokens to both the in-memory Config and config.json.
+void setup_oauth_refresh(Provider* provider, Config& config);
+
 } // namespace ptrclaw

@@ -12,7 +12,6 @@
 #include "stream_relay.hpp"
 #include "oauth.hpp"
 #include "util.hpp"
-#include "providers/openai.hpp"
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -165,18 +164,6 @@ static int run_channel(const std::string& channel_name,
     return 0;
 }
 
-static void setup_repl_oauth_refresh(ptrclaw::Provider* provider, ptrclaw::Config& config) {
-    auto* oai = dynamic_cast<ptrclaw::OpenAIProvider*>(provider);
-    if (!oai) return;
-    oai->set_on_token_refresh(
-        [&config](const std::string& at, const std::string& rt, uint64_t ea) {
-            auto& entry = config.providers["openai"];
-            entry.oauth_access_token = at;
-            entry.oauth_refresh_token = rt;
-            entry.oauth_expires_at = ea;
-            ptrclaw::persist_openai_oauth(entry);
-        });
-}
 
 int main(int argc, char* argv[]) try {
     // Parse arguments
@@ -281,7 +268,7 @@ int main(int argc, char* argv[]) try {
         std::cerr << "Error creating provider: " << e.what() << "\n";
         return 1;
     }
-    setup_repl_oauth_refresh(provider.get(), config);
+    ptrclaw::setup_oauth_refresh(provider.get(), config);
 
     auto tools = ptrclaw::create_builtin_tools();
     ptrclaw::Agent agent(std::move(provider), std::move(tools), config);
@@ -341,7 +328,7 @@ int main(int argc, char* argv[]) try {
                              const std::string& code) {
         auto r = ptrclaw::apply_oauth_result(code, pending, config, http_client);
         if (!r.success) { std::cout << r.error << "\n"; return; }
-        setup_repl_oauth_refresh(r.provider.get(), config);
+        ptrclaw::setup_oauth_refresh(r.provider.get(), config);
         agent.set_provider(std::move(r.provider));
         agent.set_model(ptrclaw::kDefaultOAuthModel);
         pending_oauth.reset();
@@ -410,7 +397,7 @@ int main(int argc, char* argv[]) try {
                         if (!sr.error.empty()) {
                             std::cout << sr.error << "\n";
                         } else {
-                            setup_repl_oauth_refresh(sr.provider.get(), config);
+                            ptrclaw::setup_oauth_refresh(sr.provider.get(), config);
                             agent.set_provider(std::move(sr.provider));
                             if (!sr.model.empty()) agent.set_model(sr.model);
                             config.model = agent.model();
@@ -425,15 +412,8 @@ int main(int argc, char* argv[]) try {
                 config.persist_selection();
                 std::cout << "Model set to: " << new_model << "\n";
             } else if (line == "/models") {
-                // Current state
-                std::string auth_mode = "API key";
-                if (agent.provider_name() == "openai") {
-                    if (agent.model().find("codex") != std::string::npos)
-                        auth_mode = "OAuth";
-                } else if (config.providers.count(agent.provider_name()) &&
-                           config.providers.at(agent.provider_name()).api_key.empty()) {
-                    auth_mode = "local";
-                }
+                std::string auth_mode = ptrclaw::auth_mode_label(
+                    agent.provider_name(), agent.model(), config);
                 std::cout << "Current: " << agent.provider_name()
                           << " — " << agent.model()
                           << " (" << auth_mode << ")\n\n";
@@ -461,7 +441,7 @@ int main(int argc, char* argv[]) try {
                 if (!sr.error.empty()) {
                     std::cout << sr.error << "\n";
                 } else {
-                    setup_repl_oauth_refresh(sr.provider.get(), config);
+                    ptrclaw::setup_oauth_refresh(sr.provider.get(), config);
                     agent.set_provider(std::move(sr.provider));
                     if (!sr.model.empty()) agent.set_model(sr.model);
                     config.provider = prov_name;

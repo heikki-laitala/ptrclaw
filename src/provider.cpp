@@ -42,6 +42,20 @@ std::vector<ProviderInfo> list_providers(
     return result;
 }
 
+std::string auth_mode_label(const std::string& provider_name,
+                             const std::string& model,
+                             const Config& config) {
+    if (provider_name == "openai") {
+        if (model.find("codex") != std::string::npos)
+            return "OAuth";
+        return "API key";
+    }
+    auto it = config.providers.find(provider_name);
+    if (it != config.providers.end() && it->second.api_key.empty())
+        return "local";
+    return "API key";
+}
+
 SwitchProviderResult switch_provider(const std::string& name,
                                      const std::string& model_arg,
                                      const std::string& current_model,

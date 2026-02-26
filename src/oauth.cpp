@@ -1,5 +1,6 @@
 #include "oauth.hpp"
 #include "provider.hpp"
+#include "providers/openai.hpp"
 #include "session.hpp"
 #include "util.hpp"
 
@@ -259,6 +260,21 @@ OAuthApplyResult apply_oauth_result(const std::string& code,
                                        config.prompt_caching_for("openai"), &updated);
     result.success = true;
     return result;
+}
+
+// ── OAuth refresh callback wiring ─────────────────────────────────
+
+void setup_oauth_refresh(Provider* provider, Config& config) {
+    auto* oai = dynamic_cast<OpenAIProvider*>(provider);
+    if (!oai) return;
+    oai->set_on_token_refresh(
+        [&config](const std::string& at, const std::string& rt, uint64_t ea) {
+            auto& entry = config.providers["openai"];
+            entry.oauth_access_token = at;
+            entry.oauth_refresh_token = rt;
+            entry.oauth_expires_at = ea;
+            persist_openai_oauth(entry);
+        });
 }
 
 } // namespace ptrclaw

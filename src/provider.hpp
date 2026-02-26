@@ -107,6 +107,11 @@ std::vector<ProviderInfo> list_providers(
     const Config& config,
     const std::string& current_provider);
 
+// Returns "API key", "OAuth", or "local" based on the active provider + model.
+std::string auth_mode_label(const std::string& provider_name,
+                             const std::string& model,
+                             const Config& config);
+
 // ── Provider switching ──────────────────────────────────────────
 // For openai, auto-selects OAuth when the model name contains
 // "codex", otherwise uses the API key.

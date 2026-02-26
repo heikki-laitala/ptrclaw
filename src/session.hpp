@@ -68,7 +68,6 @@ private:
     std::optional<PendingOAuth> get_pending_oauth(const std::string& session_id);
     void set_pending_oauth(const std::string& session_id, PendingOAuth pending);
     void clear_pending_oauth(const std::string& session_id);
-    void setup_oauth_refresh_callback(Provider* provider);
     bool handle_auth_command(const MessageReceivedEvent& ev,
                              Agent& agent,
                              const std::function<void(const std::string&)>& send_reply);
