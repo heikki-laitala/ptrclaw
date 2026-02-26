@@ -46,8 +46,11 @@ std::string auth_mode_label(const std::string& provider_name,
                              const std::string& model,
                              const Config& config) {
     if (provider_name == "openai") {
-        if (model.find("codex") != std::string::npos)
-            return "OAuth";
+        if (model.find("codex") != std::string::npos) {
+            auto it = config.providers.find("openai");
+            if (it != config.providers.end() && !it->second.oauth_access_token.empty())
+                return "OAuth";
+        }
         return "API key";
     }
     auto it = config.providers.find(provider_name);
@@ -71,30 +74,27 @@ SwitchProviderResult switch_provider(const std::string& name,
 
     const auto& entry = it->second;
 
-    // OpenAI: auto-select OAuth vs API key based on model name
+    // OpenAI: codex models prefer OAuth when available, fall back to API key.
+    // Non-codex models always use API key.
     if (name == "openai") {
         std::string effective = model_arg.empty() ? current_model : model_arg;
-        bool needs_oauth = effective.find("codex") != std::string::npos;
+        bool is_codex = effective.find("codex") != std::string::npos;
+        bool has_oauth = !entry.oauth_access_token.empty();
+        bool has_key = !entry.api_key.empty();
+        bool use_oauth = is_codex && has_oauth;
 
-        if (needs_oauth) {
-            if (entry.oauth_access_token.empty()) {
-                result.error = "OpenAI OAuth not configured. Run /auth openai start";
-                return result;
-            }
-            result.provider = create_provider("openai", config.api_key_for("openai"), http,
-                config.base_url_for("openai"), config.prompt_caching_for("openai"), &entry);
-            result.model = model_arg.empty() ? effective : model_arg;
-        } else {
-            if (entry.api_key.empty()) {
-                result.error = "No API key for openai";
-                return result;
-            }
-            ProviderEntry no_oauth = entry;
-            no_oauth.use_oauth = false;
-            result.provider = create_provider("openai", config.api_key_for("openai"), http,
-                config.base_url_for("openai"), config.prompt_caching_for("openai"), &no_oauth);
-            result.model = model_arg;
+        if (!use_oauth && !has_key) {
+            result.error = is_codex
+                ? "No API key or OAuth for openai. Run /auth openai start for OAuth."
+                : "No API key for openai";
+            return result;
         }
+
+        ProviderEntry adjusted = entry;
+        adjusted.use_oauth = use_oauth;
+        result.provider = create_provider("openai", config.api_key_for("openai"), http,
+            config.base_url_for("openai"), config.prompt_caching_for("openai"), &adjusted);
+        result.model = model_arg.empty() ? effective : model_arg;
         return result;
     }
 
