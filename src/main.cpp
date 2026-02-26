@@ -259,13 +259,24 @@ int main(int argc, char* argv[]) try {
     std::unique_ptr<ptrclaw::Provider> provider;
     try {
         auto provider_it = config.providers.find(config.provider);
+        const ptrclaw::ProviderEntry* ep =
+            provider_it != config.providers.end() ? &provider_it->second : nullptr;
+
+        // OpenAI: auto-select auth based on model name
+        ptrclaw::ProviderEntry adjusted;
+        if (config.provider == "openai" && ep) {
+            adjusted = *ep;
+            adjusted.use_oauth = config.model.find("codex") != std::string::npos;
+            ep = &adjusted;
+        }
+
         provider = ptrclaw::create_provider(
             config.provider,
             config.api_key_for(config.provider),
             http_client,
             config.base_url_for(config.provider),
             config.prompt_caching_for(config.provider),
-            provider_it != config.providers.end() ? &provider_it->second : nullptr);
+            ep);
     } catch (const std::exception& e) {
         std::cerr << "Error creating provider: " << e.what() << "\n";
         return 1;
