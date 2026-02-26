@@ -2,6 +2,9 @@
 #include "channels/telegram.hpp"
 #include "mock_http_client.hpp"
 
+#include <filesystem>
+#include <fstream>
+
 using namespace ptrclaw;
 
 static TelegramConfig make_config(const std::string& token = "test-token",
@@ -261,6 +264,216 @@ TEST_CASE("TelegramChannel: poll_updates handles multiple messages", "[telegram]
     REQUIRE(msgs.size() == 2);
     REQUIRE(msgs[0].content == "msg1");
     REQUIRE(msgs[1].content == "msg2");
+}
+
+TEST_CASE("TelegramChannel: pairing auto-pairs on first private message", "[telegram]") {
+    MockHttpClient http;
+    http.next_response = {200, R"({
+        "ok": true,
+        "result": [{
+            "update_id": 10,
+            "message": {
+                "message_id": 1,
+                "from": {"id": 42, "username": "alice"},
+                "chat": {"id": 42, "type": "private"},
+                "date": 0,
+                "text": "hello"
+            }
+        }]
+    })"};
+
+    auto cfg = make_config("tok", {"*"});
+    cfg.pairing_enabled = true;
+    cfg.pairing_file = (std::filesystem::temp_directory_path() / "ptrclaw-test-pairing-auto.json").string();
+    std::filesystem::remove(cfg.pairing_file);
+
+    TelegramChannel ch(cfg, http);
+    auto msgs = ch.poll_updates();
+
+    REQUIRE(msgs.size() == 1);
+    REQUIRE(ch.paired_user_id() == "42");
+    std::filesystem::remove(cfg.pairing_file);
+}
+
+TEST_CASE("TelegramChannel: pairing rejects different user after pairing", "[telegram]") {
+    MockHttpClient http;
+    http.next_response = {200, R"({
+        "ok": true,
+        "result": [{
+            "update_id": 11,
+            "message": {
+                "message_id": 1,
+                "from": {"id": 99, "username": "eve"},
+                "chat": {"id": 99, "type": "private"},
+                "date": 0,
+                "text": "intrude"
+            }
+        }]
+    })"};
+
+    auto cfg = make_config("tok", {"*"});
+    cfg.pairing_enabled = true;
+    cfg.paired_user_id = "42";
+    TelegramChannel ch(cfg, http);
+    auto msgs = ch.poll_updates();
+
+    REQUIRE(msgs.empty());
+}
+
+TEST_CASE("TelegramChannel: pairing does not auto-pair from group chat", "[telegram]") {
+    MockHttpClient http;
+    http.next_response = {200, R"({
+        "ok": true,
+        "result": [{
+            "update_id": 12,
+            "message": {
+                "message_id": 1,
+                "from": {"id": 42, "username": "alice"},
+                "chat": {"id": -100, "type": "supergroup"},
+                "date": 0,
+                "text": "hello from group"
+            }
+        }]
+    })"};
+
+    auto cfg = make_config("tok", {"*"});
+    cfg.pairing_enabled = true;
+    cfg.pairing_file = (std::filesystem::temp_directory_path() / "ptrclaw-test-pairing-group.json").string();
+    std::filesystem::remove(cfg.pairing_file);
+
+    TelegramChannel ch(cfg, http);
+    auto msgs = ch.poll_updates();
+
+    REQUIRE(msgs.empty());
+    REQUIRE(ch.paired_user_id().empty());
+    std::filesystem::remove(cfg.pairing_file);
+}
+
+TEST_CASE("TelegramChannel: pairing honors allow_from for first pairing", "[telegram]") {
+    MockHttpClient http;
+    http.next_response = {200, R"({
+        "ok": true,
+        "result": [{
+            "update_id": 13,
+            "message": {
+                "message_id": 1,
+                "from": {"id": 42, "username": "alice"},
+                "chat": {"id": 42, "type": "private"},
+                "date": 0,
+                "text": "hello"
+            }
+        }]
+    })"};
+
+    auto cfg = make_config("tok", {"bob"});
+    cfg.pairing_enabled = true;
+    TelegramChannel ch(cfg, http);
+    auto msgs = ch.poll_updates();
+
+    REQUIRE(msgs.empty());
+    REQUIRE(ch.paired_user_id().empty());
+}
+
+TEST_CASE("TelegramChannel: pairing disabled preserves allow_from behavior", "[telegram]") {
+    MockHttpClient http;
+    http.next_response = {200, R"({
+        "ok": true,
+        "result": [{
+            "update_id": 14,
+            "message": {
+                "message_id": 1,
+                "from": {"id": 12345},
+                "chat": {"id": 1, "type": "private"},
+                "date": 0,
+                "text": "id allowed"
+            }
+        }]
+    })"};
+
+    auto cfg = make_config("tok", {"12345"});
+    cfg.pairing_enabled = false;
+    TelegramChannel ch(cfg, http);
+    auto msgs = ch.poll_updates();
+
+    REQUIRE(msgs.size() == 1);
+    REQUIRE(ch.paired_user_id().empty());
+}
+
+TEST_CASE("TelegramChannel: manual pairing creates pending request and blocks message", "[telegram]") {
+    MockHttpClient http;
+    http.next_response = {200, R"({
+        "ok": true,
+        "result": [{
+            "update_id": 15,
+            "message": {
+                "message_id": 1,
+                "from": {"id": 777, "username": "alice"},
+                "chat": {"id": 777, "type": "private"},
+                "date": 0,
+                "text": "hello"
+            }
+        }]
+    })"};
+
+    auto cfg = make_config("tok", {"*"});
+    cfg.pairing_enabled = true;
+    cfg.pairing_mode = "manual";
+    cfg.pairing_admin_chat_id = "999";
+    cfg.pairing_pending_file = (std::filesystem::temp_directory_path() / "ptrclaw-test-pairing-pending.json").string();
+    std::filesystem::remove(cfg.pairing_pending_file);
+
+    TelegramChannel ch(cfg, http);
+    auto msgs = ch.poll_updates();
+
+    REQUIRE(msgs.empty());
+    REQUIRE(ch.paired_user_id().empty());
+    REQUIRE(std::filesystem::exists(cfg.pairing_pending_file));
+    std::filesystem::remove(cfg.pairing_pending_file);
+}
+
+TEST_CASE("TelegramChannel: manual pairing approve command pairs pending user", "[telegram]") {
+    auto pending_path = (std::filesystem::temp_directory_path() / "ptrclaw-test-pairing-approve.json").string();
+    auto pairing_path = (std::filesystem::temp_directory_path() / "ptrclaw-test-paired.json").string();
+    std::filesystem::remove(pending_path);
+    std::filesystem::remove(pairing_path);
+
+    // Seed pending file
+    {
+        std::ofstream f(pending_path);
+        f << R"({"user_id":"777","username":"alice","first_name":"Alice","chat_id":"777","code":"ABC123","created_at":9999999999})";
+    }
+
+    MockHttpClient http;
+    http.next_response = {200, R"({
+        "ok": true,
+        "result": [{
+            "update_id": 16,
+            "message": {
+                "message_id": 1,
+                "from": {"id": 999},
+                "chat": {"id": 999, "type": "private"},
+                "date": 0,
+                "text": "/pair approve ABC123"
+            }
+        }]
+    })"};
+
+    auto cfg = make_config("tok", {"*"});
+    cfg.pairing_enabled = true;
+    cfg.pairing_mode = "manual";
+    cfg.pairing_admin_chat_id = "999";
+    cfg.pairing_pending_file = pending_path;
+    cfg.pairing_file = pairing_path;
+
+    TelegramChannel ch(cfg, http);
+    auto msgs = ch.poll_updates();
+
+    REQUIRE(msgs.empty());
+    REQUIRE(ch.paired_user_id() == "777");
+    REQUIRE(std::filesystem::exists(pairing_path));
+
+    std::filesystem::remove(pending_path);
+    std::filesystem::remove(pairing_path);
 }
 
 // ── send_message ─────────────────────────────────────────────────

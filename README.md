@@ -115,7 +115,15 @@ Create `~/.ptrclaw/config.json`:
       "bot_token": "123456:ABC-DEF...",
       "allow_from": ["alice", "bob"],
       "reply_in_private": true,
-      "proxy": ""
+      "proxy": "",
+      "pairing_enabled": false,
+      "pairing_mode": "auto",
+      "paired_user_id": "",
+      "pairing_file": "~/.ptrclaw/telegram_pairing.json",
+      "pairing_admin_chat_id": "",
+      "pairing_admin_user_id": "",
+      "pairing_pending_file": "~/.ptrclaw/telegram_pairing_pending.json",
+      "pairing_request_ttl_sec": 600
     },
     "whatsapp": {
       "access_token": "EAA...",
@@ -282,6 +290,17 @@ See [`docs/whatsapp.md`](docs/whatsapp.md) for credentials setup and [`docs/reve
 export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 ./builddir/ptrclaw --channel telegram
 ```
+
+Telegram pairing mode (`channels.telegram.pairing_enabled`) binds the bot to a single Telegram `from.id`.
+- `pairing_mode: "auto"` (default): first allowed private message auto-pairs and persists to `pairing_file`.
+- `pairing_mode: "manual"`: first user creates a pending request; only admin can approve/deny via `/pair` commands.
+
+Manual mode admin controls:
+- Configure `pairing_admin_chat_id` (recommended) or `pairing_admin_user_id`.
+- Pending requests are stored in `pairing_pending_file` with TTL `pairing_request_ttl_sec`.
+- Admin commands: `/pair status`, `/pair approve <CODE>`, `/pair deny <CODE>`, `/pair reset`, `/pair whoami`.
+
+After pairing, only the paired user ID can send messages to the bot. Group chats never auto-pair.
 
 ### CLI options
 
