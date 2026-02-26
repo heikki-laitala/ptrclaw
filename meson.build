@@ -1,5 +1,5 @@
 project('ptrclaw', 'cpp',
-  version: '0.0.5',
+  version: '0.0.6',
   default_options: ['cpp_std=c++17', 'buildtype=release', 'warning_level=2', 'b_lto=true'])
 
 # Linux uses a lightweight POSIX-socket + OpenSSL HTTP backend to avoid
