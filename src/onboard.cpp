@@ -1,5 +1,7 @@
 #include "onboard.hpp"
+#include "oauth.hpp"
 #include "plugin.hpp"
+#include "session.hpp"
 #include "util.hpp"
 #include <iostream>
 #include <string>
@@ -87,8 +89,64 @@ bool persist_channel_token(const std::string& channel,
     });
 }
 
+// OpenAI OAuth inline flow — returns true if OAuth was completed
+bool setup_openai_oauth(Config& config, HttpClient& http) {
+    std::string client_id = config.providers["openai"].oauth_client_id.empty()
+        ? kDefaultOAuthClientId
+        : config.providers["openai"].oauth_client_id;
+
+    std::string state = generate_id();
+    std::string verifier = make_code_verifier();
+    std::string challenge = make_code_challenge_s256(verifier);
+
+    PendingOAuth pending;
+    pending.provider = "openai";
+    pending.state = state;
+    pending.code_verifier = verifier;
+    pending.redirect_uri = kDefaultRedirectUri;
+    pending.created_at = epoch_seconds();
+
+    std::string url = build_authorize_url(
+        client_id, kDefaultRedirectUri, challenge, state);
+
+    std::cout << "\nOpen this URL to authorize:\n" << url
+              << "\n\nPaste the callback URL or code: " << std::flush;
+
+    std::string input;
+    if (!read_line(input) || input.empty()) {
+        std::cout << "Skipped.\n";
+        return false;
+    }
+
+    auto parsed = parse_oauth_input(input);
+    if (parsed.code.empty()) {
+        std::cout << "Could not extract auth code.\n";
+        return false;
+    }
+    if (!parsed.state.empty() && parsed.state != state) {
+        std::cout << "State mismatch. Please try again.\n";
+        return false;
+    }
+
+    auto result = apply_oauth_result(parsed.code, pending, config, http);
+    if (!result.success) {
+        std::cout << result.error << "\n";
+        return false;
+    }
+
+    config.provider = "openai";
+    config.model = kDefaultOAuthModel;
+    config.persist_selection();
+    std::cout << "OAuth connected. Provider: openai | Model: "
+              << kDefaultOAuthModel << "\n";
+    if (!result.persisted) {
+        std::cout << "(warning: could not persist to config file)\n";
+    }
+    return true;
+}
+
 // Step 1: Provider setup
-bool setup_provider(Config& config, HttpClient& /*http*/) {
+bool setup_provider(Config& config, HttpClient& http) {
     auto& reg = PluginRegistry::instance();
     auto all_names = reg.provider_names();
 
@@ -142,11 +200,29 @@ bool setup_provider(Config& config, HttpClient& /*http*/) {
         read_line(url);
         if (url.empty()) url = current_url;
         config.providers[chosen].base_url = url;
+    } else if (chosen == "openai") {
+        // OpenAI: offer API key or OAuth login
+        std::cout << "Authentication method:\n"
+                  << "  1. API key\n"
+                  << "  2. OAuth login (ChatGPT subscription)\n"
+                  << "> " << std::flush;
+        int auth_choice = read_choice(2);
+        if (auth_choice == 2) {
+            return setup_openai_oauth(config, http);
+        }
+        // Fall through to API key prompt
+        std::cout << "Enter your OpenAI API key: " << std::flush;
+        std::string api_key;
+        if (!read_line(api_key) || api_key.empty()) {
+            std::cout << "No API key provided.\n";
+            return false;
+        }
+        config.providers[chosen].api_key = api_key;
+        persist_provider_key(chosen, api_key);
     } else {
         // Prompt for API key
         std::string key_name = chosen;
         if (chosen == "anthropic") key_name = "Anthropic";
-        else if (chosen == "openai") key_name = "OpenAI";
         else if (chosen == "openrouter") key_name = "OpenRouter";
 
         std::cout << "Enter your " << key_name << " API key: " << std::flush;
