@@ -519,7 +519,11 @@ int main(int argc, char* argv[]) try {
                         if (!sr.model.empty()) agent.set_model(sr.model);
                         std::cout << "Provider: " << agent.provider_name()
                                   << " | Model: " << agent.model() << "\n";
-                        if (hatch_req) agent.start_hatch();
+                        if (hatch_req) {
+                            agent.start_hatch();
+                            std::string r = agent.process("Begin the hatching interview.");
+                            std::cout << r << "\n";
+                        }
                     }
                 }
             } else if (line == "/hatch") {

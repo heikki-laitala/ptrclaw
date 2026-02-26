@@ -331,6 +331,18 @@ bool run_onboard(Config& config, HttpClient& http, bool& hatch_requested) {
 }
 
 bool needs_onboard(const Config& config) {
+    // If a provider is already selected, trust that choice
+    if (!config.provider.empty()) {
+        // Local providers (Ollama) don't need credentials
+        if (config.provider == "ollama") return false;
+        // Check if the selected provider has credentials
+        auto it = config.providers.find(config.provider);
+        if (it != config.providers.end()) {
+            if (!it->second.api_key.empty()) return false;
+            if (!it->second.oauth_access_token.empty()) return false;
+        }
+    }
+    // No provider selected — check if any provider has credentials
     for (const auto& [name, entry] : config.providers) {
         if (!entry.api_key.empty()) return false;
         if (!entry.oauth_access_token.empty()) return false;

@@ -169,6 +169,7 @@ core_test_sources = files(
   'tests/test_event_bus.cpp',
   'tests/test_plugin.cpp',
   'tests/test_oauth.cpp',
+  'tests/test_onboard.cpp',
 )
 
 optional_test_sources = []
