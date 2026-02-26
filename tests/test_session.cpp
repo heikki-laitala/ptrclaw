@@ -11,11 +11,8 @@ using namespace ptrclaw;
 static MockHttpClient test_http;
 
 static Config make_test_config() {
-    auto names = PluginRegistry::instance().provider_names();
-    REQUIRE_FALSE(names.empty());
-
     Config cfg;
-    cfg.provider = names.front();
+    cfg.provider = "anthropic";
     cfg.providers["anthropic"].api_key = "test-key";
     cfg.providers["openai"].api_key = "test-key";
     cfg.providers["openrouter"].api_key = "test-key";

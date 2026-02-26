@@ -253,26 +253,10 @@ int main(int argc, char* argv[]) try {
     // Create provider and agent (pipe, -m, REPL modes)
     std::unique_ptr<ptrclaw::Provider> provider;
     try {
-        auto provider_it = config.providers.find(config.provider);
-        const ptrclaw::ProviderEntry* ep =
-            provider_it != config.providers.end() ? &provider_it->second : nullptr;
-
-        // OpenAI: auto-select auth based on model name
-        ptrclaw::ProviderEntry adjusted;
-        if (config.provider == "openai" && ep) {
-            adjusted = *ep;
-            bool is_codex = config.model.find("codex") != std::string::npos;
-            adjusted.use_oauth = is_codex && !adjusted.oauth_access_token.empty();
-            ep = &adjusted;
-        }
-
-        provider = ptrclaw::create_provider(
-            config.provider,
-            config.api_key_for(config.provider),
-            http_client,
-            config.base_url_for(config.provider),
-            config.prompt_caching_for(config.provider),
-            ep);
+        auto sr = ptrclaw::switch_provider(
+            config.provider, config.model, config.model, config, http_client);
+        if (!sr.error.empty()) throw std::runtime_error(sr.error);
+        provider = std::move(sr.provider);
     } catch (const std::exception& e) {
         std::cerr << "Error creating provider: " << e.what() << "\n";
         return 1;
@@ -519,26 +503,18 @@ int main(int argc, char* argv[]) try {
             } else if (line == "/onboard") {
                 bool hatch_req = false;
                 if (ptrclaw::run_onboard(config, http_client, hatch_req)) {
-                    auto pit = config.providers.find(config.provider);
-                    const ptrclaw::ProviderEntry* ep2 =
-                        pit != config.providers.end() ? &pit->second : nullptr;
-                    ptrclaw::ProviderEntry adj2;
-                    if (config.provider == "openai" && ep2) {
-                        adj2 = *ep2;
-                        bool codex = config.model.find("codex") != std::string::npos;
-                        adj2.use_oauth = codex && !adj2.oauth_access_token.empty();
-                        ep2 = &adj2;
+                    auto sr = ptrclaw::switch_provider(
+                        config.provider, config.model, config.model, config, http_client);
+                    if (!sr.error.empty()) {
+                        std::cout << sr.error << "\n";
+                    } else {
+                        ptrclaw::setup_oauth_refresh(sr.provider.get(), config);
+                        agent.set_provider(std::move(sr.provider));
+                        if (!sr.model.empty()) agent.set_model(sr.model);
+                        std::cout << "Provider: " << agent.provider_name()
+                                  << " | Model: " << agent.model() << "\n";
+                        if (hatch_req) agent.start_hatch();
                     }
-                    auto fresh = ptrclaw::create_provider(
-                        config.provider, config.api_key_for(config.provider), http_client,
-                        config.base_url_for(config.provider),
-                        config.prompt_caching_for(config.provider), ep2);
-                    ptrclaw::setup_oauth_refresh(fresh.get(), config);
-                    agent.set_provider(std::move(fresh));
-                    agent.set_model(config.model);
-                    std::cout << "Provider: " << agent.provider_name()
-                              << " | Model: " << agent.model() << "\n";
-                    if (hatch_req) agent.start_hatch();
                 }
             } else if (line == "/hatch") {
                 agent.start_hatch();
