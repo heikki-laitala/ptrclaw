@@ -400,12 +400,57 @@ All memory settings live under the `memory` key in `~/.ptrclaw/config.json`:
 | `enrich_depth` | uint32 | `1` | Link-following depth. `0` = flat recall, `1` = include 1-hop neighbors. |
 | `synthesis` | bool | `true` | Auto-extract atomic notes from conversation. |
 | `synthesis_interval` | uint32 | `5` | Synthesize every N user messages. |
+| `recency_half_life` | uint32 | `0` | Recency decay half-life in seconds. `0` = disabled. See [Recency decay](#recency-decay). |
 | `embeddings.provider` | string | `""` | Embedding provider: `"openai"`, `"ollama"`, or `""` (disabled). |
 | `embeddings.model` | string | `""` | Model name. Empty uses provider default (`text-embedding-3-small` / `nomic-embed-text`). |
 | `embeddings.base_url` | string | `""` | Override API base URL. Empty uses provider default. |
 | `embeddings.api_key` | string | `""` | API key for OpenAI embeddings. Empty falls back to `providers.openai.api_key`. |
 | `embeddings.text_weight` | double | `0.4` | Weight for text score in hybrid search. |
 | `embeddings.vector_weight` | double | `0.6` | Weight for vector similarity in hybrid search. |
+
+## Recency decay
+
+Optional time-based scoring that favors recent entries over old ones. When enabled, recall scores are multiplied by an exponential decay factor based on entry age.
+
+### Formula
+
+```
+score *= exp(-ln(2) × age_seconds / half_life_seconds)
+```
+
+| Age (relative to half-life) | Decay multiplier |
+|-----------------------------|------------------|
+| 0 (just stored)             | 1.0              |
+| 1× half-life                | 0.5              |
+| 2× half-life                | 0.25             |
+| 3× half-life                | 0.125            |
+
+### Configuration
+
+```json
+{
+    "memory": {
+        "recency_half_life": 259200
+    }
+}
+```
+
+The value is in seconds. `0` (default) disables decay entirely. Common values:
+
+| Value | Half-life | Use case |
+|-------|-----------|----------|
+| `0` | Disabled | All entries scored equally regardless of age |
+| `86400` | 1 day | Fast-moving conversations, recent context dominates |
+| `259200` | 3 days | Balanced — older knowledge fades but doesn't vanish |
+| `604800` | 7 days | Gentle decay, matches default `hygiene_max_age` |
+
+Environment variable: `MEMORY_RECENCY_HALF_LIFE`.
+
+### Interaction with hybrid search
+
+Decay applies **after** hybrid scoring (text + vector), so it multiplies the combined score. This means a semantically relevant old entry can still rank above an irrelevant new one — decay is a tiebreaker, not an override.
+
+Decay applies to both text-only and hybrid search paths in both backends.
 
 ## Embedding / vector search
 
@@ -499,10 +544,9 @@ meson setup build -Dwith_embeddings=true
 | `src/memory/sqlite_memory.hpp/.cpp` | SQLite + FTS5 backend |
 | `src/memory/none_memory.hpp/.cpp` | No-op backend |
 | `src/memory/response_cache.hpp/.cpp` | LLM response cache |
-| `src/embedder.hpp` | Embedder interface, `Embedding` type, `cosine_similarity()` |
+| `src/embedder.hpp` | Embedder interface, `Embedding` type, `cosine_similarity()`, `recency_decay()` |
 | `src/embedder.cpp` | `create_embedder()` factory |
-| `src/embedders/openai_embedder.hpp/.cpp` | OpenAI embedding provider |
-| `src/embedders/ollama_embedder.hpp/.cpp` | Ollama embedding provider |
+| `src/embedders/http_embedder.hpp/.cpp` | Unified HTTP embedder (OpenAI, Ollama) |
 | `src/tools/memory_tool_util.hpp` | Shared `parse_memory_tool_args()` / `require_string()` for memory tools |
 | `src/tools/memory_store.hpp/.cpp` | memory_store tool |
 | `src/tools/memory_recall.hpp/.cpp` | memory_recall tool |

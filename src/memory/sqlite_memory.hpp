@@ -46,6 +46,7 @@ public:
 
     void set_embedder(Embedder* embedder, double text_weight = 0.4,
                       double vector_weight = 0.6) override;
+    void set_recency_decay(uint32_t half_life_seconds) override;
 
 private:
     void init_schema();
@@ -59,6 +60,7 @@ private:
     Embedder* embedder_ = nullptr;
     double text_weight_ = 0.4;
     double vector_weight_ = 0.6;
+    uint32_t recency_half_life_ = 0;
 };
 
 } // namespace ptrclaw

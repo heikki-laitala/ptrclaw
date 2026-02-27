@@ -4,6 +4,7 @@
 #include "../util.hpp"
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
+#include <algorithm>
 #include <filesystem>
 #include <stdexcept>
 #include <cstring>
@@ -208,6 +209,10 @@ void SqliteMemory::set_embedder(Embedder* embedder, double text_weight,
     vector_weight_ = vector_weight;
 }
 
+void SqliteMemory::set_recency_decay(uint32_t half_life_seconds) {
+    recency_half_life_ = half_life_seconds;
+}
+
 std::string SqliteMemory::store(const std::string& key, const std::string& content,
                                  MemoryCategory category, const std::string& session_id) {
     // Compute embedding OUTSIDE the mutex (HTTP call may be slow)
@@ -331,6 +336,19 @@ std::vector<MemoryEntry> SqliteMemory::recall(const std::string& query, uint32_t
             results = run_recall_query(db_, like_sql, like_params, lim, -1, false);
         }
 
+        // Apply recency decay and re-sort
+        if (recency_half_life_ > 0 && !results.empty()) {
+            uint64_t now = epoch_seconds();
+            for (auto& entry : results) {
+                uint64_t age = (now > entry.timestamp) ? now - entry.timestamp : 0;
+                entry.score *= recency_decay(age, recency_half_life_);
+            }
+            std::sort(results.begin(), results.end(),
+                      [](const MemoryEntry& a, const MemoryEntry& b) {
+                          return a.score > b.score;
+                      });
+        }
+
         for (auto& entry : results) {
             populate_links(entry);
         }
@@ -399,6 +417,7 @@ std::vector<MemoryEntry> SqliteMemory::recall(const std::string& query, uint32_t
     std::vector<ScoredEntry> scored;
 
     bool has_text = !bm25_scores.empty();
+    uint64_t now = epoch_seconds();
 
     while (sqlite3_step(g.stmt) == SQLITE_ROW) {
         auto entry = entry_from_stmt(g.stmt);
@@ -418,6 +437,10 @@ std::vector<MemoryEntry> SqliteMemory::recall(const std::string& query, uint32_t
         double combined = hybrid_score(text_norm, cosine_sim,
                                        text_weight_, vector_weight_,
                                        has_text, !emb.empty());
+        if (recency_half_life_ > 0) {
+            uint64_t age = (now > entry.timestamp) ? now - entry.timestamp : 0;
+            combined *= recency_decay(age, recency_half_life_);
+        }
         if (combined > 0.0) {
             scored.push_back({std::move(entry), combined});
         }

@@ -35,6 +35,9 @@ Agent::Agent(std::unique_ptr<Provider> provider,
 {
     // Create memory backend from config
     memory_ = create_memory(config_);
+    if (memory_) {
+        memory_->set_recency_decay(config_.memory.recency_half_life);
+    }
     wire_memory_tools();
 
     // Create response cache if enabled
@@ -362,6 +365,9 @@ std::string Agent::provider_name() const {
 
 void Agent::set_memory(std::unique_ptr<Memory> memory) {
     memory_ = std::move(memory);
+    if (memory_) {
+        memory_->set_recency_decay(config_.memory.recency_half_life);
+    }
     wire_memory_tools();
     if (memory_ && embedder_) {
         memory_->set_embedder(embedder_,

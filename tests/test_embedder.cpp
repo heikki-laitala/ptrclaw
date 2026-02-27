@@ -58,6 +58,34 @@ TEST_CASE("cosine_similarity: normalized vectors", "[embedder]") {
     REQUIRE(std::abs(sim - 0.5) < 1e-4);
 }
 
+// ── Recency decay ───────────────────────────────────────────
+
+TEST_CASE("recency_decay: disabled when half_life is 0", "[embedder]") {
+    REQUIRE(recency_decay(0, 0) == 1.0);
+    REQUIRE(recency_decay(1000000, 0) == 1.0);
+}
+
+TEST_CASE("recency_decay: returns 1.0 at age 0", "[embedder]") {
+    REQUIRE(std::abs(recency_decay(0, 3600) - 1.0) < 1e-6);
+}
+
+TEST_CASE("recency_decay: returns ~0.5 at half-life age", "[embedder]") {
+    REQUIRE(std::abs(recency_decay(3600, 3600) - 0.5) < 1e-6);
+}
+
+TEST_CASE("recency_decay: returns ~0.25 at 2x half-life", "[embedder]") {
+    REQUIRE(std::abs(recency_decay(7200, 3600) - 0.25) < 1e-6);
+}
+
+TEST_CASE("recency_decay: decreases monotonically", "[embedder]") {
+    double d1 = recency_decay(100, 3600);
+    double d2 = recency_decay(1000, 3600);
+    double d3 = recency_decay(10000, 3600);
+    REQUIRE(d1 > d2);
+    REQUIRE(d2 > d3);
+    REQUIRE(d3 > 0.0);
+}
+
 // ── Mock embedder ────────────────────────────────────────────
 
 class MockEmbedder : public Embedder {

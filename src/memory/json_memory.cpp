@@ -158,6 +158,10 @@ void JsonMemory::set_embedder(Embedder* embedder, double text_weight,
     vector_weight_ = vector_weight;
 }
 
+void JsonMemory::set_recency_decay(uint32_t half_life_seconds) {
+    recency_half_life_ = half_life_seconds;
+}
+
 std::string JsonMemory::store(const std::string& key, const std::string& content,
                                MemoryCategory category, const std::string& session_id) {
     // Compute embedding OUTSIDE the mutex (HTTP call may be slow)
@@ -227,6 +231,7 @@ std::vector<MemoryEntry> JsonMemory::recall(const std::string& query, uint32_t l
     }
 
     // Compute hybrid scores
+    uint64_t now = epoch_seconds();
     std::vector<std::pair<double, size_t>> scored;
     for (size_t i = 0; i < entries_.size(); i++) {
         if (category_filter && entries_[i].category != *category_filter) continue;
@@ -245,6 +250,10 @@ std::vector<MemoryEntry> JsonMemory::recall(const std::string& query, uint32_t l
         double combined = hybrid_score(text_norm, cosine_sim,
                                        text_weight_, vector_weight_,
                                        has_tokens, has_vector);
+        if (recency_half_life_ > 0) {
+            uint64_t age = (now > entries_[i].timestamp) ? now - entries_[i].timestamp : 0;
+            combined *= recency_decay(age, recency_half_life_);
+        }
         if (combined > 0.0) {
             scored.emplace_back(combined, i);
         }
