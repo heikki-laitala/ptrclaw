@@ -1,4 +1,5 @@
 #include "memory_link.hpp"
+#include "memory_tool_util.hpp"
 #include "../plugin.hpp"
 #include <nlohmann/json.hpp>
 
@@ -8,26 +9,11 @@ static ptrclaw::ToolRegistrar reg_memory_link("memory_link",
 namespace ptrclaw {
 
 ToolResult MemoryLinkTool::execute(const std::string& args_json) {
-    if (!memory_) {
-        return ToolResult{false, "Memory system is not enabled"};
-    }
-
     nlohmann::json args;
-    try {
-        args = nlohmann::json::parse(args_json);
-    } catch (const std::exception& e) {
-        return ToolResult{false, std::string("Failed to parse arguments: ") + e.what()};
-    }
-
-    if (!args.contains("action") || !args["action"].is_string()) {
-        return ToolResult{false, "Missing required parameter: action"};
-    }
-    if (!args.contains("from") || !args["from"].is_string()) {
-        return ToolResult{false, "Missing required parameter: from"};
-    }
-    if (!args.contains("to") || !args["to"].is_string()) {
-        return ToolResult{false, "Missing required parameter: to"};
-    }
+    if (auto err = parse_memory_tool_args(memory_, args_json, args)) return *err;
+    if (auto err = require_string(args, "action")) return *err;
+    if (auto err = require_string(args, "from")) return *err;
+    if (auto err = require_string(args, "to")) return *err;
 
     std::string action = args["action"].get<std::string>();
     std::string from = args["from"].get<std::string>();

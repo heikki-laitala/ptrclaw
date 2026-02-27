@@ -2,6 +2,7 @@
 #include "../memory.hpp"
 #include <mutex>
 #include <string>
+#include <unordered_map>
 
 namespace ptrclaw {
 
@@ -39,10 +40,13 @@ public:
 private:
     void load();
     void save();
+    void rebuild_index();
+    void remove_links_to(const std::vector<std::string>& dead_keys);
     double score_entry(const MemoryEntry& entry, const std::vector<std::string>& tokens) const;
 
     std::string path_;
     std::vector<MemoryEntry> entries_;
+    std::unordered_map<std::string, size_t> key_index_; // key -> entries_ index
     mutable std::mutex mutex_;
 };
 

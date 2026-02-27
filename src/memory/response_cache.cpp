@@ -101,11 +101,12 @@ void ResponseCache::evict() {
             key_access.emplace_back(entry.last_access, key);
         }
 
-        std::sort(key_access.begin(), key_access.end());
-
         size_t to_remove = entries_.size() - max_entries_;
-        for (size_t i = 0; i < to_remove; ++i) {
-            entries_.erase(key_access[i].second);
+        auto nth = key_access.begin() + static_cast<ptrdiff_t>(to_remove);
+        std::nth_element(key_access.begin(), nth, key_access.end());
+
+        for (auto it = key_access.begin(); it != nth; ++it) {
+            entries_.erase(it->second);
         }
     }
 }

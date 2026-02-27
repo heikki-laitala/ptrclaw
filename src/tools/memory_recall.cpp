@@ -1,4 +1,5 @@
 #include "memory_recall.hpp"
+#include "memory_tool_util.hpp"
 #include "../plugin.hpp"
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -9,20 +10,9 @@ static ptrclaw::ToolRegistrar reg_memory_recall("memory_recall",
 namespace ptrclaw {
 
 ToolResult MemoryRecallTool::execute(const std::string& args_json) {
-    if (!memory_) {
-        return ToolResult{false, "Memory system is not enabled"};
-    }
-
     nlohmann::json args;
-    try {
-        args = nlohmann::json::parse(args_json);
-    } catch (const std::exception& e) {
-        return ToolResult{false, std::string("Failed to parse arguments: ") + e.what()};
-    }
-
-    if (!args.contains("query") || !args["query"].is_string()) {
-        return ToolResult{false, "Missing required parameter: query"};
-    }
+    if (auto err = parse_memory_tool_args(memory_, args_json, args)) return *err;
+    if (auto err = require_string(args, "query")) return *err;
 
     std::string query = args["query"].get<std::string>();
 
