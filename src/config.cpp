@@ -55,6 +55,7 @@ nlohmann::json Config::defaults_json() {
             {"enrich_depth", 1},
             {"synthesis", true},
             {"synthesis_interval", 5},
+            {"recency_half_life", 0},
             {"embeddings", {
                 {"provider", ""},
                 {"model", ""},
@@ -191,6 +192,8 @@ Config Config::load() {
             cfg.memory.synthesis = m["synthesis"].get<bool>();
         if (m.contains("synthesis_interval") && m["synthesis_interval"].is_number_unsigned())
             cfg.memory.synthesis_interval = m["synthesis_interval"].get<uint32_t>();
+        if (m.contains("recency_half_life") && m["recency_half_life"].is_number_unsigned())
+            cfg.memory.recency_half_life = m["recency_half_life"].get<uint32_t>();
         if (m.contains("embeddings") && m["embeddings"].is_object()) {
             auto& e = m["embeddings"];
             if (e.contains("provider") && e["provider"].is_string())
@@ -248,6 +251,10 @@ Config Config::load() {
         cfg.channels["whatsapp"]["webhook_listen"] = v;
     if (const char* v = std::getenv("WHATSAPP_WEBHOOK_SECRET"))
         cfg.channels["whatsapp"]["webhook_secret"] = v;
+
+    // Memory env var overrides
+    if (const char* v = std::getenv("MEMORY_RECENCY_HALF_LIFE"))
+        cfg.memory.recency_half_life = static_cast<uint32_t>(std::strtoul(v, nullptr, 10));
 
     // Embedding env var overrides
     if (const char* v = std::getenv("EMBEDDING_PROVIDER"))

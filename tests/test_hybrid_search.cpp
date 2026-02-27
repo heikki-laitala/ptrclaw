@@ -1,11 +1,16 @@
 #include <catch2/catch_test_macros.hpp>
 #include "embedder.hpp"
 #include "memory/json_memory.hpp"
+#include <nlohmann/json.hpp>
+#include <cmath>
+#include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <unistd.h>
 
 #ifdef PTRCLAW_HAS_SQLITE_MEMORY
 #include "memory/sqlite_memory.hpp"
+#include <sqlite3.h>
 #endif
 
 using namespace ptrclaw;
@@ -185,6 +190,79 @@ TEST_CASE("JsonMemory hybrid: persistence round-trip", "[hybrid][json_memory]") 
     std::filesystem::remove(path + ".tmp");
 }
 
+// ── JsonMemory recency decay ──────────────────────────────────
+
+TEST_CASE("JsonMemory: recency decay boosts recent entries", "[recency][json_memory]") {
+    std::string path = json_test_path();
+    {
+        JsonMemory mem(path);
+        // Store two entries with same content but different timestamps.
+        // We manually store, then overwrite timestamps via the file.
+        mem.store("old-cat", "I love cats and kittens", MemoryCategory::Knowledge, "");
+        mem.store("new-cat", "I love cats and kittens", MemoryCategory::Knowledge, "");
+    }
+    {
+        // Reopen and manually adjust timestamps in JSON
+        std::ifstream in(path);
+        auto j = nlohmann::json::parse(in);
+        in.close();
+
+        uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+        // Old entry: 30 days ago
+        j[0]["timestamp"] = now - 30 * 86400;
+        // New entry: 1 minute ago
+        j[1]["timestamp"] = now - 60;
+
+        std::ofstream out(path);
+        out << j.dump(2);
+    }
+    {
+        JsonMemory mem(path);
+        mem.set_recency_decay(86400); // 1-day half-life
+
+        auto results = mem.recall("cats", 5, std::nullopt);
+        REQUIRE(results.size() == 2);
+        // New entry should rank first due to recency decay
+        REQUIRE(results[0].key == "new-cat");
+        // And have a higher score
+        REQUIRE(results[0].score > results[1].score);
+    }
+    std::filesystem::remove(path);
+    std::filesystem::remove(path + ".tmp");
+}
+
+TEST_CASE("JsonMemory: recency decay disabled when half_life is 0", "[recency][json_memory]") {
+    std::string path = json_test_path();
+    {
+        JsonMemory mem(path);
+        mem.store("entry-a", "Python programming code", MemoryCategory::Knowledge, "");
+        mem.store("entry-b", "Python programming code", MemoryCategory::Knowledge, "");
+    }
+    {
+        std::ifstream in(path);
+        auto j = nlohmann::json::parse(in);
+        in.close();
+
+        uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+        j[0]["timestamp"] = now - 30 * 86400;
+        j[1]["timestamp"] = now - 60;
+
+        std::ofstream out(path);
+        out << j.dump(2);
+    }
+    {
+        JsonMemory mem(path);
+        // No set_recency_decay — default is 0 (disabled)
+
+        auto results = mem.recall("Python", 5, std::nullopt);
+        REQUIRE(results.size() == 2);
+        // Without decay, both should have the same score
+        REQUIRE(std::abs(results[0].score - results[1].score) < 1e-6);
+    }
+    std::filesystem::remove(path);
+    std::filesystem::remove(path + ".tmp");
+}
+
 // ── SqliteMemory hybrid search ───────────────────────────────
 
 #ifdef PTRCLAW_HAS_SQLITE_MEMORY
@@ -246,6 +324,37 @@ TEST_CASE("SqliteMemory hybrid: entries without embeddings gracefully degrade", 
     // The entry has an embedding from store(). Recall should work.
     auto results = f.mem.recall("feline", 5, std::nullopt);
     REQUIRE_FALSE(results.empty());
+}
+
+TEST_CASE("SqliteMemory: recency decay boosts recent entries", "[recency][sqlite_memory]") {
+    std::string path = sqlite_hybrid_path();
+    {
+        SqliteMemory mem(path);
+        mem.set_recency_decay(86400); // 1-day half-life
+
+        mem.store("old-python", "Python programming code", MemoryCategory::Knowledge, "");
+        mem.store("new-python", "Python programming code", MemoryCategory::Knowledge, "");
+
+        // Manually update timestamps via SQL
+        sqlite3* db = nullptr;
+        sqlite3_open(path.c_str(), &db);
+        uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+        std::string sql1 = "UPDATE memories SET timestamp = " +
+                           std::to_string(now - 30 * 86400) + " WHERE key = 'old-python';";
+        std::string sql2 = "UPDATE memories SET timestamp = " +
+                           std::to_string(now - 60) + " WHERE key = 'new-python';";
+        sqlite3_exec(db, sql1.c_str(), nullptr, nullptr, nullptr);
+        sqlite3_exec(db, sql2.c_str(), nullptr, nullptr, nullptr);
+        sqlite3_close(db);
+
+        auto results = mem.recall("Python", 5, std::nullopt);
+        REQUIRE(results.size() == 2);
+        REQUIRE(results[0].key == "new-python");
+        REQUIRE(results[0].score > results[1].score);
+    }
+    std::filesystem::remove(path);
+    std::filesystem::remove(path + "-wal");
+    std::filesystem::remove(path + "-shm");
 }
 
 #endif // PTRCLAW_HAS_SQLITE_MEMORY

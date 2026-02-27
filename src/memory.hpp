@@ -78,6 +78,10 @@ public:
     virtual void set_embedder(Embedder* /*embedder*/,
                               double /*text_weight*/ = 0.4,
                               double /*vector_weight*/ = 0.6) {}
+
+    // Set recency decay half-life in seconds (0 = disabled).
+    // Scores are multiplied by exp(-ln(2) * age / half_life).
+    virtual void set_recency_decay(uint32_t /*half_life_seconds*/) {}
 };
 
 // Base class for tools that need a Memory* pointer.

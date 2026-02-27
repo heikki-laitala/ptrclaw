@@ -63,6 +63,17 @@ inline double hybrid_score(double text_norm, double cosine_sim,
     return 0.0;
 }
 
+// Exponential recency decay multiplier.
+// Returns exp(-ln(2) * age_seconds / half_life_seconds).
+// At age = half_life, returns 0.5.  At age = 0, returns 1.0.
+// Returns 1.0 when half_life is 0 (decay disabled).
+inline double recency_decay(uint64_t age_seconds, uint32_t half_life_seconds) {
+    if (half_life_seconds == 0) return 1.0;
+    constexpr double kLn2 = 0.693147180559945;
+    return std::exp(-kLn2 * static_cast<double>(age_seconds)
+                           / static_cast<double>(half_life_seconds));
+}
+
 // Create an embedder from config. Returns nullptr if embeddings are disabled
 // or the configured provider is not recognized.
 std::unique_ptr<Embedder> create_embedder(const Config& config, HttpClient& http);
