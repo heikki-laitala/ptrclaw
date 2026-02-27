@@ -1,10 +1,6 @@
 # Build
 build/
-builddir/
-builddir-cov/
-builddir-minimal/
-builddir-static/
-builddir-pipe/
+builddir*/
 .cache/
 
 # IDE
