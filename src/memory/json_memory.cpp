@@ -240,16 +240,18 @@ std::vector<MemoryEntry> JsonMemory::recall(const std::string& query, uint32_t l
             ? text_scores[i] / max_text : 0.0;
 
         double cosine_sim = 0.0;
+        bool has_entry_vector = false;
         if (has_vector) {
             auto emb_it = embeddings_.find(entries_[i].key);
             if (emb_it != embeddings_.end()) {
                 cosine_sim = cosine_similarity(query_emb, emb_it->second);
+                has_entry_vector = true;
             }
         }
 
         double combined = hybrid_score(text_norm, cosine_sim,
                                        text_weight_, vector_weight_,
-                                       has_tokens, has_vector);
+                                       has_tokens, has_entry_vector);
         if (recency_half_life_ > 0) {
             uint64_t age = (now > entries_[i].timestamp) ? now - entries_[i].timestamp : 0;
             combined *= recency_decay(age, recency_half_life_);
