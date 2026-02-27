@@ -522,7 +522,7 @@ Feature flags in `meson_options.txt` control what gets compiled:
 | `with_memory` | `true` | Memory system (JSON + None backends, enrichment, synthesis). |
 | `with_sqlite_memory` | `true` | SQLite backend with FTS5. Requires `sqlite3` dependency. |
 | `with_memory_tools` | `true` | The four LLM-accessible memory tools. |
-| `with_embeddings` | `false` | Embedding/vector search. Requires `with_memory`. |
+| `with_embeddings` | `true` | Embedding/vector search. Requires `with_memory`. |
 
 ```bash
 # Build without SQLite (JSON backend only)

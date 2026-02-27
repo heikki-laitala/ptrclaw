@@ -126,12 +126,12 @@ TEST_CASE("JsonMemory hybrid: text-only still works without embeddings", "[hybri
     REQUIRE(found_python);
 }
 
-TEST_CASE("JsonMemory hybrid: entries without embeddings get vector score 0", "[hybrid][json_memory]") {
+TEST_CASE("JsonMemory hybrid: entries without embeddings get no vector contribution", "[hybrid][json_memory]") {
     std::string path = json_test_path();
     {
-        // Create memory WITHOUT embedder, store some entries
+        // Create memory WITHOUT embedder — entry has no embedding stored
         JsonMemory mem(path);
-        mem.store("no-emb", "cat feline entry", MemoryCategory::Knowledge, "");
+        mem.store("no-emb", "completely unrelated stuff", MemoryCategory::Knowledge, "");
     }
     {
         // Reopen WITH embedder
@@ -139,12 +139,16 @@ TEST_CASE("JsonMemory hybrid: entries without embeddings get vector score 0", "[
         JsonMemory mem(path);
         mem.set_embedder(&embedder, 0.4, 0.6);
 
-        // Store one entry WITH embeddings
+        // Store one entry WITH embeddings (semantic match for "feline")
         mem.store("with-emb", "cat kitten fluffy", MemoryCategory::Knowledge, "");
 
-        // Both should be findable, but the embedded one should score higher for "feline"
+        // Query "feline" — no text match in either entry, but "with-emb" has
+        // a vector match (cat/kitten/feline map to same mock embedding dimension).
+        // The non-embedded entry must NOT surface — it has no text match and
+        // must not receive an artificial vector score from the query embedding.
         auto results = mem.recall("feline", 5, std::nullopt);
-        REQUIRE(results.size() >= 1);
+        REQUIRE(results.size() == 1);
+        REQUIRE(results[0].key == "with-emb");
     }
     std::filesystem::remove(path);
     std::filesystem::remove(path + ".tmp");
