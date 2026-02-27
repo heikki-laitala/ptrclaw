@@ -333,7 +333,76 @@ void setup_channel(Config& config, HttpClient& http) {
     }
 }
 
-// Step 3: Hatch offer
+// Step 3: Embeddings setup (only when compiled with embedding support)
+#ifdef PTRCLAW_HAS_EMBEDDINGS
+void setup_embeddings(Config& config) {
+    std::cout << "\nWould you like to enable semantic memory search (embeddings)? (y/n) [n]: "
+              << std::flush;
+    if (!ask_yes_no(false)) return;
+
+    // Check if an OpenAI key is already available (from provider setup or env)
+    std::string existing_key = config.api_key_for("openai");
+    if (!existing_key.empty()) {
+        std::cout << "OpenAI API key detected. Use it for embeddings? (y/n) [y]: "
+                  << std::flush;
+        if (ask_yes_no(true)) {
+            modify_config_json([](nlohmann::json& j) {
+                j["memory"]["embeddings"]["provider"] = "openai";
+            });
+            config.memory.embeddings.provider = "openai";
+            std::cout << "Embeddings enabled (OpenAI).\n";
+            return;
+        }
+    }
+
+    // Manual provider selection
+    std::cout << "Embedding provider:\n"
+              << "  1. OpenAI (text-embedding-3-small, requires API key)\n"
+              << "  2. Ollama (nomic-embed-text, local, no API key)\n"
+              << "> " << std::flush;
+
+    int choice = read_choice(2);
+    if (choice == 1) {
+        std::cout << "Enter your OpenAI API key for embeddings: " << std::flush;
+        std::string api_key;
+        if (!read_line(api_key) || api_key.empty()) {
+            std::cout << "Skipped.\n";
+            return;
+        }
+        modify_config_json([&](nlohmann::json& j) {
+            j["memory"]["embeddings"]["provider"] = "openai";
+            j["memory"]["embeddings"]["api_key"] = api_key;
+        });
+        config.memory.embeddings.provider = "openai";
+        config.memory.embeddings.api_key = api_key;
+        std::cout << "Embeddings enabled (OpenAI).\n";
+    } else if (choice == 2) {
+        auto it = config.providers.find("ollama");
+        std::string url = (it != config.providers.end() && !it->second.base_url.empty())
+            ? it->second.base_url : "http://localhost:11434";
+        std::cout << "Ollama base URL [" << url << "]: " << std::flush;
+        std::string input;
+        read_line(input);
+        if (!input.empty()) url = input;
+
+        modify_config_json([&](nlohmann::json& j) {
+            j["memory"]["embeddings"]["provider"] = "ollama";
+            if (url != "http://localhost:11434") {
+                j["memory"]["embeddings"]["base_url"] = url;
+            }
+        });
+        config.memory.embeddings.provider = "ollama";
+        if (url != "http://localhost:11434") {
+            config.memory.embeddings.base_url = url;
+        }
+        std::cout << "Embeddings enabled (Ollama).\n";
+    } else {
+        std::cout << "Skipped.\n";
+    }
+}
+#endif
+
+// Step 4: Hatch offer
 void offer_hatch(bool& hatch_requested) {
     auto& reg = PluginRegistry::instance();
     if (!reg.has_memory("json") && !reg.has_memory("sqlite")) return;
@@ -355,6 +424,11 @@ bool run_onboard(Config& config, HttpClient& http, bool& hatch_requested) {
     }
 
     setup_channel(config, http);
+
+#ifdef PTRCLAW_HAS_EMBEDDINGS
+    setup_embeddings(config);
+#endif
+
     offer_hatch(hatch_requested);
 
     std::cout << "\nSetup complete!\n";
