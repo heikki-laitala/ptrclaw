@@ -9,7 +9,7 @@ namespace ptrclaw {
 
 class SqliteMemory : public Memory {
 public:
-    explicit SqliteMemory(const std::string& path);
+    SqliteMemory(const std::string& path, bool trusted_schema = false);
     ~SqliteMemory() override;
 
     // Non-copyable
@@ -49,6 +49,7 @@ private:
 
     sqlite3* db_ = nullptr;
     std::string path_;
+    bool trusted_schema_ = false;
     mutable std::mutex mutex_;
 };
 

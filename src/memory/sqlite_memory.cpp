@@ -13,7 +13,7 @@ static ptrclaw::MemoryRegistrar reg_sqlite("sqlite",
         if (path.empty()) {
             path = ptrclaw::expand_home("~/.ptrclaw/memory.db");
         }
-        return std::make_unique<ptrclaw::SqliteMemory>(path);
+        return std::make_unique<ptrclaw::SqliteMemory>(path, config.memory.sqlite_trusted_schema);
     });
 
 namespace ptrclaw {
@@ -42,13 +42,26 @@ static std::string build_fts_query(const std::string& query) {
     return result;
 }
 
+static void exec_or_throw(sqlite3* db, const char* sql, const char* context) {
+    char* err = nullptr;
+    int rc = sqlite3_exec(db, sql, nullptr, nullptr, &err);
+    if (rc != SQLITE_OK) {
+        std::string msg = context;
+        msg += ": ";
+        msg += err ? err : "sqlite error";
+        if (err) sqlite3_free(err);
+        throw std::runtime_error(msg);
+    }
+}
+
 // RAII wrapper for sqlite3_stmt
 struct StmtGuard {
     sqlite3_stmt* stmt = nullptr;
     ~StmtGuard() { if (stmt) sqlite3_finalize(stmt); }
 };
 
-SqliteMemory::SqliteMemory(const std::string& path) : path_(path) {
+SqliteMemory::SqliteMemory(const std::string& path, bool trusted_schema)
+    : path_(path), trusted_schema_(trusted_schema) {
     // Ensure parent directory exists
     auto parent = std::filesystem::path(path_).parent_path();
     if (!parent.empty()) {
@@ -65,11 +78,14 @@ SqliteMemory::SqliteMemory(const std::string& path) : path_(path) {
     }
 
     // Performance pragmas
-    sqlite3_exec(db_, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
-    sqlite3_exec(db_, "PRAGMA synchronous=NORMAL;", nullptr, nullptr, nullptr);
-    sqlite3_exec(db_, "PRAGMA temp_store=MEMORY;", nullptr, nullptr, nullptr);
-    // Allow FTS5 virtual table use inside triggers (required since SQLite 3.37)
-    sqlite3_exec(db_, "PRAGMA trusted_schema=ON;", nullptr, nullptr, nullptr);
+    exec_or_throw(db_, "PRAGMA journal_mode=WAL;", "SqliteMemory pragma journal_mode=WAL");
+    exec_or_throw(db_, "PRAGMA synchronous=NORMAL;", "SqliteMemory pragma synchronous=NORMAL");
+    exec_or_throw(db_, "PRAGMA temp_store=MEMORY;", "SqliteMemory pragma temp_store=MEMORY");
+
+    // Security posture: keep trusted_schema OFF by default.
+    // Enable only via config when legacy trigger behavior requires it.
+    exec_or_throw(db_, trusted_schema_ ? "PRAGMA trusted_schema=ON;" : "PRAGMA trusted_schema=OFF;",
+                  "SqliteMemory pragma trusted_schema");
 
     init_schema();
 }
@@ -92,13 +108,13 @@ void SqliteMemory::init_schema() {
         "  timestamp  INTEGER NOT NULL,"
         "  session_id TEXT NOT NULL"
         ");";
-    sqlite3_exec(db_, create_table, nullptr, nullptr, nullptr);
+    exec_or_throw(db_, create_table, "SqliteMemory create memories table");
 
     // FTS5 virtual table (content table referencing memories)
     const char* create_fts =
         "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts "
         "USING fts5(key, content, content=memories, content_rowid=rowid);";
-    sqlite3_exec(db_, create_fts, nullptr, nullptr, nullptr);
+    exec_or_throw(db_, create_fts, "SqliteMemory create memories_fts");
 
     // Triggers to keep FTS in sync with the memories table
 
@@ -108,7 +124,7 @@ void SqliteMemory::init_schema() {
         "  INSERT INTO memories_fts(rowid, key, content)"
         "  VALUES (new.rowid, new.key, new.content);"
         "END;";
-    sqlite3_exec(db_, trigger_insert, nullptr, nullptr, nullptr);
+    exec_or_throw(db_, trigger_insert, "SqliteMemory create trigger memories_ai");
 
     // After delete: remove old row from FTS
     const char* trigger_delete =
@@ -116,7 +132,7 @@ void SqliteMemory::init_schema() {
         "  INSERT INTO memories_fts(memories_fts, rowid, key, content)"
         "  VALUES ('delete', old.rowid, old.key, old.content);"
         "END;";
-    sqlite3_exec(db_, trigger_delete, nullptr, nullptr, nullptr);
+    exec_or_throw(db_, trigger_delete, "SqliteMemory create trigger memories_ad");
 
     // After update: update FTS (delete old, insert new)
     const char* trigger_update =
@@ -126,7 +142,7 @@ void SqliteMemory::init_schema() {
         "  INSERT INTO memories_fts(rowid, key, content)"
         "  VALUES (new.rowid, new.key, new.content);"
         "END;";
-    sqlite3_exec(db_, trigger_update, nullptr, nullptr, nullptr);
+    exec_or_throw(db_, trigger_update, "SqliteMemory create trigger memories_au");
 
     // Links table for knowledge graph
     const char* create_links =
@@ -135,7 +151,7 @@ void SqliteMemory::init_schema() {
         "  to_key   TEXT NOT NULL,"
         "  PRIMARY KEY (from_key, to_key)"
         ");";
-    sqlite3_exec(db_, create_links, nullptr, nullptr, nullptr);
+    exec_or_throw(db_, create_links, "SqliteMemory create memory_links table");
 }
 
 // Helper: read a full MemoryEntry from a prepared statement that has selected

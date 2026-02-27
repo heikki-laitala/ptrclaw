@@ -44,6 +44,7 @@ struct MemoryConfig {
     uint32_t enrich_depth = 1;          // 0 = flat, 1 = follow links
     bool synthesis = true;
     uint32_t synthesis_interval = 5;    // synthesize every N user messages
+    bool sqlite_trusted_schema = false; // security: keep OFF unless explicitly needed
 };
 
 struct Config {

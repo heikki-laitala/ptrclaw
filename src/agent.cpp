@@ -287,10 +287,10 @@ std::string Agent::process(const std::string& user_message) {
 
     // Auto-save user+assistant messages to memory if enabled
     if (memory_ && config_.memory.auto_save && memory_->backend_name() != "none") {
-        memory_->store("msg:" + std::to_string(epoch_seconds()),
+        memory_->store("msg:" + generate_id(),
                        user_message, MemoryCategory::Conversation, session_id_);
         if (!final_content.empty() && final_content != "[Max tool iterations reached]") {
-            memory_->store("reply:" + std::to_string(epoch_seconds()),
+            memory_->store("reply:" + generate_id(),
                            final_content, MemoryCategory::Conversation, session_id_);
         }
     }
@@ -430,8 +430,11 @@ void Agent::run_synthesis() {
                 }
             }
         }
-    } catch (...) { // NOLINT(bugprone-empty-catch)
-        // Synthesis failure is non-critical — silently continue
+    } catch (const std::exception& e) {
+        // Synthesis failure is non-critical — continue with visibility.
+        std::cerr << "[memory] synthesis failed: " << e.what() << "\n";
+    } catch (...) {
+        std::cerr << "[memory] synthesis failed: unknown error\n";
     }
 }
 
