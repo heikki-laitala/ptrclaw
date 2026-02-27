@@ -29,7 +29,7 @@ option('with_memory_tools', type: 'boolean', value: true,
        description: 'Build memory tools (memory_store, memory_recall, memory_forget, memory_link)')
 
 # Embedding / vector search
-option('with_embeddings', type: 'boolean', value: false,
+option('with_embeddings', type: 'boolean', value: true,
        description: 'Enable embedding/vector search for memory (requires with_memory)')
 
 # Pipe channel (JSONL stdin/stdout for scripted use)
