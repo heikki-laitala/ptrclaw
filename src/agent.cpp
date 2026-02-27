@@ -1,4 +1,5 @@
 #include "agent.hpp"
+#include "embedder.hpp"
 #include "memory.hpp"
 #include "memory/response_cache.hpp"
 #include "event.hpp"
@@ -362,6 +363,11 @@ std::string Agent::provider_name() const {
 void Agent::set_memory(std::unique_ptr<Memory> memory) {
     memory_ = std::move(memory);
     wire_memory_tools();
+    if (memory_ && embedder_) {
+        memory_->set_embedder(embedder_.get(),
+                              config_.memory.embeddings.text_weight,
+                              config_.memory.embeddings.vector_weight);
+    }
 }
 
 void Agent::wire_memory_tools() {
@@ -377,6 +383,15 @@ void Agent::wire_memory_tools() {
 
 void Agent::set_response_cache(std::unique_ptr<ResponseCache> cache) {
     response_cache_ = std::move(cache);
+}
+
+void Agent::set_embedder(std::unique_ptr<Embedder> embedder) {
+    embedder_ = std::move(embedder);
+    if (memory_ && embedder_) {
+        memory_->set_embedder(embedder_.get(),
+                              config_.memory.embeddings.text_weight,
+                              config_.memory.embeddings.vector_weight);
+    }
 }
 
 void Agent::run_synthesis() {

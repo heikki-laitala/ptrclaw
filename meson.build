@@ -47,9 +47,15 @@ opt_memory        = get_option('with_memory')
 opt_sqlite_memory = get_option('with_sqlite_memory')
 opt_memory_tools  = get_option('with_memory_tools') and opt_memory
 
+opt_embeddings = get_option('with_embeddings') and opt_memory
+
 opt_pipe = get_option('with_pipe')
 if opt_pipe
   add_project_arguments('-DPTRCLAW_HAS_PIPE', language: 'cpp')
+endif
+
+if opt_embeddings
+  add_project_arguments('-DPTRCLAW_HAS_EMBEDDINGS', language: 'cpp')
 endif
 
 # sse.cpp is shared by anthropic and openai streaming
@@ -138,6 +144,13 @@ if opt_memory_tools
     'src/tools/memory_link.cpp',
   )
 endif
+if opt_embeddings
+  optional_sources += files(
+    'src/embedder.cpp',
+    'src/embedders/openai_embedder.cpp',
+    'src/embedders/ollama_embedder.cpp',
+  )
+endif
 lib_sources = core_sources + optional_sources
 
 ptrclaw_lib = static_library('ptrclaw_lib', lib_sources,
@@ -210,6 +223,12 @@ endif
 if opt_memory_tools
   optional_test_sources += files('tests/test_memory_tools.cpp')
 endif
+if opt_embeddings
+  optional_test_sources += files(
+    'tests/test_embedder.cpp',
+    'tests/test_hybrid_search.cpp',
+  )
+endif
 test_sources = core_test_sources + optional_test_sources
 
 test_exe = executable('ptrclaw_tests', test_sources,
@@ -249,6 +268,9 @@ if opt_memory
 endif
 if opt_sqlite_memory
   memory_features += 'sqlite'
+endif
+if opt_embeddings
+  memory_features += 'embeddings'
 endif
 summary({
   'Providers': providers.length() > 0 ? ', '.join(providers) : 'none',

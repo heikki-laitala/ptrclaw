@@ -28,6 +28,15 @@ struct AgentConfig {
     bool disable_streaming = false;
 };
 
+struct EmbeddingConfig {
+    std::string provider;       // "openai", "ollama", "" (disabled)
+    std::string model;          // model name (empty = provider default)
+    std::string base_url;       // override (empty = provider default)
+    std::string api_key;        // for OpenAI (empty = use providers.openai.api_key)
+    double text_weight = 0.4;   // hybrid search text score weight
+    double vector_weight = 0.6; // hybrid search vector score weight
+};
+
 struct MemoryConfig {
 #ifdef PTRCLAW_HAS_SQLITE_MEMORY
     std::string backend = "sqlite";
@@ -44,6 +53,7 @@ struct MemoryConfig {
     uint32_t enrich_depth = 1;          // 0 = flat, 1 = follow links
     bool synthesis = true;
     uint32_t synthesis_interval = 5;    // synthesize every N user messages
+    EmbeddingConfig embeddings;         // vector search config (disabled by default)
 };
 
 struct Config {

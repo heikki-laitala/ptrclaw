@@ -1,7 +1,9 @@
 #pragma once
 #include "../memory.hpp"
+#include "../embedder.hpp"
 #include <mutex>
 #include <string>
+#include <vector>
 #include <unordered_map>
 
 namespace ptrclaw {
@@ -37,6 +39,9 @@ public:
     bool unlink(const std::string& from_key, const std::string& to_key) override;
     std::vector<MemoryEntry> neighbors(const std::string& key, uint32_t limit) override;
 
+    void set_embedder(Embedder* embedder, double text_weight = 0.4,
+                      double vector_weight = 0.6) override;
+
 private:
     void load();
     void save();
@@ -48,6 +53,12 @@ private:
     std::vector<MemoryEntry> entries_;
     std::unordered_map<std::string, size_t> key_index_; // key -> entries_ index
     mutable std::mutex mutex_;
+
+    // Embedding support
+    Embedder* embedder_ = nullptr;
+    double text_weight_ = 0.4;
+    double vector_weight_ = 0.6;
+    std::unordered_map<std::string, Embedding> embeddings_; // key -> embedding
 };
 
 } // namespace ptrclaw

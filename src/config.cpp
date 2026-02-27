@@ -54,7 +54,15 @@ nlohmann::json Config::defaults_json() {
             {"cache_max_entries", 100},
             {"enrich_depth", 1},
             {"synthesis", true},
-            {"synthesis_interval", 5}
+            {"synthesis_interval", 5},
+            {"embeddings", {
+                {"provider", ""},
+                {"model", ""},
+                {"base_url", ""},
+                {"api_key", ""},
+                {"text_weight", 0.4},
+                {"vector_weight", 0.6}
+            }}
         }}
     };
 }
@@ -183,6 +191,21 @@ Config Config::load() {
             cfg.memory.synthesis = m["synthesis"].get<bool>();
         if (m.contains("synthesis_interval") && m["synthesis_interval"].is_number_unsigned())
             cfg.memory.synthesis_interval = m["synthesis_interval"].get<uint32_t>();
+        if (m.contains("embeddings") && m["embeddings"].is_object()) {
+            auto& e = m["embeddings"];
+            if (e.contains("provider") && e["provider"].is_string())
+                cfg.memory.embeddings.provider = e["provider"].get<std::string>();
+            if (e.contains("model") && e["model"].is_string())
+                cfg.memory.embeddings.model = e["model"].get<std::string>();
+            if (e.contains("base_url") && e["base_url"].is_string())
+                cfg.memory.embeddings.base_url = e["base_url"].get<std::string>();
+            if (e.contains("api_key") && e["api_key"].is_string())
+                cfg.memory.embeddings.api_key = e["api_key"].get<std::string>();
+            if (e.contains("text_weight") && e["text_weight"].is_number())
+                cfg.memory.embeddings.text_weight = e["text_weight"].get<double>();
+            if (e.contains("vector_weight") && e["vector_weight"].is_number())
+                cfg.memory.embeddings.vector_weight = e["vector_weight"].get<double>();
+        }
     }
 
     // Environment variables always override config file
@@ -225,6 +248,14 @@ Config Config::load() {
         cfg.channels["whatsapp"]["webhook_listen"] = v;
     if (const char* v = std::getenv("WHATSAPP_WEBHOOK_SECRET"))
         cfg.channels["whatsapp"]["webhook_secret"] = v;
+
+    // Embedding env var overrides
+    if (const char* v = std::getenv("EMBEDDING_PROVIDER"))
+        cfg.memory.embeddings.provider = v;
+    if (const char* v = std::getenv("EMBEDDING_MODEL"))
+        cfg.memory.embeddings.model = v;
+    if (const char* v = std::getenv("EMBEDDING_API_KEY"))
+        cfg.memory.embeddings.api_key = v;
 
     return cfg;
 }

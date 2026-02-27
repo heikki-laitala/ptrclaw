@@ -1,4 +1,5 @@
 #include "session.hpp"
+#include "embedder.hpp"
 #include "oauth.hpp"
 #include "onboard.hpp"
 #include "event.hpp"
@@ -52,6 +53,16 @@ Agent& SessionManager::get_session(const std::string& session_id) {
         SessionCreatedEvent ev;
         ev.session_id = session_id;
         event_bus_->publish(ev);
+    }
+
+    // Propagate embedder to new agent (shared, non-owning)
+    if (embedder_) {
+        // Create a non-owning unique_ptr wrapper — SessionManager retains ownership
+        // by storing the raw pointer; Agent::set_embedder takes ownership via unique_ptr,
+        // but for channel sessions we pass the shared embedder directly to memory.
+        session.agent->memory()->set_embedder(
+            embedder_, config_.memory.embeddings.text_weight,
+            config_.memory.embeddings.vector_weight);
     }
 
     auto [inserted, _] = sessions_.emplace(session_id, std::move(session));

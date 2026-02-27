@@ -13,6 +13,9 @@
 #include "oauth.hpp"
 #include "onboard.hpp"
 #include "util.hpp"
+#ifdef PTRCLAW_HAS_EMBEDDINGS
+#include "embedder.hpp"
+#endif
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -134,6 +137,13 @@ static int run_channel(const std::string& channel_name,
     ptrclaw::SessionManager sessions(config, http_client);
     sessions.set_binary_path(binary_path);
     sessions.set_event_bus(&bus);
+
+#ifdef PTRCLAW_HAS_EMBEDDINGS
+    auto channel_embedder = ptrclaw::create_embedder(config, http_client);
+    if (channel_embedder) {
+        sessions.set_embedder(channel_embedder.get());
+    }
+#endif
 
     // Wire up channel display (typing, streaming, message delivery)
     ptrclaw::StreamRelay relay(*channel, bus);
@@ -266,6 +276,13 @@ int main(int argc, char* argv[]) try {
     auto tools = ptrclaw::create_builtin_tools();
     ptrclaw::Agent agent(std::move(provider), std::move(tools), config);
     agent.set_binary_path(binary_path);
+
+#ifdef PTRCLAW_HAS_EMBEDDINGS
+    auto embedder = ptrclaw::create_embedder(config, http_client);
+    if (embedder) {
+        agent.set_embedder(std::move(embedder));
+    }
+#endif
 
 #ifdef PTRCLAW_HAS_PIPE
     // Pipe mode: JSONL on stdin/stdout for scripted multi-turn conversations
