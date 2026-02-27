@@ -27,8 +27,9 @@ STATICDIR := builddir-static
 MINDIR := builddir-minimal
 COVDIR := builddir-cov
 PIPEDIR := builddir-pipe
+EMBDIR := builddir-emb
 
-.PHONY: deps setup build build-minimal build-static run test coverage coverage-summary lint clean clear-memory memory-clean
+.PHONY: deps setup build build-emb build-minimal build-static run test coverage coverage-summary lint clean clear-memory memory-clean
 
 deps:
 ifeq ($(shell uname),Darwin)
@@ -44,6 +45,10 @@ setup:
 
 build: setup
 	meson compile -C $(BUILDDIR)
+
+build-emb:
+	@if [ ! -d $(EMBDIR) ]; then meson setup $(EMBDIR) $(NATIVE_ARGS) -Dcatch2:tests=false -Dwith_embeddings=true; fi
+	meson compile -C $(EMBDIR)
 
 build-minimal:
 	@if [ ! -d $(MINDIR) ]; then meson setup $(MINDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
@@ -83,4 +88,4 @@ clear-memory:
 memory-clean: clear-memory
 
 clean:
-	rm -rf $(BUILDDIR) $(STATICDIR) $(MINDIR) $(COVDIR) $(PIPEDIR)
+	rm -rf $(BUILDDIR) $(STATICDIR) $(MINDIR) $(COVDIR) $(PIPEDIR) $(EMBDIR)

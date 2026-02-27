@@ -2,6 +2,7 @@
 #include "embedders/http_embedder.hpp"
 #include "config.hpp"
 #include "http.hpp"
+#include <iostream>
 
 namespace ptrclaw {
 
@@ -15,7 +16,10 @@ std::unique_ptr<Embedder> create_embedder(const Config& config, HttpClient& http
         if (api_key.empty()) {
             api_key = config.api_key_for("openai");
         }
-        if (api_key.empty()) return nullptr;
+        if (api_key.empty()) {
+            std::cerr << "[embedder] OpenAI embeddings configured but no API key found\n";
+            return nullptr;
+        }
 
         return create_openai_embedder(api_key, http, emb.base_url, emb.model);
     }
@@ -24,6 +28,7 @@ std::unique_ptr<Embedder> create_embedder(const Config& config, HttpClient& http
         return create_ollama_embedder(http, emb.base_url, emb.model);
     }
 
+    std::cerr << "[embedder] Unknown embedding provider: " << emb.provider << "\n";
     return nullptr;
 }
 
