@@ -1,0 +1,35 @@
+# Build artifacts
+builddir/
+builddir-static/
+builddir-minimal/
+builddir-cov/
+build/
+.cache/
+
+# Compiled objects
+*.o
+*.a
+*.so
+*.dylib
+
+# Meson subproject downloads (fetched at build time)
+subprojects/Catch2-*/
+subprojects/cpp-httplib-*/
+subprojects/packagecache/
+
+# IDE and OS files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Version control
+.git/
+.github/
+
+# Docs (not needed in image)
+docs/
+
+# Local config (inject via env vars or mounted volume at runtime)
+~/.ptrclaw/
