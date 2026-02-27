@@ -130,7 +130,7 @@ if opt_memory
     'src/memory/none_memory.cpp',
   )
 endif
-if opt_memory and get_option('with_memory')
+if opt_memory
   optional_sources += files('src/memory/response_cache.cpp')
 endif
 if opt_sqlite_memory

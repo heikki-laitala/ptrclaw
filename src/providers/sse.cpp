@@ -37,16 +37,12 @@ void SSEParser::feed(const std::string& chunk, const SSECallback& callback) {
             current_data.clear();
         } else if (line.rfind("event: ", 0) == 0) {
             current_event = line.substr(7);
-        } else if (line.rfind("data: ", 0) == 0) {
-            if (!current_data.empty()) {
-                current_data += '\n';
-            }
-            current_data += line.substr(6);
         } else if (line.rfind("data:", 0) == 0) {
             if (!current_data.empty()) {
                 current_data += '\n';
             }
-            current_data += line.substr(5);
+            // Handle both "data: payload" (with space) and "data:payload" (without)
+            current_data += line.substr(line.size() > 5 && line[5] == ' ' ? 6 : 5);
         }
         // Ignore other lines (comments starting with :, etc.)
     }
