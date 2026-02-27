@@ -7,7 +7,6 @@
 #include <filesystem>
 #include <stdexcept>
 #include <cstring>
-#include <cmath>
 
 static ptrclaw::MemoryRegistrar reg_sqlite("sqlite",
     [](const ptrclaw::Config& config) {
@@ -399,25 +398,26 @@ std::vector<MemoryEntry> SqliteMemory::recall(const std::string& query, uint32_t
     };
     std::vector<ScoredEntry> scored;
 
+    bool has_text = !bm25_scores.empty();
+
     while (sqlite3_step(g.stmt) == SQLITE_ROW) {
         auto entry = entry_from_stmt(g.stmt);
         Embedding emb = read_embedding_blob(g.stmt, 6);
 
-        // Text score (BM25 normalized to [0,1])
         double text_norm = 0.0;
         auto bm_it = bm25_scores.find(entry.key);
         if (bm_it != bm25_scores.end() && max_bm25 > 0.0) {
             text_norm = bm_it->second / max_bm25;
         }
 
-        // Vector score (cosine similarity shifted to [0,1])
-        double vec_norm = 0.0;
+        double cosine_sim = 0.0;
         if (!emb.empty()) {
-            double sim = cosine_similarity(query_emb, emb);
-            vec_norm = (sim + 1.0) / 2.0;
+            cosine_sim = cosine_similarity(query_emb, emb);
         }
 
-        double combined = text_weight_ * text_norm + vector_weight_ * vec_norm;
+        double combined = hybrid_score(text_norm, cosine_sim,
+                                       text_weight_, vector_weight_,
+                                       has_text, !emb.empty());
         if (combined > 0.0) {
             scored.push_back({std::move(entry), combined});
         }

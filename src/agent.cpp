@@ -364,7 +364,7 @@ void Agent::set_memory(std::unique_ptr<Memory> memory) {
     memory_ = std::move(memory);
     wire_memory_tools();
     if (memory_ && embedder_) {
-        memory_->set_embedder(embedder_.get(),
+        memory_->set_embedder(embedder_,
                               config_.memory.embeddings.text_weight,
                               config_.memory.embeddings.vector_weight);
     }
@@ -385,10 +385,10 @@ void Agent::set_response_cache(std::unique_ptr<ResponseCache> cache) {
     response_cache_ = std::move(cache);
 }
 
-void Agent::set_embedder(std::unique_ptr<Embedder> embedder) {
-    embedder_ = std::move(embedder);
+void Agent::set_embedder(Embedder* embedder) {
+    embedder_ = embedder;
     if (memory_ && embedder_) {
-        memory_->set_embedder(embedder_.get(),
+        memory_->set_embedder(embedder_,
                               config_.memory.embeddings.text_weight,
                               config_.memory.embeddings.vector_weight);
     }

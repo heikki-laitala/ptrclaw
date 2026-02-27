@@ -49,6 +49,20 @@ inline double cosine_similarity(const Embedding& a, const Embedding& b) {
     return dot / denom;
 }
 
+// Compute hybrid score from a normalized text score [0,1] and
+// a cosine similarity [-1,1].  Returns weighted combination in [0,1].
+// When only one signal is available (the other is 0), that signal
+// is used unweighted so results still rank meaningfully.
+inline double hybrid_score(double text_norm, double cosine_sim,
+                           double text_weight, double vector_weight,
+                           bool has_text, bool has_vector) {
+    double vec_norm = (cosine_sim + 1.0) / 2.0; // shift [-1,1] to [0,1]
+    if (has_text && has_vector) return text_weight * text_norm + vector_weight * vec_norm;
+    if (has_text) return text_norm;
+    if (has_vector) return vec_norm;
+    return 0.0;
+}
+
 // Create an embedder from config. Returns nullptr if embeddings are disabled
 // or the configured provider is not recognized.
 std::unique_ptr<Embedder> create_embedder(const Config& config, HttpClient& http);
