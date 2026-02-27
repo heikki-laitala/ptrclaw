@@ -1,4 +1,5 @@
 #include "memory_forget.hpp"
+#include "memory_tool_util.hpp"
 #include "../plugin.hpp"
 #include <nlohmann/json.hpp>
 
@@ -8,20 +9,9 @@ static ptrclaw::ToolRegistrar reg_memory_forget("memory_forget",
 namespace ptrclaw {
 
 ToolResult MemoryForgetTool::execute(const std::string& args_json) {
-    if (!memory_) {
-        return ToolResult{false, "Memory system is not enabled"};
-    }
-
     nlohmann::json args;
-    try {
-        args = nlohmann::json::parse(args_json);
-    } catch (const std::exception& e) {
-        return ToolResult{false, std::string("Failed to parse arguments: ") + e.what()};
-    }
-
-    if (!args.contains("key") || !args["key"].is_string()) {
-        return ToolResult{false, "Missing required parameter: key"};
-    }
+    if (auto err = parse_memory_tool_args(memory_, args_json, args)) return *err;
+    if (auto err = require_string(args, "key")) return *err;
 
     std::string key = args["key"].get<std::string>();
     bool deleted = memory_->forget(key);

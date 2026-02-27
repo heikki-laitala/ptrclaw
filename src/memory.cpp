@@ -3,6 +3,7 @@
 #include "plugin.hpp"
 #include <algorithm>
 #include <sstream>
+#include <unordered_set>
 
 namespace ptrclaw {
 
@@ -24,10 +25,13 @@ MemoryCategory category_from_string(const std::string& s) {
 std::vector<MemoryEntry> collect_neighbors(Memory* memory,
                                             const std::vector<MemoryEntry>& entries,
                                             uint32_t limit) {
-    std::vector<std::string> seen_keys;
+    if (!memory) return {};
+
+    // Track visited keys to prevent cycles and dedup
+    std::unordered_set<std::string> seen_keys;
     seen_keys.reserve(entries.size());
     for (const auto& e : entries) {
-        seen_keys.push_back(e.key);
+        seen_keys.insert(e.key);
     }
 
     std::vector<MemoryEntry> result;
@@ -35,8 +39,7 @@ std::vector<MemoryEntry> collect_neighbors(Memory* memory,
         if (entry.links.empty()) continue;
         auto neighbors = memory->neighbors(entry.key, limit);
         for (auto& n : neighbors) {
-            if (std::find(seen_keys.begin(), seen_keys.end(), n.key) == seen_keys.end()) {
-                seen_keys.push_back(n.key);
+            if (seen_keys.insert(n.key).second) {
                 result.push_back(std::move(n));
             }
         }
@@ -48,8 +51,14 @@ std::string memory_enrich(Memory* memory, const std::string& user_message,
                           uint32_t recall_limit, uint32_t enrich_depth) {
     if (!memory || recall_limit == 0) return user_message;
 
-    auto entries = memory->recall(user_message, recall_limit, std::nullopt);
+    // Over-fetch to compensate for Core entries we'll filter out (they're in the system prompt)
+    auto entries = memory->recall(user_message, recall_limit * 2, std::nullopt);
+
+    entries.erase(std::remove_if(entries.begin(), entries.end(),
+        [](const MemoryEntry& e) { return e.category == MemoryCategory::Core; }),
+        entries.end());
     if (entries.empty()) return user_message;
+    if (entries.size() > recall_limit) entries.resize(recall_limit);
 
     std::vector<MemoryEntry> neighbor_entries;
     if (enrich_depth > 0) {

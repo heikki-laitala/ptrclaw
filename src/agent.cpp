@@ -16,10 +16,12 @@ namespace ptrclaw {
 static std::string strip_memory_context(const std::string& text) {
     const std::string open_tag = "[Memory context]\n";
     const std::string close_tag = "[/Memory context]\n\n";
-    if (text.substr(0, open_tag.size()) != open_tag) return text;
+    if (text.size() < open_tag.size() || text.compare(0, open_tag.size(), open_tag) != 0) return text;
     auto end = text.find(close_tag);
     if (end == std::string::npos) return text;
-    return text.substr(end + close_tag.size());
+    size_t content_start = end + close_tag.size();
+    if (content_start >= text.size()) return "";
+    return text.substr(content_start);
 }
 
 Agent::Agent(std::unique_ptr<Provider> provider,
@@ -97,13 +99,15 @@ std::string Agent::process(const std::string& user_message) {
     uint32_t iterations = 0;
     bool stream_started = false;
 
-    // Check response cache before calling provider
+    // Check response cache before calling provider.
+    // Use enriched_message (includes memory context) so cache key reflects what
+    // the LLM actually sees — different memory state produces a different key.
     if (response_cache_) {
         std::string sys_prompt;
         if (!history_.empty() && history_[0].role == Role::System) {
             sys_prompt = history_[0].content;
         }
-        auto cached = response_cache_->get(model_, sys_prompt, user_message);
+        auto cached = response_cache_->get(model_, sys_prompt, enriched_message);
         if (cached) {
             history_.push_back(ChatMessage{Role::Assistant, *cached, {}, {}});
             // Cached responses have no provider usage payload — fall back to heuristic.
@@ -291,13 +295,13 @@ std::string Agent::process(const std::string& user_message) {
         }
     }
 
-    // Populate response cache
+    // Populate response cache (keyed on enriched message to match lookup above)
     if (response_cache_ && !final_content.empty()) {
         std::string sys_prompt;
         if (!history_.empty() && history_[0].role == Role::System) {
             sys_prompt = history_[0].content;
         }
-        response_cache_->put(model_, sys_prompt, user_message, final_content);
+        response_cache_->put(model_, sys_prompt, enriched_message, final_content);
     }
 
     // Synthesize knowledge from conversation

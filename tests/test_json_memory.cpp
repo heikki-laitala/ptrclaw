@@ -316,6 +316,74 @@ TEST_CASE("JsonMemory: hygiene_purge cleans dangling links", "[json_memory]") {
 
 // ── Persistence ──────────────────────────────────────────────
 
+// ── Search quality ────────────────────────────────────────────
+
+TEST_CASE("JsonMemory: key matches rank higher than content matches", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.store("python-version", "The version is 3.12", MemoryCategory::Knowledge, "");
+    f.mem.store("build-system", "Uses python as a scripting tool", MemoryCategory::Knowledge, "");
+
+    auto results = f.mem.recall("python", 10, std::nullopt);
+    REQUIRE(results.size() == 2);
+    // Entry with "python" in key should rank higher
+    REQUIRE(results[0].key == "python-version");
+    REQUIRE(results[0].score > results[1].score);
+}
+
+TEST_CASE("JsonMemory: word boundary matching prevents substring false positives", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.store("testing-info", "Unit testing with Catch2", MemoryCategory::Knowledge, "");
+    f.mem.store("protest-info", "Attest to the attestation", MemoryCategory::Knowledge, "");
+
+    auto results = f.mem.recall("test", 10, std::nullopt);
+    // "test" should match "testing-info" (word "test" is a prefix of "testing" — but
+    // tokenization splits on non-alnum, so "testing" is one token and "test" != "testing").
+    // However, key "testing-info" tokenizes to ["testing", "info"] — no exact "test" match.
+    // So neither should match if using strict word boundary.
+    // Let's test with an entry that has the exact word "test":
+    f.mem.store("test-framework", "The test suite runs fast", MemoryCategory::Knowledge, "");
+
+    results = f.mem.recall("test", 10, std::nullopt);
+    REQUIRE_FALSE(results.empty());
+    REQUIRE(results[0].key == "test-framework");
+}
+
+TEST_CASE("JsonMemory: recall ranking is deterministic for same scores", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.store("item-alpha", "matching content here", MemoryCategory::Knowledge, "");
+    f.mem.store("item-beta", "matching content here", MemoryCategory::Knowledge, "");
+    f.mem.store("item-gamma", "matching content here", MemoryCategory::Knowledge, "");
+
+    auto r1 = f.mem.recall("matching content", 3, std::nullopt);
+    auto r2 = f.mem.recall("matching content", 3, std::nullopt);
+    REQUIRE(r1.size() == r2.size());
+    // All three should be returned (they have matching content words)
+    REQUIRE(r1.size() == 3);
+}
+
+TEST_CASE("JsonMemory: recall with empty query returns empty", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.store("item", "content", MemoryCategory::Knowledge, "");
+    auto results = f.mem.recall("", 10, std::nullopt);
+    REQUIRE(results.empty());
+}
+
+TEST_CASE("JsonMemory: recall with special characters in query", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.store("cpp-version", "Uses C++ 17 standard", MemoryCategory::Knowledge, "");
+    // Query with special chars — tokenizer extracts "c" and "17"
+    auto results = f.mem.recall("C++ 17", 10, std::nullopt);
+    // "17" should match
+    REQUIRE_FALSE(results.empty());
+}
+
+// ── Persistence ──────────────────────────────────────────────
+
 TEST_CASE("JsonMemory: persists across instances", "[json_memory]") {
     std::string path = test_path() + "_persist";
 

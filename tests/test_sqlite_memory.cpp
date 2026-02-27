@@ -277,6 +277,43 @@ TEST_CASE("SqliteMemory: persists across instances", "[sqlite_memory]") {
     std::filesystem::remove(path + "-shm");
 }
 
+// ── Search quality ────────────────────────────────────────────
+
+TEST_CASE("SqliteMemory: recall finds 2-char tokens via FTS", "[sqlite_memory]") {
+    SqliteFixture f;
+
+    f.mem.store("go-lang", "Go is a compiled language", MemoryCategory::Knowledge, "");
+    f.mem.store("python-lang", "Python is interpreted", MemoryCategory::Knowledge, "");
+
+    auto results = f.mem.recall("Go language", 10, std::nullopt);
+    REQUIRE_FALSE(results.empty());
+    // "Go" (2 chars) should now be included in FTS query
+    bool found_go = false;
+    for (const auto& r : results) {
+        if (r.key == "go-lang") found_go = true;
+    }
+    REQUIRE(found_go);
+}
+
+TEST_CASE("SqliteMemory: recall falls back to LIKE for single-char query", "[sqlite_memory]") {
+    SqliteFixture f;
+
+    f.mem.store("c-language", "C is a systems language", MemoryCategory::Knowledge, "");
+
+    // Single char "C" is below minimum — should fall back to LIKE
+    auto results = f.mem.recall("C", 10, std::nullopt);
+    // LIKE with "%C%" should match "C is a systems language"
+    REQUIRE_FALSE(results.empty());
+}
+
+TEST_CASE("SqliteMemory: recall with empty query returns empty", "[sqlite_memory]") {
+    SqliteFixture f;
+
+    f.mem.store("item", "content", MemoryCategory::Knowledge, "");
+    auto results = f.mem.recall("", 10, std::nullopt);
+    REQUIRE(results.empty());
+}
+
 // ── Backend name ─────────────────────────────────────────────
 
 TEST_CASE("SqliteMemory: backend_name returns sqlite", "[sqlite_memory]") {

@@ -1,4 +1,5 @@
 #include "sqlite_memory.hpp"
+#include "entry_json.hpp"
 #include "../plugin.hpp"
 #include "../util.hpp"
 #include <nlohmann/json.hpp>
@@ -18,8 +19,8 @@ static ptrclaw::MemoryRegistrar reg_sqlite("sqlite",
 namespace ptrclaw {
 
 // Preprocess a user query for FTS5: split on non-alphanumeric, skip
-// tokens shorter than 3 chars, and OR-join the remainder so that any
-// matching token produces results (FTS5 defaults to implicit AND).
+// single-char tokens, and OR-join the remainder so that any matching
+// token produces results (FTS5 defaults to implicit AND).
 static std::string build_fts_query(const std::string& query) {
     std::string result;
     std::string token;
@@ -27,14 +28,14 @@ static std::string build_fts_query(const std::string& query) {
         if (std::isalnum(static_cast<unsigned char>(c))) {
             token += c;
         } else {
-            if (token.size() >= 3) {
+            if (token.size() >= 2) {
                 if (!result.empty()) result += " OR ";
                 result += token;
             }
             token.clear();
         }
     }
-    if (token.size() >= 3) {
+    if (token.size() >= 2) {
         if (!result.empty()) result += " OR ";
         result += token;
     }
@@ -240,6 +241,8 @@ std::vector<MemoryEntry> SqliteMemory::recall(const std::string& query, uint32_t
                                                std::optional<MemoryCategory> category_filter) {
     std::lock_guard<std::mutex> lock(mutex_);
 
+    if (query.empty()) return {};
+
     int lim = static_cast<int>(limit);
 
     // Try FTS5 MATCH first (OR-joined tokens for partial matching)
@@ -408,18 +411,7 @@ std::string SqliteMemory::snapshot_export() {
     while (rc == SQLITE_ROW) {
         MemoryEntry entry = entry_from_stmt(g.stmt);
         populate_links(entry);
-        nlohmann::json item = {
-            {"id",         entry.id},
-            {"key",        entry.key},
-            {"content",    entry.content},
-            {"category",   category_to_string(entry.category)},
-            {"timestamp",  entry.timestamp},
-            {"session_id", entry.session_id}
-        };
-        if (!entry.links.empty()) {
-            item["links"] = entry.links;
-        }
-        arr.push_back(std::move(item));
+        arr.push_back(entry_to_json(entry));
         rc = sqlite3_step(g.stmt);
     }
     return arr.dump(2);
@@ -438,41 +430,36 @@ uint32_t SqliteMemory::snapshot_import(const std::string& json_str) {
             " VALUES (?, ?, ?, ?, ?, ?);";
 
         for (const auto& item : j) {
-            std::string key = item.value("key", "");
-            if (key.empty()) continue;
+            auto entry = entry_from_json(item);
+            if (entry.key.empty()) continue;
 
-            std::string id         = item.value("id", generate_id());
-            std::string content    = item.value("content", "");
-            std::string category   = item.value("category", "knowledge");
-            auto        timestamp  = static_cast<int64_t>(item.value("timestamp", epoch_seconds()));
-            std::string session_id = item.value("session_id", "");
+            if (entry.id.empty()) entry.id = generate_id();
+            if (entry.timestamp == 0) entry.timestamp = epoch_seconds();
+            std::string cat = category_to_string(entry.category);
 
             StmtGuard g;
             if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) continue;
 
-            sqlite3_bind_text(g.stmt, 1, id.c_str(),         -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(g.stmt, 2, key.c_str(),        -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(g.stmt, 3, content.c_str(),    -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(g.stmt, 4, category.c_str(),   -1, SQLITE_TRANSIENT);
-            sqlite3_bind_int64(g.stmt, 5, timestamp);
-            sqlite3_bind_text(g.stmt, 6, session_id.c_str(), -1, SQLITE_TRANSIENT);
+            auto ts = static_cast<int64_t>(entry.timestamp);
+            sqlite3_bind_text(g.stmt, 1, entry.id.c_str(),         -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(g.stmt, 2, entry.key.c_str(),        -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(g.stmt, 3, entry.content.c_str(),    -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(g.stmt, 4, cat.c_str(),              -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int64(g.stmt, 5, ts);
+            sqlite3_bind_text(g.stmt, 6, entry.session_id.c_str(), -1, SQLITE_TRANSIENT);
 
             if (sqlite3_step(g.stmt) == SQLITE_DONE && sqlite3_changes(db_) > 0) {
                 imported++;
 
                 // Import links for this entry
-                if (item.contains("links") && item["links"].is_array()) {
-                    for (const auto& lnk : item["links"]) {
-                        if (!lnk.is_string()) continue;
-                        std::string to = lnk.get<std::string>();
-                        StmtGuard lg;
-                        const char* link_sql =
-                            "INSERT OR IGNORE INTO memory_links (from_key, to_key) VALUES (?, ?);";
-                        if (sqlite3_prepare_v2(db_, link_sql, -1, &lg.stmt, nullptr) == SQLITE_OK) {
-                            sqlite3_bind_text(lg.stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
-                            sqlite3_bind_text(lg.stmt, 2, to.c_str(), -1, SQLITE_TRANSIENT);
-                            sqlite3_step(lg.stmt);
-                        }
+                for (const auto& to : entry.links) {
+                    StmtGuard lg;
+                    const char* link_sql =
+                        "INSERT OR IGNORE INTO memory_links (from_key, to_key) VALUES (?, ?);";
+                    if (sqlite3_prepare_v2(db_, link_sql, -1, &lg.stmt, nullptr) == SQLITE_OK) {
+                        sqlite3_bind_text(lg.stmt, 1, entry.key.c_str(), -1, SQLITE_TRANSIENT);
+                        sqlite3_bind_text(lg.stmt, 2, to.c_str(),        -1, SQLITE_TRANSIENT);
+                        sqlite3_step(lg.stmt);
                     }
                 }
             }

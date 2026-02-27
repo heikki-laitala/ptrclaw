@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include "memory.hpp"
+#include "memory/json_memory.hpp"
 #include "memory/none_memory.hpp"
+#include <filesystem>
+#include <unistd.h>
 
 using namespace ptrclaw;
 
@@ -99,4 +102,43 @@ TEST_CASE("NoneMemory: unlink returns false", "[memory]") {
 TEST_CASE("NoneMemory: neighbors returns empty", "[memory]") {
     NoneMemory mem;
     REQUIRE(mem.neighbors("a", 10).empty());
+}
+
+// ── collect_neighbors ─────────────────────────────────────────
+
+TEST_CASE("collect_neighbors returns empty for null memory", "[memory]") {
+    std::vector<MemoryEntry> entries;
+    MemoryEntry e;
+    e.key = "test";
+    e.links = {"other"};
+    entries.push_back(e);
+    auto result = collect_neighbors(nullptr, entries, 10);
+    REQUIRE(result.empty());
+}
+
+TEST_CASE("collect_neighbors returns empty for empty entries", "[memory]") {
+    NoneMemory mem;
+    std::vector<MemoryEntry> entries;
+    auto result = collect_neighbors(&mem, entries, 10);
+    REQUIRE(result.empty());
+}
+
+// ── memory_enrich Core exclusion ────────────────────────────────
+
+TEST_CASE("memory_enrich excludes Core entries from context block", "[memory]") {
+    std::string path = "/tmp/ptrclaw_test_enrich_" + std::to_string(getpid()) + ".json";
+    {
+        JsonMemory mem(path);
+        mem.store("soul:identity", "I am an assistant", MemoryCategory::Core, "");
+        mem.store("user-likes-python", "User prefers Python", MemoryCategory::Knowledge, "");
+
+        // Query that matches both entries
+        std::string result = memory_enrich(&mem, "assistant Python", 10);
+
+        // Knowledge entry should be in context
+        REQUIRE(result.find("user-likes-python") != std::string::npos);
+        // Core entry should NOT be in context (it's in system prompt)
+        REQUIRE(result.find("soul:identity") == std::string::npos);
+    }
+    std::filesystem::remove(path);
 }
