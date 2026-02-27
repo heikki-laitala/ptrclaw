@@ -497,6 +497,8 @@ Optional semantic search via embedding vectors. When enabled, memory recall comb
 
 Environment variables: `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`, `EMBEDDING_API_KEY`.
 
+**Auto-detection:** When no `embeddings.provider` is configured but an OpenAI API key is available (via `providers.openai.api_key` or `OPENAI_API_KEY`), embeddings are automatically enabled using OpenAI. This means if you already have an OpenAI key configured for any reason, embeddings "just work" when compiled with `with_embeddings=true`.
+
 ### Thread safety
 
 Embedding HTTP calls happen **outside** the mutex lock (200–500ms network calls). Only the in-memory/DB write is mutex-protected. This prevents embedding latency from blocking other memory operations.

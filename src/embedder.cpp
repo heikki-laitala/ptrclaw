@@ -8,10 +8,20 @@ namespace ptrclaw {
 
 std::unique_ptr<Embedder> create_embedder(const Config& config, HttpClient& http) {
     const auto& emb = config.memory.embeddings;
-    if (emb.provider.empty()) return nullptr;
 
-    if (emb.provider == "openai") {
-        // Fall back to providers.openai.api_key if embedding-specific key not set
+    // Resolve provider: explicit config, or auto-detect from available API keys
+    std::string provider = emb.provider;
+    if (provider.empty()) {
+        std::string key = emb.api_key;
+        if (key.empty()) key = config.api_key_for("openai");
+        if (!key.empty()) {
+            provider = "openai";
+            std::cerr << "[embedder] Auto-detected OpenAI API key, enabling embeddings\n";
+        }
+    }
+    if (provider.empty()) return nullptr;
+
+    if (provider == "openai") {
         std::string api_key = emb.api_key;
         if (api_key.empty()) {
             api_key = config.api_key_for("openai");
@@ -24,11 +34,11 @@ std::unique_ptr<Embedder> create_embedder(const Config& config, HttpClient& http
         return create_openai_embedder(api_key, http, emb.base_url, emb.model);
     }
 
-    if (emb.provider == "ollama") {
+    if (provider == "ollama") {
         return create_ollama_embedder(http, emb.base_url, emb.model);
     }
 
-    std::cerr << "[embedder] Unknown embedding provider: " << emb.provider << "\n";
+    std::cerr << "[embedder] Unknown embedding provider: " << provider << "\n";
     return nullptr;
 }
 
