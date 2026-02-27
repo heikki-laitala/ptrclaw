@@ -400,6 +400,71 @@ All memory settings live under the `memory` key in `~/.ptrclaw/config.json`:
 | `enrich_depth` | uint32 | `1` | Link-following depth. `0` = flat recall, `1` = include 1-hop neighbors. |
 | `synthesis` | bool | `true` | Auto-extract atomic notes from conversation. |
 | `synthesis_interval` | uint32 | `5` | Synthesize every N user messages. |
+| `embeddings.provider` | string | `""` | Embedding provider: `"openai"`, `"ollama"`, or `""` (disabled). |
+| `embeddings.model` | string | `""` | Model name. Empty uses provider default (`text-embedding-3-small` / `nomic-embed-text`). |
+| `embeddings.base_url` | string | `""` | Override API base URL. Empty uses provider default. |
+| `embeddings.api_key` | string | `""` | API key for OpenAI embeddings. Empty falls back to `providers.openai.api_key`. |
+| `embeddings.text_weight` | double | `0.4` | Weight for text score in hybrid search. |
+| `embeddings.vector_weight` | double | `0.6` | Weight for vector similarity in hybrid search. |
+
+## Embedding / vector search
+
+Optional semantic search via embedding vectors. When enabled, memory recall combines text matching with cosine similarity for hybrid scoring — finding entries by meaning, not just exact keywords.
+
+### How it works
+
+1. **On store**: Content is sent to the embedding provider to get a vector. Stored alongside the entry (BLOB in SQLite, JSON array in JSON backend).
+2. **On recall**: Query is embedded. For each entry, hybrid score = `text_weight × normalized_text_score + vector_weight × normalized_vector_score`.
+3. **Backwards compatible**: Entries without embeddings get vector score 0. No migration needed — embeddings accumulate as entries are stored/updated.
+
+### Score normalization
+
+- **Text scores**: Max-normalized to [0, 1] within the result set.
+- **Vector scores**: Cosine similarity ([-1, 1]) shifted to [0, 1] via `(sim + 1) / 2`.
+- **Combined**: `text_weight × text_norm + vector_weight × vec_norm`.
+
+### Embedding providers
+
+**OpenAI** (`text-embedding-3-small`):
+- Requires API key (uses `providers.openai.api_key` as fallback).
+- 1536 dimensions.
+- `POST {base_url}/embeddings` with `{"model": "...", "input": "text"}`.
+
+**Ollama** (`nomic-embed-text`):
+- No API key needed (local).
+- 768 dimensions.
+- `POST {base_url}/api/embed` with `{"model": "...", "input": "text"}`.
+
+### Configuration example
+
+```json
+{
+    "memory": {
+        "embeddings": {
+            "provider": "openai",
+            "model": "text-embedding-3-small",
+            "text_weight": 0.4,
+            "vector_weight": 0.6
+        }
+    }
+}
+```
+
+Environment variables: `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL`, `EMBEDDING_API_KEY`.
+
+### Thread safety
+
+Embedding HTTP calls happen **outside** the mutex lock (200–500ms network calls). Only the in-memory/DB write is mutex-protected. This prevents embedding latency from blocking other memory operations.
+
+### Snapshots
+
+Embeddings are **not** included in `snapshot_export()` / `snapshot_import()`. This keeps the format portable and small. Embeddings are regenerated as entries are stored/updated with an active embedder.
+
+### JSON file format
+
+Backwards-compatible detection:
+- **Array** (legacy): `[{entry}, ...]` — no embeddings.
+- **Object** (new): `{"entries": [...], "embeddings": {"key": [floats...]}}` — written only when embeddings exist.
 
 ## Build flags
 
@@ -410,6 +475,7 @@ Feature flags in `meson_options.txt` control what gets compiled:
 | `with_memory` | `true` | Memory system (JSON + None backends, enrichment, synthesis). |
 | `with_sqlite_memory` | `true` | SQLite backend with FTS5. Requires `sqlite3` dependency. |
 | `with_memory_tools` | `true` | The four LLM-accessible memory tools. |
+| `with_embeddings` | `false` | Embedding/vector search. Requires `with_memory`. |
 
 ```bash
 # Build without SQLite (JSON backend only)
@@ -417,6 +483,9 @@ meson setup build -Dwith_sqlite_memory=false
 
 # Build without memory entirely
 meson setup build -Dwith_memory=false
+
+# Build with embedding/vector search
+meson setup build -Dwith_embeddings=true
 ```
 
 ## Key source files
@@ -430,6 +499,10 @@ meson setup build -Dwith_memory=false
 | `src/memory/sqlite_memory.hpp/.cpp` | SQLite + FTS5 backend |
 | `src/memory/none_memory.hpp/.cpp` | No-op backend |
 | `src/memory/response_cache.hpp/.cpp` | LLM response cache |
+| `src/embedder.hpp` | Embedder interface, `Embedding` type, `cosine_similarity()` |
+| `src/embedder.cpp` | `create_embedder()` factory |
+| `src/embedders/openai_embedder.hpp/.cpp` | OpenAI embedding provider |
+| `src/embedders/ollama_embedder.hpp/.cpp` | Ollama embedding provider |
 | `src/tools/memory_tool_util.hpp` | Shared `parse_memory_tool_args()` / `require_string()` for memory tools |
 | `src/tools/memory_store.hpp/.cpp` | memory_store tool |
 | `src/tools/memory_recall.hpp/.cpp` | memory_recall tool |

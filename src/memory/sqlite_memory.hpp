@@ -1,5 +1,6 @@
 #pragma once
 #include "../memory.hpp"
+#include "../embedder.hpp"
 #include <mutex>
 #include <string>
 
@@ -43,6 +44,9 @@ public:
     bool unlink(const std::string& from_key, const std::string& to_key) override;
     std::vector<MemoryEntry> neighbors(const std::string& key, uint32_t limit) override;
 
+    void set_embedder(Embedder* embedder, double text_weight = 0.4,
+                      double vector_weight = 0.6) override;
+
 private:
     void init_schema();
     void populate_links(MemoryEntry& entry);
@@ -50,6 +54,11 @@ private:
     sqlite3* db_ = nullptr;
     std::string path_;
     mutable std::mutex mutex_;
+
+    // Embedding support
+    Embedder* embedder_ = nullptr;
+    double text_weight_ = 0.4;
+    double vector_weight_ = 0.6;
 };
 
 } // namespace ptrclaw

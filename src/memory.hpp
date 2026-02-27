@@ -8,6 +8,8 @@
 
 namespace ptrclaw {
 
+class Embedder; // forward declaration
+
 enum class MemoryCategory { Core, Knowledge, Conversation };
 
 struct MemoryEntry {
@@ -69,6 +71,13 @@ public:
 
     // Get entries linked to the given key, up to limit.
     virtual std::vector<MemoryEntry> neighbors(const std::string& key, uint32_t limit) = 0;
+
+    // Set embedder for vector search (default no-op, backends override if supported).
+    // The embedder pointer must outlive this Memory instance.
+    // text_weight + vector_weight control hybrid scoring blend.
+    virtual void set_embedder(Embedder* /*embedder*/,
+                              double /*text_weight*/ = 0.4,
+                              double /*vector_weight*/ = 0.6) {}
 };
 
 // Base class for tools that need a Memory* pointer.

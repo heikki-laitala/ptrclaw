@@ -28,6 +28,10 @@ option('with_sqlite_memory', type: 'boolean', value: true,
 option('with_memory_tools', type: 'boolean', value: true,
        description: 'Build memory tools (memory_store, memory_recall, memory_forget, memory_link)')
 
+# Embedding / vector search
+option('with_embeddings', type: 'boolean', value: false,
+       description: 'Enable embedding/vector search for memory (requires with_memory)')
+
 # Pipe channel (JSONL stdin/stdout for scripted use)
 option('with_pipe', type: 'boolean', value: false,
        description: 'Build pipe channel (JSONL stdin/stdout for benchmarks and scripting)')

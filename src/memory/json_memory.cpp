@@ -27,12 +27,33 @@ void JsonMemory::load() {
 
     try {
         nlohmann::json j = nlohmann::json::parse(file);
-        if (!j.is_array()) return;
 
-        entries_.clear();
-        entries_.reserve(j.size());
-        for (const auto& item : j) {
-            entries_.push_back(entry_from_json(item));
+        // Backwards-compatible: detect array (legacy) vs object (new format)
+        if (j.is_array()) {
+            entries_.clear();
+            entries_.reserve(j.size());
+            for (const auto& item : j) {
+                entries_.push_back(entry_from_json(item));
+            }
+        } else if (j.is_object()) {
+            if (j.contains("entries") && j["entries"].is_array()) {
+                entries_.clear();
+                entries_.reserve(j["entries"].size());
+                for (const auto& item : j["entries"]) {
+                    entries_.push_back(entry_from_json(item));
+                }
+            }
+            if (j.contains("embeddings") && j["embeddings"].is_object()) {
+                for (auto& [key, arr] : j["embeddings"].items()) {
+                    if (!arr.is_array()) continue;
+                    Embedding emb;
+                    emb.reserve(arr.size());
+                    for (const auto& val : arr) {
+                        emb.push_back(val.get<float>());
+                    }
+                    embeddings_[key] = std::move(emb);
+                }
+            }
         }
         rebuild_index();
     } catch (...) { // NOLINT(bugprone-empty-catch)
@@ -41,11 +62,34 @@ void JsonMemory::load() {
 }
 
 void JsonMemory::save() {
-    nlohmann::json j = nlohmann::json::array();
-    for (const auto& entry : entries_) {
-        j.push_back(entry_to_json(entry));
+    if (embeddings_.empty()) {
+        // Legacy format: plain array (backwards compatible)
+        nlohmann::json j = nlohmann::json::array();
+        for (const auto& entry : entries_) {
+            j.push_back(entry_to_json(entry));
+        }
+        atomic_write_file(path_, j.dump(2));
+    } else {
+        // New format: object with entries + embeddings
+        nlohmann::json entries_arr = nlohmann::json::array();
+        for (const auto& entry : entries_) {
+            entries_arr.push_back(entry_to_json(entry));
+        }
+
+        nlohmann::json emb_obj = nlohmann::json::object();
+        for (const auto& [key, emb] : embeddings_) {
+            // Only save embeddings for keys that still exist
+            if (key_index_.count(key)) {
+                emb_obj[key] = emb;
+            }
+        }
+
+        nlohmann::json j = {
+            {"entries", entries_arr},
+            {"embeddings", emb_obj}
+        };
+        atomic_write_file(path_, j.dump(2));
     }
-    atomic_write_file(path_, j.dump(2));
 }
 
 void JsonMemory::remove_links_to(const std::vector<std::string>& dead_keys) {
@@ -107,9 +151,27 @@ double JsonMemory::score_entry(const MemoryEntry& entry,
     return score / static_cast<double>(tokens.size());
 }
 
+void JsonMemory::set_embedder(Embedder* embedder, double text_weight,
+                               double vector_weight) {
+    embedder_ = embedder;
+    text_weight_ = text_weight;
+    vector_weight_ = vector_weight;
+}
+
 std::string JsonMemory::store(const std::string& key, const std::string& content,
                                MemoryCategory category, const std::string& session_id) {
+    // Compute embedding OUTSIDE the mutex (HTTP call may be slow)
+    Embedding emb;
+    if (embedder_) {
+        emb = embedder_->embed(key + " " + content);
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
+
+    // Store embedding if computed
+    if (!emb.empty()) {
+        embeddings_[key] = std::move(emb);
+    }
 
     // Upsert: O(1) lookup via key index
     auto it = key_index_.find(key);
@@ -139,18 +201,61 @@ std::string JsonMemory::store(const std::string& key, const std::string& content
 
 std::vector<MemoryEntry> JsonMemory::recall(const std::string& query, uint32_t limit,
                                              std::optional<MemoryCategory> category_filter) {
+    // Compute query embedding OUTSIDE the mutex (HTTP call may be slow)
+    Embedding query_emb;
+    if (embedder_) {
+        query_emb = embedder_->embed(query);
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
 
     auto tokens = tokenize(query);
-    if (tokens.empty()) return {};
+    bool has_tokens = !tokens.empty();
+    bool has_vector = !query_emb.empty();
 
+    if (!has_tokens && !has_vector) return {};
+
+    // Compute text scores and find max for normalization
+    std::vector<double> text_scores(entries_.size(), 0.0);
+    double max_text = 0.0;
+    if (has_tokens) {
+        for (size_t i = 0; i < entries_.size(); i++) {
+            if (category_filter && entries_[i].category != *category_filter) continue;
+            text_scores[i] = score_entry(entries_[i], tokens);
+            if (text_scores[i] > max_text) max_text = text_scores[i];
+        }
+    }
+
+    // Compute hybrid scores
     std::vector<std::pair<double, size_t>> scored;
     for (size_t i = 0; i < entries_.size(); i++) {
         if (category_filter && entries_[i].category != *category_filter) continue;
 
-        double s = score_entry(entries_[i], tokens);
-        if (s > 0.0) {
-            scored.emplace_back(s, i);
+        double text_norm = 0.0;
+        if (has_tokens && max_text > 0.0) {
+            text_norm = text_scores[i] / max_text; // normalize to [0,1]
+        }
+
+        double vec_norm = 0.0;
+        if (has_vector) {
+            auto emb_it = embeddings_.find(entries_[i].key);
+            if (emb_it != embeddings_.end()) {
+                double sim = cosine_similarity(query_emb, emb_it->second);
+                vec_norm = (sim + 1.0) / 2.0; // shift [-1,1] to [0,1]
+            }
+        }
+
+        double combined = 0.0;
+        if (has_tokens && has_vector) {
+            combined = text_weight_ * text_norm + vector_weight_ * vec_norm;
+        } else if (has_tokens) {
+            combined = text_norm;
+        } else {
+            combined = vec_norm;
+        }
+
+        if (combined > 0.0) {
+            scored.emplace_back(combined, i);
         }
     }
 
@@ -196,6 +301,7 @@ bool JsonMemory::forget(const std::string& key) {
     if (idx_it == key_index_.end()) return false;
 
     remove_links_to({key});
+    embeddings_.erase(key);
     entries_.erase(entries_.begin() + static_cast<ptrdiff_t>(idx_it->second));
     rebuild_index();
     save();
@@ -265,6 +371,7 @@ uint32_t JsonMemory::hygiene_purge(uint32_t max_age_seconds) {
     while (it != entries_.end()) {
         if (it->category == MemoryCategory::Conversation && it->timestamp <= cutoff) {
             purged_keys.push_back(it->key);
+            embeddings_.erase(it->key);
             it = entries_.erase(it);
             purged++;
         } else {

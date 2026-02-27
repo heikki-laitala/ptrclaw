@@ -43,6 +43,9 @@ public:
     // Optional event bus — propagated to new agents
     void set_event_bus(EventBus* bus) { event_bus_ = bus; }
 
+    // Shared embedder — propagated to new agents (caller retains ownership)
+    void set_embedder(class Embedder* embedder) { embedder_ = embedder; }
+
     // Subscribe to MessageReceivedEvent on the event bus
     void subscribe_events();
 
@@ -53,6 +56,7 @@ private:
     mutable std::mutex mutex_;
     std::string binary_path_;
     EventBus* event_bus_ = nullptr;
+    Embedder* embedder_ = nullptr;
     std::unordered_map<std::string, PendingOAuth> pending_oauth_;
 
     std::optional<PendingOAuth> get_pending_oauth(const std::string& session_id);

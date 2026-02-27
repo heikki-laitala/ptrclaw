@@ -1,4 +1,5 @@
 #pragma once
+#include "embedder.hpp"
 #include "memory.hpp"
 #include "memory/response_cache.hpp"
 #include "provider.hpp"
@@ -51,6 +52,9 @@ public:
     // Response cache
     void set_response_cache(std::unique_ptr<ResponseCache> cache);
 
+    // Embedder for vector search (ownership transferred, pointer shared with memory)
+    void set_embedder(std::unique_ptr<Embedder> embedder);
+
     // Soul hatching
     bool is_hatched() const;
     void start_hatch();
@@ -76,6 +80,7 @@ private:
     std::string binary_path_;
     std::unique_ptr<Memory> memory_;
     std::unique_ptr<ResponseCache> response_cache_;
+    std::unique_ptr<Embedder> embedder_;
     uint32_t turns_since_synthesis_ = 0;
     bool hatching_ = false;
     uint32_t last_prompt_tokens_ = 0; // from provider usage when available

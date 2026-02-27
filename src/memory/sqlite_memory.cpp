@@ -6,6 +6,8 @@
 #include <sqlite3.h>
 #include <filesystem>
 #include <stdexcept>
+#include <cstring>
+#include <cmath>
 
 static ptrclaw::MemoryRegistrar reg_sqlite("sqlite",
     [](const ptrclaw::Config& config) {
@@ -128,6 +130,10 @@ void SqliteMemory::init_schema() {
         "END;";
     sqlite3_exec(db_, trigger_update, nullptr, nullptr, nullptr);
 
+    // Add embedding column (silently ignored if it already exists)
+    sqlite3_exec(db_, "ALTER TABLE memories ADD COLUMN embedding BLOB;",
+                 nullptr, nullptr, nullptr);
+
     // Links table for knowledge graph
     const char* create_links =
         "CREATE TABLE IF NOT EXISTS memory_links ("
@@ -196,8 +202,21 @@ void SqliteMemory::populate_links(MemoryEntry& entry) {
     }
 }
 
+void SqliteMemory::set_embedder(Embedder* embedder, double text_weight,
+                                 double vector_weight) {
+    embedder_ = embedder;
+    text_weight_ = text_weight;
+    vector_weight_ = vector_weight;
+}
+
 std::string SqliteMemory::store(const std::string& key, const std::string& content,
                                  MemoryCategory category, const std::string& session_id) {
+    // Compute embedding OUTSIDE the mutex (HTTP call may be slow)
+    Embedding emb;
+    if (embedder_) {
+        emb = embedder_->embed(key + " " + content);
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
 
     // Check if key already exists to reuse its id
@@ -234,54 +253,188 @@ std::string SqliteMemory::store(const std::string& key, const std::string& conte
     sqlite3_bind_text(g.stmt, 6, session_id.c_str(), -1, SQLITE_STATIC);
     sqlite3_step(g.stmt);
 
+    // Store embedding as BLOB if computed
+    if (!emb.empty()) {
+        StmtGuard eg;
+        const char* emb_sql = "UPDATE memories SET embedding = ? WHERE key = ?;";
+        if (sqlite3_prepare_v2(db_, emb_sql, -1, &eg.stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_blob(eg.stmt, 1, emb.data(),
+                              static_cast<int>(emb.size() * sizeof(float)),
+                              SQLITE_STATIC);
+            sqlite3_bind_text(eg.stmt, 2, key.c_str(), -1, SQLITE_STATIC);
+            sqlite3_step(eg.stmt);
+        }
+    }
+
     return id;
+}
+
+// Helper: read embedding BLOB from a column into a vector<float>
+static Embedding read_embedding_blob(sqlite3_stmt* stmt, int col) {
+    const void* blob = sqlite3_column_blob(stmt, col);
+    int bytes = sqlite3_column_bytes(stmt, col);
+    if (!blob || bytes <= 0) return {};
+
+    size_t count = static_cast<size_t>(bytes) / sizeof(float);
+    Embedding emb(count);
+    std::memcpy(emb.data(), blob, static_cast<size_t>(bytes));
+    return emb;
 }
 
 std::vector<MemoryEntry> SqliteMemory::recall(const std::string& query, uint32_t limit,
                                                std::optional<MemoryCategory> category_filter) {
+    // Compute query embedding OUTSIDE the mutex (HTTP call may be slow)
+    Embedding query_emb;
+    if (embedder_) {
+        query_emb = embedder_->embed(query);
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (query.empty()) return {};
 
-    int lim = static_cast<int>(limit);
+    bool has_vector = !query_emb.empty();
 
-    // Try FTS5 MATCH first (OR-joined tokens for partial matching)
-    std::string fts_query = build_fts_query(query);
-    if (fts_query.empty()) fts_query = query;  // fallback if all tokens too short
-    std::string fts_sql =
-        "SELECT m.id, m.key, m.content, m.category, m.timestamp, m.session_id,"
-        "       bm25(memories_fts) AS score"
-        " FROM memories_fts"
-        " JOIN memories AS m ON memories_fts.rowid = m.rowid"
-        " WHERE memories_fts MATCH ?";
-    std::vector<std::string> fts_params = {fts_query};
-    if (category_filter) {
-        fts_sql += " AND m.category = ?";
-        fts_params.push_back(category_to_string(*category_filter));
-    }
-    fts_sql += " ORDER BY bm25(memories_fts) LIMIT ?;";
+    if (!has_vector) {
+        // No embedder — use original text-only search
+        int lim = static_cast<int>(limit);
 
-    auto results = run_recall_query(db_, fts_sql, fts_params, lim, 6, true);
-
-    if (results.empty()) {
-        // Fall back to LIKE search on key and content
-        std::string like_pat = "%" + query + "%";
-        std::string like_sql =
-            "SELECT id, key, content, category, timestamp, session_id"
-            " FROM memories"
-            " WHERE (key LIKE ? OR content LIKE ?)";
-        std::vector<std::string> like_params = {like_pat, like_pat};
+        std::string fts_query = build_fts_query(query);
+        if (fts_query.empty()) fts_query = query;
+        std::string fts_sql =
+            "SELECT m.id, m.key, m.content, m.category, m.timestamp, m.session_id,"
+            "       bm25(memories_fts) AS score"
+            " FROM memories_fts"
+            " JOIN memories AS m ON memories_fts.rowid = m.rowid"
+            " WHERE memories_fts MATCH ?";
+        std::vector<std::string> fts_params = {fts_query};
         if (category_filter) {
-            like_sql += " AND category = ?";
-            like_params.push_back(category_to_string(*category_filter));
+            fts_sql += " AND m.category = ?";
+            fts_params.push_back(category_to_string(*category_filter));
         }
-        like_sql += " ORDER BY timestamp DESC LIMIT ?;";
+        fts_sql += " ORDER BY bm25(memories_fts) LIMIT ?;";
 
-        results = run_recall_query(db_, like_sql, like_params, lim, -1, false);
+        auto results = run_recall_query(db_, fts_sql, fts_params, lim, 6, true);
+
+        if (results.empty()) {
+            std::string like_pat = "%" + query + "%";
+            std::string like_sql =
+                "SELECT id, key, content, category, timestamp, session_id"
+                " FROM memories"
+                " WHERE (key LIKE ? OR content LIKE ?)";
+            std::vector<std::string> like_params = {like_pat, like_pat};
+            if (category_filter) {
+                like_sql += " AND category = ?";
+                like_params.push_back(category_to_string(*category_filter));
+            }
+            like_sql += " ORDER BY timestamp DESC LIMIT ?;";
+
+            results = run_recall_query(db_, like_sql, like_params, lim, -1, false);
+        }
+
+        for (auto& entry : results) {
+            populate_links(entry);
+        }
+        return results;
     }
 
-    for (auto& entry : results) {
-        populate_links(entry);
+    // Hybrid search: scan all entries, compute BM25 + cosine hybrid score
+
+    // Step 1: get FTS5 BM25 scores for text matching
+    std::unordered_map<std::string, double> bm25_scores;
+    double max_bm25 = 0.0;
+    {
+        std::string fts_query = build_fts_query(query);
+        if (fts_query.empty()) fts_query = query;
+        std::string fts_sql =
+            "SELECT m.key, -bm25(memories_fts) AS score"
+            " FROM memories_fts"
+            " JOIN memories AS m ON memories_fts.rowid = m.rowid"
+            " WHERE memories_fts MATCH ?";
+        std::vector<std::string> fts_params = {fts_query};
+        if (category_filter) {
+            fts_sql += " AND m.category = ?";
+            fts_params.push_back(category_to_string(*category_filter));
+        }
+        fts_sql += ";";
+
+        StmtGuard g;
+        if (sqlite3_prepare_v2(db_, fts_sql.c_str(), -1, &g.stmt, nullptr) == SQLITE_OK) {
+            int col = 1;
+            for (const auto& p : fts_params) {
+                sqlite3_bind_text(g.stmt, col++, p.c_str(), -1, SQLITE_TRANSIENT);
+            }
+            while (sqlite3_step(g.stmt) == SQLITE_ROW) {
+                if (auto* v = sqlite3_column_text(g.stmt, 0)) {
+                    std::string key = reinterpret_cast<const char*>(v);
+                    double score = sqlite3_column_double(g.stmt, 1);
+                    bm25_scores[key] = score;
+                    if (score > max_bm25) max_bm25 = score;
+                }
+            }
+        }
+    }
+
+    // Step 2: scan all entries for hybrid scoring
+    std::string scan_sql =
+        "SELECT id, key, content, category, timestamp, session_id, embedding"
+        " FROM memories";
+    if (category_filter) {
+        scan_sql += " WHERE category = ?";
+    }
+    scan_sql += ";";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, scan_sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) {
+        return {};
+    }
+    if (category_filter) {
+        std::string cat = category_to_string(*category_filter);
+        sqlite3_bind_text(g.stmt, 1, cat.c_str(), -1, SQLITE_TRANSIENT);
+    }
+
+    struct ScoredEntry {
+        MemoryEntry entry;
+        double score = 0.0;
+    };
+    std::vector<ScoredEntry> scored;
+
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) {
+        auto entry = entry_from_stmt(g.stmt);
+        Embedding emb = read_embedding_blob(g.stmt, 6);
+
+        // Text score (BM25 normalized to [0,1])
+        double text_norm = 0.0;
+        auto bm_it = bm25_scores.find(entry.key);
+        if (bm_it != bm25_scores.end() && max_bm25 > 0.0) {
+            text_norm = bm_it->second / max_bm25;
+        }
+
+        // Vector score (cosine similarity shifted to [0,1])
+        double vec_norm = 0.0;
+        if (!emb.empty()) {
+            double sim = cosine_similarity(query_emb, emb);
+            vec_norm = (sim + 1.0) / 2.0;
+        }
+
+        double combined = text_weight_ * text_norm + vector_weight_ * vec_norm;
+        if (combined > 0.0) {
+            scored.push_back({std::move(entry), combined});
+        }
+    }
+
+    // Sort by score descending, take top K
+    size_t k = std::min(static_cast<size_t>(limit), scored.size());
+    std::partial_sort(scored.begin(), scored.begin() + static_cast<ptrdiff_t>(k), scored.end(),
+                      [](const ScoredEntry& a, const ScoredEntry& b) {
+                          return a.score > b.score;
+                      });
+
+    std::vector<MemoryEntry> results;
+    for (size_t i = 0; i < k; i++) {
+        scored[i].entry.score = scored[i].score;
+        populate_links(scored[i].entry);
+        results.push_back(std::move(scored[i].entry));
     }
     return results;
 }
