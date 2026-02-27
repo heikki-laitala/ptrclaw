@@ -34,6 +34,8 @@ private:
     struct ReadResult {
         std::string output;
         bool still_running;
+        int exit_status = 0;  // valid when !still_running && reaped by WNOHANG
+        bool reaped = false;  // true if waitpid was already called
     };
     ReadResult read_with_timeout(int stdout_fd, pid_t pid, int timeout_ms);
 

@@ -105,21 +105,23 @@ ToolResult ShellTool::run_new_command(const std::string& command,
     }
 
     // Read output with stall detection
-    auto [output, still_running] = read_with_timeout(stdout_pipe[0], pid, kStallTimeoutMs);
-
     constexpr size_t max_output = 10000;
-    if (output.size() > max_output) {
-        output = output.substr(0, max_output) + "\n[truncated]";
+    auto result = read_with_timeout(stdout_pipe[0], pid, kStallTimeoutMs);
+
+    if (result.output.size() > max_output) {
+        result.output = result.output.substr(0, max_output) + "\n[truncated]";
     }
 
-    if (!still_running) {
+    if (!result.still_running) {
         // Process finished
         if (stdin_pipe[1] >= 0) close(stdin_pipe[1]);
         close(stdout_pipe[0]);
-        int status = 0;
-        waitpid(pid, &status, 0);
+        int status = result.exit_status;
+        if (!result.reaped) {
+            waitpid(pid, &status, 0);
+        }
         bool success = WIFEXITED(status) && WEXITSTATUS(status) == 0;
-        return ToolResult{success, output};
+        return ToolResult{success, result.output};
     }
 
     // Process is stalled — waiting for input
@@ -133,8 +135,8 @@ ToolResult ShellTool::run_new_command(const std::string& command,
     int stored_stdin = stdin_pipe[1] >= 0 ? stdin_pipe[1] : -1;
     processes_[proc_id] = ProcessState{pid, stored_stdin, stdout_pipe[0]};
 
-    output += "\n[WAITING FOR INPUT - process_id:" + proc_id + "]";
-    return ToolResult{true, output};
+    result.output += "\n[WAITING FOR INPUT - process_id:" + proc_id + "]";
+    return ToolResult{true, result.output};
 }
 
 ToolResult ShellTool::resume_process(const std::string& proc_id, const std::string& stdin_data) {
@@ -162,26 +164,28 @@ ToolResult ShellTool::resume_process(const std::string& proc_id, const std::stri
 
     // Read new output — use longer timeout since we just sent data and
     // the process may need time for network/IO before responding
-    auto [output, still_running] = read_with_timeout(proc.stdout_fd, proc.pid, kResumeTimeoutMs);
-
     constexpr size_t max_output = 10000;
-    if (output.size() > max_output) {
-        output = output.substr(0, max_output) + "\n[truncated]";
+    auto result = read_with_timeout(proc.stdout_fd, proc.pid, kResumeTimeoutMs);
+
+    if (result.output.size() > max_output) {
+        result.output = result.output.substr(0, max_output) + "\n[truncated]";
     }
 
-    if (!still_running) {
-        int status = 0;
+    if (!result.still_running) {
         if (proc.stdin_fd >= 0) close(proc.stdin_fd);
         close(proc.stdout_fd);
-        waitpid(proc.pid, &status, 0);
+        int status = result.exit_status;
+        if (!result.reaped) {
+            waitpid(proc.pid, &status, 0);
+        }
         processes_.erase(it);
         bool success = WIFEXITED(status) && WEXITSTATUS(status) == 0;
-        return ToolResult{success, output};
+        return ToolResult{success, result.output};
     }
 
     // Still waiting
-    output += "\n[WAITING FOR INPUT - process_id:" + proc_id + "]";
-    return ToolResult{true, output};
+    result.output += "\n[WAITING FOR INPUT - process_id:" + proc_id + "]";
+    return ToolResult{true, result.output};
 }
 
 ShellTool::ReadResult ShellTool::read_with_timeout(int stdout_fd, pid_t pid, int timeout_ms) {
@@ -205,10 +209,10 @@ ShellTool::ReadResult ShellTool::read_with_timeout(int stdout_fd, pid_t pid, int
             pid_t result = waitpid(pid, &status, WNOHANG);
             if (result == 0) {
                 // Still running, no output = stalled (waiting for input)
-                return {output, true};
+                return {output, true, 0, false};
             }
-            // Process exited during timeout
-            return {output, false};
+            // Process exited during timeout — already reaped by WNOHANG
+            return {output, false, status, result > 0};
         }
 
         if ((pfd.revents & POLLIN) != 0) {
