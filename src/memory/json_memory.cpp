@@ -231,29 +231,20 @@ std::vector<MemoryEntry> JsonMemory::recall(const std::string& query, uint32_t l
     for (size_t i = 0; i < entries_.size(); i++) {
         if (category_filter && entries_[i].category != *category_filter) continue;
 
-        double text_norm = 0.0;
-        if (has_tokens && max_text > 0.0) {
-            text_norm = text_scores[i] / max_text; // normalize to [0,1]
-        }
+        double text_norm = (has_tokens && max_text > 0.0)
+            ? text_scores[i] / max_text : 0.0;
 
-        double vec_norm = 0.0;
+        double cosine_sim = 0.0;
         if (has_vector) {
             auto emb_it = embeddings_.find(entries_[i].key);
             if (emb_it != embeddings_.end()) {
-                double sim = cosine_similarity(query_emb, emb_it->second);
-                vec_norm = (sim + 1.0) / 2.0; // shift [-1,1] to [0,1]
+                cosine_sim = cosine_similarity(query_emb, emb_it->second);
             }
         }
 
-        double combined = 0.0;
-        if (has_tokens && has_vector) {
-            combined = text_weight_ * text_norm + vector_weight_ * vec_norm;
-        } else if (has_tokens) {
-            combined = text_norm;
-        } else {
-            combined = vec_norm;
-        }
-
+        double combined = hybrid_score(text_norm, cosine_sim,
+                                       text_weight_, vector_weight_,
+                                       has_tokens, has_vector);
         if (combined > 0.0) {
             scored.emplace_back(combined, i);
         }

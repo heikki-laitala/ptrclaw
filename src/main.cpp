@@ -280,7 +280,7 @@ int main(int argc, char* argv[]) try {
 #ifdef PTRCLAW_HAS_EMBEDDINGS
     auto embedder = ptrclaw::create_embedder(config, http_client);
     if (embedder) {
-        agent.set_embedder(std::move(embedder));
+        agent.set_embedder(embedder.get());
     }
 #endif
 

@@ -147,8 +147,7 @@ endif
 if opt_embeddings
   optional_sources += files(
     'src/embedder.cpp',
-    'src/embedders/openai_embedder.cpp',
-    'src/embedders/ollama_embedder.cpp',
+    'src/embedders/http_embedder.cpp',
   )
 endif
 lib_sources = core_sources + optional_sources
