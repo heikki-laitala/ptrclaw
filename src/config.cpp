@@ -37,7 +37,7 @@ nlohmann::json Config::defaults_json() {
             {"disable_streaming", false}
         }},
         {"channels", {
-            {"telegram", {{"bot_token", ""}, {"allow_from", nlohmann::json::array()}, {"reply_in_private", true}, {"proxy", ""}}},
+            {"telegram", {{"bot_token", ""}, {"allow_from", nlohmann::json::array()}, {"reply_in_private", true}, {"proxy", ""}, {"pairing_enabled", false}, {"pairing_mode", "auto"}, {"paired_user_id", ""}, {"pairing_file", "~/.ptrclaw/telegram_pairing.json"}, {"pairing_admin_chat_id", ""}, {"pairing_admin_user_id", ""}, {"pairing_pending_file", "~/.ptrclaw/telegram_pairing_pending.json"}, {"pairing_request_ttl_sec", 600}}},
             {"whatsapp", {{"access_token", ""}, {"phone_number_id", ""}, {"verify_token", ""}, {"app_secret", ""}, {"allow_from", nlohmann::json::array()}, {"webhook_listen", ""}, {"webhook_secret", ""}, {"webhook_max_body", 65536}}}
         }},
         {"memory", {

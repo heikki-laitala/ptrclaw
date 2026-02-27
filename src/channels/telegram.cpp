@@ -4,6 +4,9 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <sstream>
 
 static ptrclaw::ChannelRegistrar reg_telegram("telegram",
@@ -18,6 +21,14 @@ static ptrclaw::ChannelRegistrar reg_telegram("telegram",
         tg_cfg.reply_in_private = ch.value("reply_in_private", true);
         tg_cfg.proxy = ch.value("proxy", std::string{});
         tg_cfg.dev = config.dev;
+        tg_cfg.pairing_enabled = ch.value("pairing_enabled", false);
+        tg_cfg.pairing_mode = ch.value("pairing_mode", std::string{"auto"});
+        tg_cfg.paired_user_id = ch.value("paired_user_id", std::string{});
+        tg_cfg.pairing_file = ch.value("pairing_file", std::string{"~/.ptrclaw/telegram_pairing.json"});
+        tg_cfg.pairing_admin_chat_id = ch.value("pairing_admin_chat_id", std::string{});
+        tg_cfg.pairing_admin_user_id = ch.value("pairing_admin_user_id", std::string{});
+        tg_cfg.pairing_pending_file = ch.value("pairing_pending_file", std::string{"~/.ptrclaw/telegram_pairing_pending.json"});
+        tg_cfg.pairing_request_ttl_sec = ch.value("pairing_request_ttl_sec", uint64_t(600));
         if (ch.contains("allow_from") && ch["allow_from"].is_array())
             for (const auto& u : ch["allow_from"])
                 if (u.is_string()) tg_cfg.allow_from.push_back(u.get<std::string>());
@@ -66,7 +77,21 @@ bool TelegramChannel::set_my_commands() {
     try {
         auto resp = http_.post(api_url("setMyCommands"), body.dump(),
                                {{"Content-Type", "application/json"}}, 10);
-        return resp.status_code == 200;
+        if (resp.status_code != 200) return false;
+
+        if (config_.pairing_enabled && to_lower(config_.pairing_mode) == "manual" &&
+            !config_.pairing_admin_chat_id.empty()) {
+            nlohmann::json admin_commands = commands;
+            admin_commands.push_back({{"command", "pair"}, {"description", "Pairing admin commands"}});
+            nlohmann::json admin_body = {
+                {"commands", admin_commands},
+                {"scope", {{"type", "chat"}, {"chat_id", std::stoll(config_.pairing_admin_chat_id)}}}
+            };
+            http_.post(api_url("setMyCommands"), admin_body.dump(),
+                       {{"Content-Type", "application/json"}}, 10);
+        }
+
+        return true;
     } catch (...) {
         return false;
     }
@@ -114,6 +139,160 @@ bool TelegramChannel::is_user_allowed(const std::string& username,
         if (to_lower(entry) == to_lower(username)) return true;
     }
     return false;
+}
+
+bool TelegramChannel::load_pairing_state() {
+    if (pairing_loaded_) return true;
+    pairing_loaded_ = true;
+
+    if (!config_.paired_user_id.empty()) return true;
+
+    std::string path = expand_home(config_.pairing_file);
+    std::ifstream file(path);
+    if (!file.is_open()) return false;
+
+    try {
+        auto j = nlohmann::json::parse(file);
+        if (j.contains("paired_user_id") && j["paired_user_id"].is_string()) {
+            config_.paired_user_id = j["paired_user_id"].get<std::string>();
+            return !config_.paired_user_id.empty();
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[telegram] Warning: failed to load pairing file " << path
+                  << ": " << e.what() << "\n";
+    }
+
+    return false;
+}
+
+bool TelegramChannel::save_pairing_state(const std::string& user_id) {
+    if (user_id.empty()) return false;
+
+    nlohmann::json j = {{"paired_user_id", user_id}};
+    std::string path = expand_home(config_.pairing_file);
+    if (!atomic_write_file(path, j.dump(2) + "\n")) {
+        std::cerr << "[telegram] Warning: failed to persist pairing file " << path
+                  << " (keeping pairing in memory)\n";
+        config_.paired_user_id = user_id;
+        pairing_loaded_ = true;
+        return false;
+    }
+
+    config_.paired_user_id = user_id;
+    pairing_loaded_ = true;
+    return true;
+}
+
+bool TelegramChannel::load_pending_pairing() {
+    if (pending_loaded_) return true;
+    pending_loaded_ = true;
+
+    std::string path = expand_home(config_.pairing_pending_file);
+    std::ifstream file(path);
+    if (!file.is_open()) return false;
+
+    try {
+        auto j = nlohmann::json::parse(file);
+        if (!j.is_object()) return false;
+        PendingPairRequest p;
+        p.user_id = j.value("user_id", std::string{});
+        p.username = j.value("username", std::string{});
+        p.first_name = j.value("first_name", std::string{});
+        p.chat_id = j.value("chat_id", std::string{});
+        p.code = j.value("code", std::string{});
+        p.created_at = j.value("created_at", uint64_t(0));
+        if (!p.user_id.empty() && !p.code.empty()) pending_pair_ = p;
+    } catch (const std::exception& e) {
+        std::cerr << "[telegram] Warning: failed to load pending pairing file " << path
+                  << ": " << e.what() << "\n";
+    }
+
+    return pending_pair_.has_value();
+}
+
+bool TelegramChannel::save_pending_pairing() {
+    if (!pending_pair_) return false;
+    nlohmann::json j = {
+        {"user_id", pending_pair_->user_id},
+        {"username", pending_pair_->username},
+        {"first_name", pending_pair_->first_name},
+        {"chat_id", pending_pair_->chat_id},
+        {"code", pending_pair_->code},
+        {"created_at", pending_pair_->created_at}
+    };
+    std::string path = expand_home(config_.pairing_pending_file);
+    if (!atomic_write_file(path, j.dump(2) + "\n")) {
+        std::cerr << "[telegram] Warning: failed to persist pending pairing file " << path << "\n";
+        return false;
+    }
+    return true;
+}
+
+bool TelegramChannel::clear_pending_pairing() {
+    pending_pair_.reset();
+    pending_loaded_ = true;
+    std::string path = expand_home(config_.pairing_pending_file);
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    return !ec;
+}
+
+bool TelegramChannel::pending_expired() const {
+    if (!pending_pair_) return true;
+    const uint64_t ttl = config_.pairing_request_ttl_sec == 0 ? 600 : config_.pairing_request_ttl_sec;
+    return epoch_seconds() > (pending_pair_->created_at + ttl);
+}
+
+std::string TelegramChannel::make_pair_code() {
+    std::string id = generate_id();
+    std::string code;
+    for (char c : id) {
+        if (std::isalnum(static_cast<unsigned char>(c))) code.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        if (code.size() >= 6) break;
+    }
+    if (code.size() < 6) code += "PAIR42";
+    return code.substr(0, 6);
+}
+
+std::string TelegramChannel::normalize_command(const std::string& text) {
+    auto s = trim(text);
+    auto sp = s.find(' ');
+    auto cmd = sp == std::string::npos ? s : s.substr(0, sp);
+    auto at = cmd.find('@');
+    if (at != std::string::npos) cmd = cmd.substr(0, at);
+    return cmd;
+}
+
+bool TelegramChannel::is_admin_sender(const std::string& chat_id, const std::string& user_id, bool is_group) const {
+    if (is_group) return false;
+    bool matched = false;
+    if (!config_.pairing_admin_chat_id.empty()) {
+        matched = matched || (chat_id == config_.pairing_admin_chat_id);
+    }
+    if (!config_.pairing_admin_user_id.empty()) {
+        matched = matched || (user_id == config_.pairing_admin_user_id);
+    }
+    return matched;
+}
+
+std::optional<std::string> TelegramChannel::admin_target() const {
+    if (!config_.pairing_admin_chat_id.empty()) return config_.pairing_admin_chat_id;
+    if (!config_.pairing_admin_user_id.empty()) return config_.pairing_admin_user_id;
+    return std::nullopt;
+}
+
+void TelegramChannel::notify_admin_pair_request() {
+    if (!pending_pair_) return;
+    auto tgt = admin_target();
+    if (!tgt) return;
+
+    std::string who = pending_pair_->username.empty() ? pending_pair_->user_id : ("@" + pending_pair_->username);
+    std::ostringstream msg;
+    msg << "Pair request from " << who << " (id: " << pending_pair_->user_id << ").\n"
+        << "Approve: /pair approve " << pending_pair_->code << "\n"
+        << "Deny: /pair deny " << pending_pair_->code << "\n"
+        << "Status: /pair status";
+    send_message(*tgt, msg.str());
 }
 
 std::vector<ChannelMessage> TelegramChannel::poll_updates() {
@@ -170,11 +349,6 @@ std::vector<ChannelMessage> TelegramChannel::poll_updates() {
                 first_name = from["first_name"].get<std::string>();
         }
 
-        // Authorization: check username and user_id
-        bool allowed = is_user_allowed(username, config_.allow_from) ||
-                       is_user_allowed(user_id_str, config_.allow_from);
-        if (!allowed) continue;
-
         // Extract chat info
         std::string chat_id;
         bool is_group = false;
@@ -195,6 +369,132 @@ std::vector<ChannelMessage> TelegramChannel::poll_updates() {
         }
 
         if (text.empty()) continue;
+
+        const bool is_pair_cmd = normalize_command(text) == "/pair";
+
+        if (config_.pairing_enabled && to_lower(config_.pairing_mode) == "manual" && is_pair_cmd) {
+            load_pairing_state();
+            load_pending_pairing();
+            if (pending_expired()) clear_pending_pairing();
+
+            if (!is_admin_sender(chat_id, user_id_str, is_group)) {
+                send_message(chat_id, "Pairing commands are admin-only.");
+                continue;
+            }
+
+            std::istringstream iss(trim(text));
+            std::string cmd;
+            std::string action;
+            std::string code;
+            iss >> cmd >> action >> code;
+            action = to_lower(action);
+
+            if (action == "approve") {
+                if (!pending_pair_) {
+                    send_message(chat_id, "No pending pairing request.");
+                } else if (code != pending_pair_->code) {
+                    send_message(chat_id, "Invalid pairing code.");
+                } else {
+                    save_pairing_state(pending_pair_->user_id);
+                    send_message(chat_id, "Pairing approved for user_id " + pending_pair_->user_id + ".");
+                    if (!pending_pair_->chat_id.empty()) {
+                        send_message(pending_pair_->chat_id, "✅ Pairing approved. You can now use the bot.");
+                    }
+                    clear_pending_pairing();
+                }
+                continue;
+            }
+
+            if (action == "deny") {
+                if (!pending_pair_) {
+                    send_message(chat_id, "No pending pairing request.");
+                } else if (code != pending_pair_->code) {
+                    send_message(chat_id, "Invalid pairing code.");
+                } else {
+                    if (!pending_pair_->chat_id.empty()) {
+                        send_message(pending_pair_->chat_id, "❌ Pairing denied by admin.");
+                    }
+                    clear_pending_pairing();
+                    send_message(chat_id, "Pairing request denied.");
+                }
+                continue;
+            }
+
+            if (action == "status") {
+                std::string status = config_.paired_user_id.empty()
+                    ? "No paired user yet."
+                    : ("Paired user_id: " + config_.paired_user_id);
+                if (pending_pair_) {
+                    status += "\nPending: user_id " + pending_pair_->user_id + " code " + pending_pair_->code;
+                }
+                send_message(chat_id, status);
+                continue;
+            }
+
+            if (action == "reset") {
+                config_.paired_user_id.clear();
+                pairing_loaded_ = true;
+                std::error_code ec;
+                std::filesystem::remove(expand_home(config_.pairing_file), ec);
+                clear_pending_pairing();
+                send_message(chat_id, "Pairing reset. Next approved request can pair a new user.");
+                continue;
+            }
+
+            if (action == "whoami") {
+                send_message(chat_id, "chat_id=" + chat_id + "\nuser_id=" + user_id_str);
+                continue;
+            }
+
+            send_message(chat_id,
+                "Usage:\n"
+                "/pair status\n"
+                "/pair approve <CODE>\n"
+                "/pair deny <CODE>\n"
+                "/pair reset\n"
+                "/pair whoami");
+            continue;
+        }
+
+        // Optional allowlist gate (applies in both normal and pairing mode)
+        bool allowed = is_user_allowed(username, config_.allow_from) ||
+                       is_user_allowed(user_id_str, config_.allow_from);
+        if (!allowed) continue;
+
+        if (config_.pairing_enabled) {
+            load_pairing_state();
+
+            if (to_lower(config_.pairing_mode) == "manual") {
+                load_pending_pairing();
+                if (pending_expired()) clear_pending_pairing();
+
+                if (config_.paired_user_id.empty()) {
+                    if (is_group || user_id_str.empty()) continue;
+
+                    bool is_admin = is_admin_sender(chat_id, user_id_str, is_group);
+                    if (!is_admin) {
+                        bool create_new = !pending_pair_ || pending_pair_->user_id != user_id_str;
+                        if (create_new) {
+                            pending_pair_ = PendingPairRequest{user_id_str, username, first_name, chat_id, make_pair_code(), epoch_seconds()};
+                            save_pending_pairing();
+                            notify_admin_pair_request();
+                        }
+                        send_message(chat_id, "⏳ Pairing request sent to admin. Please wait for approval.");
+                    }
+                    continue;
+                }
+
+                if (user_id_str != config_.paired_user_id) continue;
+            } else {
+                // Auto mode: first private message pairs automatically
+                if (config_.paired_user_id.empty()) {
+                    if (is_group || user_id_str.empty()) continue;
+                    save_pairing_state(user_id_str);
+                }
+
+                if (user_id_str != config_.paired_user_id) continue;
+            }
+        }
 
         // Extract message_id for reply-to
         std::optional<int64_t> msg_id;
