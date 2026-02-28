@@ -4,7 +4,7 @@ An AI assistant you can actually deploy anywhere. Single binary with dependencie
 
 Built in C++17 because infrastructure should be small, fast, and boring to operate.
 
-**~730 KB stripped binary (macOS arm64), ~2.7 MB (Linux x86_64, mbedTLS + sqlite3 statically linked). 6 LLM providers. 9 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph and vector search. Compile-time feature flags to strip what you don't need.**
+**~730 KB stripped binary (macOS arm64), ~2.7 MB (Linux x86_64, mbedTLS + sqlite3 statically linked). 5 LLM providers. 9 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph and vector search. Compile-time feature flags to strip what you don't need.**
 
 ## Why PtrClaw?
 
@@ -24,7 +24,6 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Single-message mode** — pipe a question in and get an answer back
 - **Automatic history compaction** when token usage approaches the context limit
 - **Persistent memory** — knowledge graph with bidirectional links, hybrid search (text + vector + recency decay), knowledge decay with idle fade, three-space semantics (core/knowledge/conversation), graph-aware context enrichment, automatic conversation synthesis
-- **Provider failover** — `reliable` provider wraps multiple backends with automatic fallback
 - **Cron scheduling** — the agent can schedule recurring tasks via system crontab and send results back via `--notify`
 - **Multi-session management** with idle eviction
 - **Telegram channel** — long-polling, user allowlists, Markdown-to-HTML, per-user sessions, streaming message edits

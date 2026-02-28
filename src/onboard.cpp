@@ -10,7 +10,7 @@
 
 namespace ptrclaw {
 
-const std::vector<std::string> kHiddenProviders = {"reliable", "compatible"};
+const std::vector<std::string> kHiddenProviders = {"compatible"};
 
 bool is_hidden_provider(const std::string& name) {
     for (const auto& h : kHiddenProviders) {
