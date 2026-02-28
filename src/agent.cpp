@@ -25,6 +25,10 @@ static std::string strip_memory_context(const std::string& text) {
     return text.substr(content_start);
 }
 
+bool Agent::has_active_memory() const {
+    return memory_ && memory_->backend_name() != "none";
+}
+
 Agent::Agent(std::unique_ptr<Provider> provider,
              std::vector<std::unique_ptr<Tool>> tools,
              const Config& config)
@@ -54,10 +58,9 @@ void Agent::inject_system_prompt() {
         prompt = build_hatch_prompt();
     } else {
         bool include_tool_desc = !provider_->supports_native_tools();
-        bool has_memory = memory_ && memory_->backend_name() != "none";
         RuntimeInfo runtime{model_, provider_->provider_name(), channel_,
                            binary_path_, session_id_};
-        prompt = build_system_prompt(tools_, include_tool_desc, has_memory,
+        prompt = build_system_prompt(tools_, include_tool_desc, has_active_memory(),
                                      memory_.get(), runtime);
     }
     history_.insert(history_.begin(), ChatMessage{Role::System, prompt, {}, {}});
@@ -72,8 +75,7 @@ void Agent::start_hatch() {
     hatching_ = true;
     history_.clear();
     system_prompt_injected_ = false;
-    has_last_prompt_tokens_ = false;
-    last_prompt_tokens_ = 0;
+    last_prompt_tokens_.reset();
 }
 
 std::string Agent::process(const std::string& user_message) {
@@ -115,7 +117,7 @@ std::string Agent::process(const std::string& user_message) {
         if (cached) {
             history_.push_back(ChatMessage{Role::Assistant, *cached, {}, {}});
             // Cached responses have no provider usage payload — fall back to heuristic.
-            has_last_prompt_tokens_ = false;
+            last_prompt_tokens_.reset();
             compact_history();
             return *cached;
         }
@@ -167,7 +169,6 @@ std::string Agent::process(const std::string& user_message) {
         // Track actual prompt token usage when provider reports it.
         if (response.usage.prompt_tokens > 0) {
             last_prompt_tokens_ = response.usage.prompt_tokens;
-            has_last_prompt_tokens_ = true;
         }
 
         // Emit ProviderResponse event
@@ -291,7 +292,7 @@ std::string Agent::process(const std::string& user_message) {
     }
 
     // Auto-save user+assistant messages to memory if enabled
-    if (memory_ && config_.memory.auto_save && memory_->backend_name() != "none") {
+    if (has_active_memory() && config_.memory.auto_save) {
         memory_->store("msg:" + std::to_string(epoch_seconds()),
                        user_message, MemoryCategory::Conversation, session_id_);
         if (!final_content.empty() && final_content != "[Max tool iterations reached]") {
@@ -320,8 +321,8 @@ std::string Agent::process(const std::string& user_message) {
 
 uint32_t Agent::estimated_tokens() const {
     // Prefer real provider-reported prompt usage when available.
-    if (has_last_prompt_tokens_) {
-        return last_prompt_tokens_;
+    if (last_prompt_tokens_) {
+        return *last_prompt_tokens_;
     }
 
     uint32_t total = 0;
@@ -337,8 +338,7 @@ void Agent::clear_history() {
     }
     history_.clear();
     system_prompt_injected_ = false;
-    has_last_prompt_tokens_ = false;
-    last_prompt_tokens_ = 0;
+    last_prompt_tokens_.reset();
 }
 
 void Agent::invalidate_system_prompt() {
@@ -402,7 +402,7 @@ void Agent::set_embedder(Embedder* embedder) {
 }
 
 void Agent::run_synthesis() {
-    if (!memory_ || !config_.memory.synthesis || memory_->backend_name() == "none") return;
+    if (!has_active_memory() || !config_.memory.synthesis) return;
 
     // Collect recent user+assistant messages for synthesis
     // Strip [Memory context] blocks from user messages so the synthesis LLM
@@ -458,7 +458,7 @@ void Agent::run_synthesis() {
 }
 
 void Agent::maybe_synthesize() {
-    if (!memory_ || !config_.memory.synthesis || memory_->backend_name() == "none") return;
+    if (!has_active_memory() || !config_.memory.synthesis) return;
     if (config_.memory.synthesis_interval == 0) return;
 
     turns_since_synthesis_++;

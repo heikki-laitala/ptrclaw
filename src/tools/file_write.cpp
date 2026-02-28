@@ -17,10 +17,7 @@ ToolResult FileWriteTool::execute(const std::string& args_json) {
 
     std::string path = args["path"].get<std::string>();
     std::string content = args["content"].get<std::string>();
-
-    if (path.find("..") != std::string::npos) {
-        return ToolResult{false, "Path must not contain '..'"};
-    }
+    if (auto err = validate_safe_path(path)) return *err;
 
     std::filesystem::path fs_path(path);
     if (fs_path.has_parent_path()) {

@@ -139,10 +139,8 @@ if opt_memory
     'src/memory.cpp',
     'src/memory/json_memory.cpp',
     'src/memory/none_memory.cpp',
+    'src/memory/response_cache.cpp',
   )
-endif
-if opt_memory
-  optional_sources += files('src/memory/response_cache.cpp')
 endif
 if opt_sqlite_memory
   optional_sources += files('src/memory/sqlite_memory.cpp')

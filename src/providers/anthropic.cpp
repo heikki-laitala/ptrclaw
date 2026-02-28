@@ -91,7 +91,7 @@ json AnthropicProvider::build_request(const std::vector<ChatMessage>& messages,
                 content_blocks.push_back({{"type", "text"}, {"text", msg.content}});
             }
             try {
-                auto tc_arr = json::parse(msg.name.value());
+                auto tc_arr = json::parse(msg.name.value_or("[]"));
                 if (tc_arr.is_array()) {
                     for (const auto& tc : tc_arr) {
                         json tool_use;
