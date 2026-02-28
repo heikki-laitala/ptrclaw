@@ -356,6 +356,14 @@ TEST_CASE("ShellTool: resume with invalid process_id fails", "[tools]") {
     REQUIRE(result.output.find("No such process") != std::string::npos);
 }
 
+TEST_CASE("ShellTool: empty process_id runs command instead of resuming", "[tools]") {
+    ShellTool tool;
+    // Some LLM clients send all schema fields including empty process_id
+    auto result = tool.execute(R"({"command":"echo works","process_id":"","stdin":""})");
+    REQUIRE(result.success);
+    REQUIRE(result.output.find("works") != std::string::npos);
+}
+
 TEST_CASE("ShellTool: kill_all_processes cleans up", "[tools]") {
     ShellTool tool;
     // Start a blocking command

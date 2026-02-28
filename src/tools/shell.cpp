@@ -34,8 +34,9 @@ ToolResult ShellTool::execute(const std::string& args_json) {
         stdin_data = args["stdin"].get<std::string>();
     }
 
-    // Resume existing process
-    if (args.contains("process_id") && args["process_id"].is_string()) {
+    // Resume existing process (ignore empty string — some clients send all schema fields)
+    if (args.contains("process_id") && args["process_id"].is_string()
+        && !args["process_id"].get<std::string>().empty()) {
         return resume_process(args["process_id"].get<std::string>(), stdin_data);
     }
 
