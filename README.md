@@ -59,7 +59,7 @@ export TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."
 ./builddir/ptrclaw
 ```
 
-On first run, the wizard walks you through provider setup — choose OpenAI, then select "OAuth login" when prompted. This opens your browser to authorize with your ChatGPT account. The wizard also detects the Telegram token and offers to configure the channel.
+On first run, the wizard walks you through provider setup — choose OpenAI, then select "OAuth login" when prompted. This opens your browser to authorize with your ChatGPT account. The wizard then asks if you want to set up a Telegram bot and prompts for the token.
 
 **3. Add an API key for embeddings:**
 
