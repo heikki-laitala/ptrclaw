@@ -8,7 +8,7 @@ Built in C++17 because infrastructure should be small, fast, and boring to opera
 
 ## Why PtrClaw?
 
-Most AI agent frameworks are Python packages with deep dependency trees, virtual environments, and careful version management just to get running. PtrClaw is a single binary that you `scp` to a server and run. It compiles in seconds, starts instantly, and uses minimal memory. You *can* containerize it (Docker support coming soon), but you don't *have* to.
+Most AI agent frameworks are Python packages with deep dependency trees, virtual environments, and careful version management just to get running. PtrClaw is a single binary that you `scp` to a server and run. It compiles in seconds, starts instantly, and uses minimal memory.
 
 - **Deploy anywhere** — one binary with deps statically linked, runs on any Linux box or Mac
 - **Swap providers freely** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Switch with a config change, no code modifications
@@ -52,6 +52,97 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 No virtual environments, no package managers at runtime.
 
+## Recommended setup (personal use)
+
+The best personal setup uses **OpenAI codex models** through your ChatGPT subscription (Plus/Pro/Team) and **Telegram** as the messaging channel. Codex models are included in your subscription — no per-token API billing. Add an **OpenAI API key** for embedding-powered memory search, and you get a capable assistant accessible from any device.
+
+**1. Build and run the setup wizard:**
+
+```sh
+make deps && make build
+./builddir/ptrclaw
+```
+
+On first run, choose OpenAI as your provider, then select "OAuth login" when prompted. This opens your browser to authorize with your ChatGPT account.
+
+**2. Add an API key for embeddings:**
+
+Codex models are covered by your subscription, but memory vector search needs an OpenAI API key (minimal cost — embedding calls are cheap). Run `/auth openai` again and add your API key, or set it in config:
+
+```json
+{
+  "memory": {
+    "embeddings": {
+      "provider": "openai",
+      "model": "text-embedding-3-small"
+    }
+  },
+  "providers": {
+    "openai": {
+      "api_key": "sk-..."
+    }
+  }
+}
+```
+
+PtrClaw uses OAuth for codex model calls and the API key for embeddings — both coexist.
+
+**3. Set up Telegram:**
+
+Create a bot via [@BotFather](https://t.me/BotFather), then run:
+
+```sh
+export TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."
+./builddir/ptrclaw --channel telegram
+```
+
+**4. Deploy to a server:**
+
+```sh
+make build-static   # ~2.7 MB self-contained binary
+scp builddir-static/ptrclaw your-server:
+ssh your-server './ptrclaw --channel telegram'
+```
+
+No containers, no runtimes, no package managers. One binary, runs anywhere.
+
+For API key billing setups, other providers, or self-hosted models, see [Configuration](#configuration).
+
+## Usage
+
+### Interactive REPL
+
+```sh
+./builddir/ptrclaw
+```
+
+### Single message
+
+```sh
+./builddir/ptrclaw -m "Explain what src/agent.cpp does"
+```
+
+### Telegram bot
+
+```sh
+export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+./builddir/ptrclaw --channel telegram
+```
+
+### CLI options
+
+```text
+-m, --message MSG        Send a single message and exit
+--notify CHAN:TARGET      After -m, send response via channel (e.g. telegram:123456)
+--channel NAME           Run as a channel bot (telegram, whatsapp¹)
+--provider NAME          Use a specific provider (anthropic, openai, ollama, openrouter)
+--model NAME             Use a specific model
+--dev                    Enable developer-only commands (e.g. /soul)
+-h, --help               Show help
+
+¹ WhatsApp requires building with -Dwith_whatsapp=true
+```
+
 ## Requirements
 
 - C++17 compiler (Clang 15+ recommended, GCC 10+ works)
@@ -77,6 +168,8 @@ Linux builds use `clang++` with the `lld` linker (required for LTO) via `meson-n
 Or run `make deps` to install everything automatically.
 
 ## Configuration
+
+Reference for all configuration options. For getting started quickly, see [Recommended setup](#recommended-setup-personal-use) or [Quick start](#quick-start).
 
 Create `~/.ptrclaw/config.json`:
 
@@ -303,41 +396,6 @@ PtrClaw has a persistent memory system with two backends: **JSON file** (zero de
 
 For full details on scoring, the knowledge graph, and memory tools, see [`docs/memory.md`](docs/memory.md).
 
-## Usage
-
-### Interactive REPL
-
-```sh
-./builddir/ptrclaw
-```
-
-### Single message
-
-```sh
-./builddir/ptrclaw -m "Explain what src/agent.cpp does"
-```
-
-### Telegram bot
-
-```sh
-export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
-./builddir/ptrclaw --channel telegram
-```
-
-### CLI options
-
-```text
--m, --message MSG        Send a single message and exit
---notify CHAN:TARGET      After -m, send response via channel (e.g. telegram:123456)
---channel NAME           Run as a channel bot (telegram, whatsapp¹)
---provider NAME          Use a specific provider (anthropic, openai, ollama, openrouter)
---model NAME             Use a specific model
---dev                    Enable developer-only commands (e.g. /soul)
--h, --help               Show help
-
-¹ WhatsApp requires building with -Dwith_whatsapp=true
-```
-
 ## Development
 
 ```sh
@@ -404,6 +462,16 @@ ninja -C builddir
 
 Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux static binaries are larger because they bundle TLS (mbedTLS) and sqlite3. Linux default builds can also be slightly larger than macOS depending on toolchain and linked components. LTO is enabled by default. Distribution builds are stripped and size-optimized.
 
+## Contributing
+
+PtrClaw is designed to be easy to extend. Providers, channels, tools, and memory backends all self-register via a plugin system — add a new one by implementing an interface and dropping a `.cpp` file in the right directory.
+
+```sh
+make build && make test && make lint   # validate before submitting
+```
+
+See the [project structure](#project-structure) below for where things live. Issues and pull requests are welcome.
+
 ## Project structure
 
 ```text
@@ -440,7 +508,6 @@ src/
     openrouter.cpp      OpenRouter (inherits OpenAI)
     ollama.cpp          Ollama local inference
     compatible.cpp      Generic OpenAI-compatible endpoint
-    reliable.cpp        Failover wrapper over multiple providers
     sse.cpp             Server-Sent Events parser
   memory/
     json_memory.cpp     JSON file backend with knowledge graph links
