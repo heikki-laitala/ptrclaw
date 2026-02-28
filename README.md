@@ -89,8 +89,6 @@ PtrClaw uses OAuth for codex model calls and the API key for embeddings — both
 ./builddir/ptrclaw --channel telegram
 ```
 
-For API key billing setups, other providers, or self-hosted models, see [Configuration](#configuration).
-
 ## Usage
 
 ### Interactive REPL
