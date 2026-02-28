@@ -4,7 +4,7 @@ An AI assistant you can actually deploy anywhere. Single static binary, no runti
 
 Built in C++17 because infrastructure should be small, fast, and boring to operate.
 
-**~681 KB static binary (macOS arm64), ~6.9 MB (Linux x86_64, statically linked with OpenSSL + sqlite3). 6 LLM providers. 9 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph. Compile-time feature flags to strip what you don't need.**
+**~730 KB static binary (macOS arm64), ~6.9 MB (Linux x86_64, statically linked with OpenSSL + sqlite3). 6 LLM providers. 9 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph and vector search. Compile-time feature flags to strip what you don't need.**
 
 ## Why PtrClaw?
 
@@ -14,7 +14,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Swap providers freely** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Switch with a config change, no code modifications
 - **Real tool use** — file I/O, shell execution (with stdin piping), cron scheduling, and a persistent knowledge graph memory system. Providers with native function calling use it directly; others fall back to XML-based parsing
 - **Extend without forking** — providers, channels, tools, and memory backends self-register via a plugin system. Add a new one by implementing an interface and dropping in a `.cpp` file
-- **Build only what you need** — 12 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~599 KB)
+- **Build only what you need** — 13 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~632 KB)
 
 ## Features
 
@@ -371,6 +371,7 @@ Every provider, channel, and tool is a compile-time feature flag in `meson_optio
 | `with_memory` | Memory system (JsonMemory) | `true` |
 | `with_sqlite_memory` | SQLite+FTS5 memory backend | `true` |
 | `with_memory_tools` | Memory tools (store, recall, forget, link) | `true` |
+| `with_embeddings` | Embedding/vector search for memory | `true` |
 
 Pass `-D` flags to `meson setup`:
 
@@ -397,9 +398,9 @@ ninja -C builddir
 
 | Configuration | macOS arm64 | Linux x86_64 |
 | ------------- | ----------- | ------------ |
-| Default (`make build`) | ~916 KB | ~916 KB |
-| Static (`make build-static`, stripped) | ~681 KB | ~6.9 MB |
-| Minimal (`make build-minimal`, stripped) | ~599 KB | ~650 KB |
+| Default (`make build`) | ~988 KB | ~988 KB |
+| Static (`make build-static`, stripped) | ~730 KB | ~6.9 MB |
+| Minimal (`make build-minimal`, stripped) | ~632 KB | ~650 KB |
 
 Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux static binaries are larger because they bundle OpenSSL and sqlite3. The dynamically linked build is the same size as macOS. LTO is enabled by default. Distribution builds are stripped and size-optimized.
 
@@ -408,7 +409,7 @@ Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux stat
 ```text
 src/
   main.cpp              CLI entry point, REPL, and slash command handling
-  agent.hpp/cpp         Agentic loop — chat, tool dispatch, history compaction
+  agent.hpp/cpp         Agentic loop — chat, tool dispatch, history compaction, memory integration
   onboard.hpp/cpp       First-run setup wizard (provider, channel, personality)
   provider.hpp/cpp      Provider interface, types, listing, and runtime switching
   tool.hpp/cpp          Tool interface, ToolSpec, ToolResult
@@ -423,9 +424,12 @@ src/
   oauth.hpp/cpp         OpenAI OAuth PKCE flow, token exchange, and refresh wiring
   prompt.hpp/cpp        System prompt builder
   http.hpp              HttpClient interface
+  embedder.hpp          Embedding interface, scoring helpers (cosine, hybrid, recency, idle fade)
   http_socket.cpp       Linux HTTP backend (POSIX sockets + OpenSSL)
   http.cpp              macOS HTTP backend (libcurl)
   util.hpp/cpp          String/path utilities
+  embedders/
+    http_embedder.cpp   HTTP-based embedding provider (OpenAI, Ollama)
   channels/
     telegram.hpp/cpp    Telegram Bot API (long-polling, Markdown→HTML, streaming edits)
     whatsapp.hpp/cpp    WhatsApp Business Cloud API (webhook server, message parsing)
@@ -455,6 +459,7 @@ src/
     memory_link.cpp     Create/remove bidirectional links between entries
 tests/                  Catch2 unit tests
 docs/
+  memory.md             Memory system architecture, scoring, knowledge decay, config reference
   openai-oauth.md       OpenAI OAuth PKCE flow, token refresh, and config format
   reverse-proxy.md      Reverse-proxy setup for WhatsApp webhooks (nginx, Caddy)
   whatsapp.md           WhatsApp Cloud API credentials and webhook setup
@@ -463,4 +468,4 @@ meson_options.txt       Compile-time feature flags
 
 ## Acknowledgements
 
-PtrClaw started as a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw) and has since diverged into its own architecture with an event bus, plugin system, and streaming pipeline. Nullclaw is a far more feature-rich project — if you need a battle-tested assistant with a broader tool ecosystem, check it out. PtrClaw trades breadth for a smaller footprint: our dynamically linked binary is ~916 KB vs nullclaw's ~1.9 MB, with the goal of staying minimal and easy to embed or deploy on constrained environments.
+PtrClaw started as a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw) and has since diverged into its own architecture with an event bus, plugin system, and streaming pipeline. Nullclaw is a far more feature-rich project — if you need a battle-tested assistant with a broader tool ecosystem, check it out. PtrClaw trades breadth for a smaller footprint: our dynamically linked binary is ~988 KB vs nullclaw's ~1.9 MB, with the goal of staying minimal and easy to embed or deploy on constrained environments.
