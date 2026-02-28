@@ -9,6 +9,7 @@
 namespace ptrclaw {
 
 class Embedder; // forward declaration
+struct MemoryConfig; // forward declaration
 
 enum class MemoryCategory { Core, Knowledge, Conversation };
 
@@ -87,6 +88,10 @@ public:
     // Set knowledge decay parameters (0 max_idle_days = disabled).
     virtual void set_knowledge_decay(uint32_t /*max_idle_days*/,
                                      double /*survival_chance*/) {}
+
+    // Apply all config-driven settings at once (recency decay, knowledge decay, etc.).
+    // Backends override to extract the fields they care about.
+    virtual void apply_config(const MemoryConfig& /*cfg*/) {}
 };
 
 // Base class for tools that need a Memory* pointer.

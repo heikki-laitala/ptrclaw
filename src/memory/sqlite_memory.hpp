@@ -2,6 +2,7 @@
 #include "../memory.hpp"
 #include "../embedder.hpp"
 #include <mutex>
+#include <random>
 #include <string>
 
 struct sqlite3; // forward declare
@@ -49,6 +50,7 @@ public:
     void set_recency_decay(uint32_t half_life_seconds) override;
     void set_knowledge_decay(uint32_t max_idle_days,
                              double survival_chance) override;
+    void apply_config(const MemoryConfig& cfg) override;
 
 private:
     void init_schema();
@@ -66,6 +68,8 @@ private:
     uint32_t recency_half_life_ = 0;
     uint32_t knowledge_max_idle_days_ = 0;
     double knowledge_survival_chance_ = 0.05;
+    std::mt19937 rng_{std::random_device{}()};
+    std::uniform_real_distribution<double> dist_{0.0, 1.0};
 };
 
 } // namespace ptrclaw
