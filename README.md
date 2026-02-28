@@ -41,16 +41,7 @@ make build   # compile (output: builddir/ptrclaw)
 
 On first run, PtrClaw detects that no provider credentials are configured and launches an interactive setup wizard. It walks you through choosing a provider, entering credentials (API key or OAuth), optionally setting up a messaging channel, and creating a personality for your assistant.
 
-You can re-run the wizard at any time with `/onboard`, or set credentials individually with `/auth <provider>`.
-
-If you prefer manual setup, set an environment variable or create a config file (see [Configuration](#configuration)):
-
-```sh
-export ANTHROPIC_API_KEY=sk-ant-...
-./builddir/ptrclaw
-```
-
-No virtual environments, no package managers at runtime.
+You can re-run the wizard at any time with `/onboard`, or set credentials individually with `/auth <provider>`. For manual configuration, see [Configuration](#configuration).
 
 ## Recommended setup (personal use)
 
