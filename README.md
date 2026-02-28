@@ -89,16 +89,6 @@ PtrClaw uses OAuth for codex model calls and the API key for embeddings — both
 ./builddir/ptrclaw --channel telegram
 ```
 
-**5. Deploy to a server:**
-
-```sh
-make build-static   # ~2.7 MB self-contained binary
-scp builddir-static/ptrclaw your-server:
-ssh your-server './ptrclaw --channel telegram'
-```
-
-No containers, no runtimes, no package managers. One binary, runs anywhere.
-
 For API key billing setups, other providers, or self-hosted models, see [Configuration](#configuration).
 
 ## Usage
