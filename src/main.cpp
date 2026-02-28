@@ -1,9 +1,9 @@
+#include "commands.hpp"
 #include "config.hpp"
 #include "provider.hpp"
 #include "tool.hpp"
 #include "agent.hpp"
 #include "memory.hpp"
-#include "prompt.hpp"
 #include "http.hpp"
 #include "channel.hpp"
 #include "plugin.hpp"
@@ -401,91 +401,20 @@ int main(int argc, char* argv[]) try {
             if (line == "/quit" || line == "/exit") {
                 break;
             } else if (line == "/status") {
-                std::cout << "Provider: " << agent.provider_name() << "\n"
-                          << "Model: " << agent.model() << "\n"
-                          << "History: " << agent.history_size() << " messages\n"
-                          << "Estimated tokens: " << agent.estimated_tokens() << "\n";
+                std::cout << ptrclaw::cmd_status(agent);
             } else if (line == "/clear") {
                 agent.clear_history();
                 std::cout << "History cleared.\n";
             } else if (line.substr(0, 7) == "/model ") {
-                std::string new_model = line.substr(7);
-                // On openai, re-create provider if auth mode changes
-                if (agent.provider_name() == "openai") {
-                    auto oai_it = config.providers.find("openai");
-                    bool on_oauth = oai_it != config.providers.end() &&
-                                    oai_it->second.use_oauth;
-                    bool want_oauth = new_model.find("codex") != std::string::npos &&
-                                      oai_it != config.providers.end() &&
-                                      !oai_it->second.oauth_access_token.empty();
-                    if (on_oauth != want_oauth) {
-                        auto sr = ptrclaw::switch_provider("openai", new_model, agent.model(), config, http_client);
-                        if (!sr.error.empty()) {
-                            std::cout << sr.error << "\n";
-                        } else {
-                            ptrclaw::setup_oauth_refresh(sr.provider.get(), config);
-                            agent.set_provider(std::move(sr.provider));
-                            if (!sr.model.empty()) agent.set_model(sr.model);
-                            config.model = agent.model();
-                            config.persist_selection();
-                            std::cout << "Model set to: " << agent.model() << "\n";
-                        }
-                        continue;
-                    }
-                }
-                agent.set_model(new_model);
-                config.model = new_model;
-                config.persist_selection();
-                std::cout << "Model set to: " << new_model << "\n";
+                std::cout << ptrclaw::cmd_model(line.substr(7), agent,
+                                                config, http_client) << "\n";
             } else if (line == "/models") {
-                std::string auth_mode = ptrclaw::auth_mode_label(
-                    agent.provider_name(), agent.model(), config);
-                std::cout << "Current: " << agent.provider_name()
-                          << " — " << agent.model()
-                          << " (" << auth_mode << ")\n\n";
-
-                // Provider list
-                auto infos = ptrclaw::list_providers(config, agent.provider_name());
-                std::cout << "Providers:\n";
-                for (const auto& info : infos) {
-                    std::cout << "  " << info.name;
-                    for (size_t i = info.name.size(); i < 13; ++i) std::cout << ' ';
-                    if (info.has_api_key) std::cout << "API key";
-                    if (info.has_api_key && info.has_oauth) std::cout << ", ";
-                    if (info.has_oauth) std::cout << "OAuth (codex models)";
-                    if (info.is_local) std::cout << "local";
-                    std::cout << "\n";
-                }
-                std::cout << "\nSwitch: /provider <name> [model]\n";
+                std::cout << ptrclaw::cmd_models(agent, config) << "\n";
             } else if (line.substr(0, 10) == "/provider ") {
-                auto args = ptrclaw::trim(line.substr(10));
-                auto space = args.find(' ');
-                std::string prov_name = (space == std::string::npos) ? args : args.substr(0, space);
-                std::string model_arg = (space == std::string::npos) ? "" : ptrclaw::trim(args.substr(space + 1));
-
-                auto sr = ptrclaw::switch_provider(prov_name, model_arg, agent.model(), config, http_client);
-                if (!sr.error.empty()) {
-                    std::cout << sr.error << "\n";
-                } else {
-                    ptrclaw::setup_oauth_refresh(sr.provider.get(), config);
-                    agent.set_provider(std::move(sr.provider));
-                    if (!sr.model.empty()) agent.set_model(sr.model);
-                    config.provider = prov_name;
-                    config.model = agent.model();
-                    config.persist_selection();
-                    std::cout << "Switched to " << prov_name << " | Model: " << agent.model() << "\n";
-                }
+                std::cout << ptrclaw::cmd_provider(line.substr(10), agent,
+                                                   config, http_client) << "\n";
             } else if (line == "/memory") {
-                auto* mem = agent.memory();
-                if (!mem || mem->backend_name() == "none") {
-                    std::cout << "Memory: disabled\n";
-                } else {
-                    std::cout << "Memory backend: " << mem->backend_name() << "\n"
-                              << "  Core:         " << mem->count(ptrclaw::MemoryCategory::Core) << " entries\n"
-                              << "  Knowledge:    " << mem->count(ptrclaw::MemoryCategory::Knowledge) << " entries\n"
-                              << "  Conversation: " << mem->count(ptrclaw::MemoryCategory::Conversation) << " entries\n"
-                              << "  Total:        " << mem->count(std::nullopt) << " entries\n";
-                }
+                std::cout << ptrclaw::cmd_memory(agent) << "\n";
             } else if (line == "/memory export") {
                 auto* mem = agent.memory();
                 if (!mem || mem->backend_name() == "none") {
@@ -510,19 +439,7 @@ int main(int argc, char* argv[]) try {
                     }
                 }
             } else if (line == "/soul") {
-                if (!config.dev) {
-                    std::cout << "Unknown command: " << line << "\n";
-                } else {
-                    std::string display;
-                    if (agent.memory()) {
-                        display = format_soul_display(agent.memory());
-                    }
-                    if (display.empty()) {
-                        std::cout << "No soul data yet. Use /hatch to create one.\n";
-                    } else {
-                        std::cout << display;
-                    }
-                }
+                std::cout << ptrclaw::cmd_soul(agent, config.dev) << "\n";
             } else if (line == "/onboard") {
                 bool hatch_req = false;
                 if (ptrclaw::run_onboard(config, http_client, hatch_req)) {
@@ -544,9 +461,7 @@ int main(int argc, char* argv[]) try {
                     }
                 }
             } else if (line == "/hatch") {
-                agent.start_hatch();
-                std::string hatch_response = agent.process("Begin the hatching interview.");
-                std::cout << hatch_response << "\n";
+                std::cout << ptrclaw::cmd_hatch(agent) << "\n";
 
             // ── /auth commands ───────────────────────────────────
             } else if (line == "/auth openai start") {

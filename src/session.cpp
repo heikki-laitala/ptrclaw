@@ -1,11 +1,11 @@
 #include "session.hpp"
+#include "commands.hpp"
 #include "embedder.hpp"
 #include "oauth.hpp"
 #include "onboard.hpp"
 #include "event.hpp"
 #include "event_bus.hpp"
 #include "plugin.hpp"
-#include "prompt.hpp"
 #include "util.hpp"
 #include <nlohmann/json.hpp>
 
@@ -166,88 +166,32 @@ void SessionManager::subscribe_events() {
 
             // Handle /soul command — developer-only
             if (ev.message.content == "/soul") {
-                if (!config_.dev) {
-                    send_reply("Unknown command: /soul");
-                    return;
-                }
-                std::string display;
-                if (agent.memory()) {
-                    display = format_soul_display(agent.memory());
-                }
-                send_reply(display.empty()
-                    ? "No soul data yet. Use /hatch to create one."
-                    : display);
+                send_reply(cmd_soul(agent, config_.dev));
                 return;
             }
 
             // Handle /hatch command
             if (ev.message.content == "/hatch") {
-                begin_hatch();
+                send_reply(cmd_hatch(agent));
                 return;
             }
 
             // Handle /status command
             if (ev.message.content == "/status") {
-                std::string result = "Provider: " + agent.provider_name() + "\n"
-                    + "Model: " + agent.model() + "\n"
-                    + "History: " + std::to_string(agent.history_size()) + " messages\n"
-                    + "Estimated tokens: " + std::to_string(agent.estimated_tokens()) + "\n";
-                send_reply(result);
+                send_reply(cmd_status(agent));
                 return;
             }
 
             // Handle /model command
             if (ev.message.content.rfind("/model ", 0) == 0) {
-                std::string new_model = trim(ev.message.content.substr(7));
-                // Re-create provider if switching between OAuth and API-key mode
-                if (agent.provider_name() == "openai") {
-                    auto oai_it = config_.providers.find("openai");
-                    bool on_oauth = oai_it != config_.providers.end() &&
-                                    oai_it->second.use_oauth;
-                    bool want_oauth = new_model.find("codex") != std::string::npos &&
-                                      oai_it != config_.providers.end() &&
-                                      !oai_it->second.oauth_access_token.empty();
-                    if (on_oauth != want_oauth) {
-                        auto sr = switch_provider("openai", new_model, agent.model(),
-                                                   config_, http_);
-                        if (!sr.error.empty()) {
-                            send_reply(sr.error);
-                        } else {
-                            setup_oauth_refresh(sr.provider.get(), config_);
-                            agent.set_provider(std::move(sr.provider));
-                            if (!sr.model.empty()) agent.set_model(sr.model);
-                            config_.model = agent.model();
-                            config_.persist_selection();
-                            send_reply("Model set to: " + agent.model());
-                        }
-                        return;
-                    }
-                }
-                agent.set_model(new_model);
-                config_.model = new_model;
-                config_.persist_selection();
-                send_reply("Model set to: " + new_model);
+                send_reply(cmd_model(trim(ev.message.content.substr(7)),
+                                     agent, config_, http_));
                 return;
             }
 
             // Handle /memory command
             if (ev.message.content == "/memory") {
-                auto* mem = agent.memory();
-                if (!mem || mem->backend_name() == "none") {
-                    send_reply("Memory: disabled");
-                } else {
-                    std::string result = "Memory backend: "
-                        + std::string(mem->backend_name()) + "\n"
-                        + "  Core:         "
-                        + std::to_string(mem->count(MemoryCategory::Core)) + " entries\n"
-                        + "  Knowledge:    "
-                        + std::to_string(mem->count(MemoryCategory::Knowledge)) + " entries\n"
-                        + "  Conversation: "
-                        + std::to_string(mem->count(MemoryCategory::Conversation)) + " entries\n"
-                        + "  Total:        "
-                        + std::to_string(mem->count(std::nullopt)) + " entries\n";
-                    send_reply(result);
-                }
+                send_reply(cmd_memory(agent));
                 return;
             }
 
@@ -271,52 +215,14 @@ void SessionManager::subscribe_events() {
 
             // Handle /models command
             if (ev.message.content == "/models") {
-                std::string auth_mode = auth_mode_label(
-                    agent.provider_name(), agent.model(), config_);
-                std::string result = "Current: ";
-                result += agent.provider_name();
-                result += " — ";
-                result += agent.model();
-                result += " (";
-                result += auth_mode;
-                result += ")\n\nProviders:\n";
-
-                // Provider list
-                auto infos = list_providers(config_, agent.provider_name());
-                for (const auto& info : infos) {
-                    result += "  ";
-                    result += info.name;
-                    result += " — ";
-                    if (info.has_api_key) result += "API key";
-                    if (info.has_api_key && info.has_oauth) result += ", ";
-                    if (info.has_oauth) result += "OAuth (codex models)";
-                    if (info.is_local) result += "local";
-                    result += "\n";
-                }
-                result += "\nSwitch: /provider <name> [model]";
-                send_reply(result);
+                send_reply(cmd_models(agent, config_));
                 return;
             }
 
             // Handle /provider command
             if (ev.message.content.rfind("/provider ", 0) == 0) {
-                auto args = trim(ev.message.content.substr(10));
-                auto space = args.find(' ');
-                std::string prov_name = (space == std::string::npos) ? args : args.substr(0, space);
-                std::string model_arg = (space == std::string::npos) ? "" : trim(args.substr(space + 1));
-
-                auto sr = switch_provider(prov_name, model_arg, agent.model(), config_, http_);
-                if (!sr.error.empty()) {
-                    send_reply(sr.error);
-                } else {
-                    setup_oauth_refresh(sr.provider.get(), config_);
-                    agent.set_provider(std::move(sr.provider));
-                    if (!sr.model.empty()) agent.set_model(sr.model);
-                    config_.provider = prov_name;
-                    config_.model = agent.model();
-                    config_.persist_selection();
-                    send_reply("Switched to " + prov_name + " | Model: " + agent.model());
-                }
+                send_reply(cmd_provider(ev.message.content.substr(10),
+                                        agent, config_, http_));
                 return;
             }
 

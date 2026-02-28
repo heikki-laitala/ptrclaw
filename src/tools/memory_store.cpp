@@ -17,16 +17,9 @@ ToolResult MemoryStoreTool::execute(const std::string& args_json) {
     std::string key = args["key"].get<std::string>();
     std::string content = args["content"].get<std::string>();
 
-    std::string cat_str = "knowledge";
-    if (args.contains("category") && args["category"].is_string()) {
-        cat_str = args["category"].get<std::string>();
-    }
-    MemoryCategory category = category_from_string(cat_str);
-
-    std::string session_id;
-    if (args.contains("session_id") && args["session_id"].is_string()) {
-        session_id = args["session_id"].get<std::string>();
-    }
+    MemoryCategory category = category_from_string(
+        get_optional_string(args, "category", "knowledge"));
+    std::string session_id = get_optional_string(args, "session_id");
 
     std::string id = memory_->store(key, content, category, session_id);
 

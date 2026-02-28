@@ -2,8 +2,6 @@
 #include "plugin.hpp"
 #include "util.hpp"
 #include <nlohmann/json.hpp>
-#include <algorithm>
-#include <cctype>
 #include <sstream>
 
 static ptrclaw::ChannelRegistrar reg_telegram("telegram",
@@ -108,13 +106,6 @@ bool TelegramChannel::is_user_allowed(const std::string& username,
         if (!entry.empty() && entry[0] == '@') {
             entry = entry.substr(1);
         }
-
-        // Case-insensitive comparison
-        auto to_lower = [](std::string s) {
-            std::transform(s.begin(), s.end(), s.begin(),
-                           [](unsigned char c) { return std::tolower(c); });
-            return s;
-        };
 
         if (to_lower(entry) == to_lower(username)) return true;
     }
