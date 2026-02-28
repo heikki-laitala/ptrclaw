@@ -12,7 +12,7 @@ ifeq ($(shell uname),Darwin)
 else
   CLANG_TIDY_EXTRA :=
   SIZE_FLAGS := -Dcpp_args='-ffunction-sections -fdata-sections -fvisibility=hidden' \
-    -Dcpp_link_args='-Wl,--gc-sections -Wl,--icf=all -Wl,--strip-all'
+    -Dcpp_link_args='-fuse-ld=lld -Wl,--gc-sections -Wl,--icf=all -Wl,--strip-all'
   STRIP_CMD = strip --strip-unneeded $1
   ifeq ($(shell command -v clang++ >/dev/null 2>&1; echo $$?),0)
     NATIVE_FILE := meson-native-linux.ini
