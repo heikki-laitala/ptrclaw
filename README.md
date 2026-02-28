@@ -1,16 +1,16 @@
 # PtrClaw
 
-An AI assistant you can actually deploy anywhere. Single static binary, no runtime dependencies, no containers needed. Run it as a CLI tool, a Telegram bot, or plug in your own channel. WhatsApp is available as an opt-in build flag.
+An AI assistant you can actually deploy anywhere. Single binary with dependencies statically linked in, no containers needed. Run it as a CLI tool, a Telegram bot, or plug in your own channel. WhatsApp is available as an opt-in build flag.
 
 Built in C++17 because infrastructure should be small, fast, and boring to operate.
 
-**~730 KB static binary (macOS arm64), ~7.1 MB (Linux x86_64, statically linked with OpenSSL + sqlite3). 6 LLM providers. 9 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph and vector search. Compile-time feature flags to strip what you don't need.**
+**~730 KB stripped binary (macOS arm64), ~7.0 MB (Linux x86_64, OpenSSL + sqlite3 statically linked). 6 LLM providers. 9 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph and vector search. Compile-time feature flags to strip what you don't need.**
 
 ## Why PtrClaw?
 
 Most AI agent frameworks are Python packages with deep dependency trees, virtual environments, and careful version management just to get running. PtrClaw is a single binary that you `scp` to a server and run. It compiles in seconds, starts instantly, and uses minimal memory. You *can* containerize it (Docker support coming soon), but you don't *have* to.
 
-- **Deploy anywhere** — one static binary, no runtime deps, runs on any Linux box or Mac
+- **Deploy anywhere** — one binary with deps statically linked, runs on any Linux box or Mac
 - **Swap providers freely** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Switch with a config change, no code modifications
 - **Real tool use** — file I/O, shell execution (with stdin piping), cron scheduling, and a persistent knowledge graph memory system. Providers with native function calling use it directly; others fall back to XML-based parsing
 - **Extend without forking** — providers, channels, tools, and memory backends self-register via a plugin system. Add a new one by implementing an interface and dropping in a `.cpp` file
@@ -398,8 +398,8 @@ ninja -C builddir
 
 | Configuration | macOS arm64 | Linux x86_64 |
 | ------------- | ----------- | ------------ |
-| Default (`make build`) | ~988 KB | ~1.1 MB |
-| Static (`make build-static`, stripped) | ~730 KB | ~7.1 MB |
+| Default (`make build`) | ~988 KB | ~1.0 MB |
+| Static (`make build-static`, stripped) | ~730 KB | ~7.0 MB |
 | Minimal (`make build-minimal`, stripped) | ~632 KB | ~780 KB |
 
 Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux static binaries are larger because they bundle OpenSSL and sqlite3. Linux default builds can also be slightly larger than macOS depending on toolchain and linked components. LTO is enabled by default. Distribution builds are stripped and size-optimized.
