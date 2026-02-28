@@ -25,7 +25,7 @@ jobs:
         if: runner.os == 'Linux'
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: g++ meson ninja-build libssl-dev libsqlite3-dev lld
+          packages: g++ clang meson ninja-build libssl-dev libsqlite3-dev lld
           version: 1.0
 
       - name: Install dependencies (macOS)
@@ -91,7 +91,7 @@ jobs:
         if: runner.os == 'Linux'
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: g++ meson ninja-build libssl-dev libsqlite3-dev clang-tidy lld
+          packages: g++ clang meson ninja-build libssl-dev libsqlite3-dev clang-tidy lld
           version: 1.0
 
       - name: Install dependencies (macOS)
@@ -139,7 +139,7 @@ jobs:
       - name: Install dependencies
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: g++ meson ninja-build libssl-dev libsqlite3-dev lld llvm gcovr
+          packages: g++ clang meson ninja-build libssl-dev libsqlite3-dev lld llvm gcovr
           version: 1.0
 
       - name: Coverage
