@@ -5,6 +5,8 @@
 
 #ifdef PTRCLAW_USE_COMMONCRYPTO
 #include <CommonCrypto/CommonDigest.h>
+#elif defined(PTRCLAW_USE_MBEDTLS)
+#include <mbedtls/sha256.h>
 #else
 #include <openssl/sha.h>
 #endif
@@ -112,6 +114,11 @@ std::string make_code_challenge_s256(const std::string& verifier) {
     unsigned char hash[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256(verifier.data(), static_cast<CC_LONG>(verifier.size()), hash);
     return base64url_encode(hash, CC_SHA256_DIGEST_LENGTH);
+#elif defined(PTRCLAW_USE_MBEDTLS)
+    unsigned char hash[32];
+    mbedtls_sha256(reinterpret_cast<const unsigned char*>(verifier.data()),
+                   verifier.size(), hash, 0);
+    return base64url_encode(hash, sizeof(hash));
 #else
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256(reinterpret_cast<const unsigned char*>(verifier.data()), verifier.size(), hash);

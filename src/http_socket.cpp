@@ -1,12 +1,21 @@
-// Linux HTTP/HTTPS client using POSIX sockets + OpenSSL.
+// Linux HTTP/HTTPS client using POSIX sockets + TLS.
 // Implements the same public API as http.cpp (libcurl) with identical
-// interface behaviour: http_init/cleanup are no-ops (OpenSSL 1.1+ auto-inits).
+// interface behaviour: http_init/cleanup are no-ops.
+// TLS backend: mbedTLS (when PTRCLAW_USE_MBEDTLS) or OpenSSL (default).
 #ifdef __linux__
 
 #include "http.hpp"
 
+#ifdef PTRCLAW_USE_MBEDTLS
+#include <mbedtls/ssl.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/error.h>
+#include <mbedtls/x509_crt.h>
+#else
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#endif
 
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -68,6 +77,205 @@ static ParsedUrl parse_url(const std::string& url) {
 }
 
 // ── RAII connection (TCP + optional TLS) ──────────────────────
+
+#ifdef PTRCLAW_USE_MBEDTLS
+
+// BIO callbacks for mbedTLS: simple send/recv over the raw fd.
+static int mbed_send(void* ctx, const unsigned char* buf, size_t len) {
+    int fd = *static_cast<int*>(ctx);
+    ssize_t n = ::send(fd, buf, len, 0);
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return MBEDTLS_ERR_SSL_WANT_WRITE;
+        return MBEDTLS_ERR_NET_SEND_FAILED;
+    }
+    return static_cast<int>(n);
+}
+
+static int mbed_recv(void* ctx, unsigned char* buf, size_t len) {
+    int fd = *static_cast<int*>(ctx);
+    ssize_t n = ::recv(fd, buf, len, 0);
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return MBEDTLS_ERR_SSL_WANT_READ;
+        return MBEDTLS_ERR_NET_RECV_FAILED;
+    }
+    if (n == 0) return MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY;
+    return static_cast<int>(n);
+}
+
+struct Connection {
+    int fd = -1;
+    bool tls_active_ = false;
+
+    mbedtls_ssl_context      ssl_;
+    mbedtls_ssl_config       conf_;
+    mbedtls_entropy_context  entropy_;
+    mbedtls_ctr_drbg_context drbg_;
+    mbedtls_x509_crt         cacert_;
+
+    Connection() {
+        mbedtls_ssl_init(&ssl_);
+        mbedtls_ssl_config_init(&conf_);
+        mbedtls_entropy_init(&entropy_);
+        mbedtls_ctr_drbg_init(&drbg_);
+        mbedtls_x509_crt_init(&cacert_);
+    }
+
+    ~Connection() {
+        if (tls_active_) mbedtls_ssl_close_notify(&ssl_);
+        mbedtls_ssl_free(&ssl_);
+        mbedtls_ssl_config_free(&conf_);
+        mbedtls_ctr_drbg_free(&drbg_);
+        mbedtls_entropy_free(&entropy_);
+        mbedtls_x509_crt_free(&cacert_);
+        if (fd >= 0) ::close(fd);
+    }
+
+    Connection(const Connection&)            = delete;
+    Connection& operator=(const Connection&) = delete;
+
+    bool connect(const ParsedUrl& url, long timeout_secs) {
+        struct addrinfo hints{};
+        hints.ai_family   = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+
+        struct addrinfo* res = nullptr;
+        if (getaddrinfo(url.host.c_str(), url.port.c_str(), &hints, &res) != 0)
+            return false;
+
+        bool connected = false;
+        for (auto* ai = res; ai && !connected; ai = ai->ai_next) {
+            fd = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+            if (fd < 0) continue;
+
+            int flags = fcntl(fd, F_GETFL, 0);
+            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+            int rc = ::connect(fd, ai->ai_addr, ai->ai_addrlen);
+            if (rc == 0) {
+                fcntl(fd, F_SETFL, flags);
+                connected = true;
+            } else if (errno == EINPROGRESS) {
+                fd_set wset;
+                FD_ZERO(&wset);
+                FD_SET(fd, &wset);
+                struct timeval tv{timeout_secs, 0};
+                rc = select(fd + 1, nullptr, &wset, nullptr, &tv);
+                if (rc > 0) {
+                    int err = 0;
+                    socklen_t elen = sizeof(err);
+                    getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &elen);
+                    if (err == 0) {
+                        fcntl(fd, F_SETFL, flags);
+                        connected = true;
+                    }
+                }
+            }
+            if (!connected) { ::close(fd); fd = -1; }
+        }
+        freeaddrinfo(res);
+        if (!connected) return false;
+
+        if (url.tls) {
+            set_socket_timeout(timeout_secs);
+
+            if (mbedtls_ctr_drbg_seed(&drbg_, mbedtls_entropy_func, &entropy_,
+                                       nullptr, 0) != 0)
+                return false;
+
+            if (mbedtls_ssl_config_defaults(&conf_, MBEDTLS_SSL_IS_CLIENT,
+                                             MBEDTLS_SSL_TRANSPORT_STREAM,
+                                             MBEDTLS_SSL_PRESET_DEFAULT) != 0)
+                return false;
+
+            mbedtls_ssl_conf_authmode(&conf_, MBEDTLS_SSL_VERIFY_REQUIRED);
+            mbedtls_ssl_conf_rng(&conf_, mbedtls_ctr_drbg_random, &drbg_);
+            mbedtls_ssl_conf_min_tls_version(&conf_, MBEDTLS_SSL_VERSION_TLS1_2);
+
+            // Load system CA certificates.
+            mbedtls_x509_crt_parse_path(&cacert_, "/etc/ssl/certs");
+            mbedtls_ssl_conf_ca_chain(&conf_, &cacert_, nullptr);
+
+            if (mbedtls_ssl_setup(&ssl_, &conf_) != 0) return false;
+            mbedtls_ssl_set_hostname(&ssl_, url.host.c_str());
+            mbedtls_ssl_set_bio(&ssl_, &fd, mbed_send, mbed_recv, nullptr);
+
+            int ret;
+            while ((ret = mbedtls_ssl_handshake(&ssl_)) != 0) {
+                if (ret != MBEDTLS_ERR_SSL_WANT_READ &&
+                    ret != MBEDTLS_ERR_SSL_WANT_WRITE)
+                    return false;
+            }
+            tls_active_ = true;
+        }
+
+        set_socket_timeout(1);
+        return true;
+    }
+
+    ssize_t read_some(char* buf, size_t len) {
+        while (true) {
+            if (g_socket_abort_flag &&
+                g_socket_abort_flag->load(std::memory_order_relaxed))
+                return -1;
+
+            if (tls_active_) {
+                int n = mbedtls_ssl_read(&ssl_, reinterpret_cast<unsigned char*>(buf),
+                                          len);
+                if (n > 0) return n;
+                if (n == 0 || n == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) return 0;
+                if (n == MBEDTLS_ERR_SSL_WANT_READ ||
+                    n == MBEDTLS_ERR_SSL_WANT_WRITE)
+                    continue;
+                return -1;
+            } else {
+                ssize_t n = ::recv(fd, buf, len, 0);
+                if (n > 0) return n;
+                if (n == 0) return 0;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+                return -1;
+            }
+        }
+    }
+
+    bool write_all(const char* buf, size_t len) {
+        while (len > 0) {
+            if (tls_active_) {
+                int n = mbedtls_ssl_write(&ssl_,
+                                           reinterpret_cast<const unsigned char*>(buf),
+                                           len);
+                if (n > 0) {
+                    buf += n;
+                    len -= static_cast<size_t>(n);
+                    continue;
+                }
+                if (n == MBEDTLS_ERR_SSL_WANT_WRITE ||
+                    n == MBEDTLS_ERR_SSL_WANT_READ)
+                    continue;
+                return false;
+            } else {
+                ssize_t n = ::send(fd, buf, len, 0);
+                if (n < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+                    return false;
+                }
+                buf += n;
+                len -= static_cast<size_t>(n);
+            }
+        }
+        return true;
+    }
+
+private:
+    void set_socket_timeout(long secs) {
+        struct timeval tv{secs, 0};
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    }
+};
+
+#else // OpenSSL
 
 struct Connection {
     int      fd  = -1;
@@ -211,6 +419,8 @@ private:
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     }
 };
+
+#endif // PTRCLAW_USE_MBEDTLS
 
 // ── Request building ───────────────────────────────────────────
 

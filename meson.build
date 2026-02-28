@@ -6,15 +6,26 @@ project('ptrclaw', 'cpp',
 # the libcurl dependency and reduce static binary size.
 # macOS keeps libcurl (available via the system SDK / Homebrew).
 host_system = host_machine.system()
+opt_mbedtls = get_option('with_mbedtls') and host_system == 'linux'
+
 if host_system == 'linux'
-  # Try pkg-config / cmake first; fall back to direct library search
-  # (e.g. environments where libssl-dev is present but pkg-config is not).
-  http_dep = dependency('openssl', required: false)
-  if not http_dep.found()
+  if opt_mbedtls
     cc = meson.get_compiler('cpp')
-    ssl_lib    = cc.find_library('ssl',    required: true)
-    crypto_lib = cc.find_library('crypto', required: true)
-    http_dep   = declare_dependency(dependencies: [ssl_lib, crypto_lib])
+    mbedtls_lib  = cc.find_library('mbedtls',    required: true)
+    mbedx509_lib = cc.find_library('mbedx509',   required: true)
+    mbedcrypto_lib = cc.find_library('mbedcrypto', required: true)
+    http_dep = declare_dependency(dependencies: [mbedtls_lib, mbedx509_lib, mbedcrypto_lib])
+    add_project_arguments('-DPTRCLAW_USE_MBEDTLS', language: 'cpp')
+  else
+    # Try pkg-config / cmake first; fall back to direct library search
+    # (e.g. environments where libssl-dev is present but pkg-config is not).
+    http_dep = dependency('openssl', required: false)
+    if not http_dep.found()
+      cc = meson.get_compiler('cpp')
+      ssl_lib    = cc.find_library('ssl',    required: true)
+      crypto_lib = cc.find_library('crypto', required: true)
+      http_dep   = declare_dependency(dependencies: [ssl_lib, crypto_lib])
+    endif
   endif
   http_impl_source = files('src/http_socket.cpp')
 else
@@ -24,7 +35,8 @@ endif
 
 # SHA-256 for PKCE S256 code challenge.
 # macOS: use CommonCrypto (system framework, no extra deps, no Keychain prompts).
-# Linux: OpenSSL is already linked via http_dep.
+# Linux with mbedTLS: uses mbedtls/sha256.h (PTRCLAW_USE_MBEDTLS already defined above).
+# Linux with OpenSSL: OpenSSL is already linked via http_dep.
 if host_system != 'linux'
   add_project_arguments('-DPTRCLAW_USE_COMMONCRYPTO', language: 'cpp')
 endif
@@ -271,10 +283,19 @@ endif
 if opt_embeddings
   memory_features += 'embeddings'
 endif
+if opt_mbedtls
+  tls_backend = 'mbedtls'
+elif host_system == 'linux'
+  tls_backend = 'openssl'
+else
+  tls_backend = 'libcurl (system)'
+endif
+
 summary({
   'Providers': providers.length() > 0 ? ', '.join(providers) : 'none',
   'Channels':  channels.length() > 0  ? ', '.join(channels)  : 'none',
   'Tools':     opt_tools ? 'file_read, file_write, file_edit, shell, cron' : 'none',
   'Memory':    memory_features.length() > 0 ? ', '.join(memory_features) : 'none',
   'Memory tools': opt_memory_tools ? 'memory_store, memory_recall, memory_forget, memory_link' : 'none',
+  'TLS backend': tls_backend,
 }, section: 'Features')
