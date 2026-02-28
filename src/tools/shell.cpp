@@ -1,6 +1,6 @@
 #include "shell.hpp"
+#include "tool_util.hpp"
 #include "../plugin.hpp"
-#include <nlohmann/json.hpp>
 #include <array>
 #include <csignal>
 #include <poll.h>
@@ -22,11 +22,7 @@ void ShellTool::reset() {
 
 ToolResult ShellTool::execute(const std::string& args_json) {
     nlohmann::json args;
-    try {
-        args = nlohmann::json::parse(args_json);
-    } catch (const std::exception& e) {
-        return ToolResult{false, std::string("Failed to parse arguments: ") + e.what()};
-    }
+    if (auto err = parse_tool_json(args_json, args)) return *err;
 
     std::string stdin_data;
     bool has_stdin = args.contains("stdin") && args["stdin"].is_string();

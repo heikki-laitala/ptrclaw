@@ -1,15 +1,13 @@
 #pragma once
-#include "../memory.hpp"
+#include "../tool.hpp"
 #include <nlohmann/json.hpp>
 #include <optional>
 
 namespace ptrclaw {
 
-// Common preamble for memory tool execute(): check memory and parse JSON args.
-// Returns a ToolResult error on failure, or std::nullopt on success (args populated).
-inline std::optional<ToolResult> parse_memory_tool_args(
-    Memory* memory, const std::string& args_json, nlohmann::json& out) {
-    if (!memory) return ToolResult{false, "Memory system is not enabled"};
+// Parse JSON tool arguments. Returns error ToolResult on failure.
+inline std::optional<ToolResult> parse_tool_json(
+    const std::string& args_json, nlohmann::json& out) {
     try {
         out = nlohmann::json::parse(args_json);
     } catch (const std::exception& e) {
@@ -24,6 +22,14 @@ inline std::optional<ToolResult> require_string(const nlohmann::json& args, cons
         return ToolResult{false, std::string("Missing required parameter: ") + field};
     }
     return std::nullopt;
+}
+
+// Memory tool preamble: check memory enabled + parse JSON.
+class Memory;
+inline std::optional<ToolResult> parse_memory_tool_args(
+    Memory* memory, const std::string& args_json, nlohmann::json& out) {
+    if (!memory) return ToolResult{false, "Memory system is not enabled"};
+    return parse_tool_json(args_json, out);
 }
 
 } // namespace ptrclaw

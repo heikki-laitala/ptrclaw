@@ -1,6 +1,6 @@
 #include "file_edit.hpp"
+#include "tool_util.hpp"
 #include "../plugin.hpp"
-#include <nlohmann/json.hpp>
 #include <fstream>
 #include <sstream>
 
@@ -11,21 +11,10 @@ namespace ptrclaw {
 
 ToolResult FileEditTool::execute(const std::string& args_json) {
     nlohmann::json args;
-    try {
-        args = nlohmann::json::parse(args_json);
-    } catch (const std::exception& e) {
-        return ToolResult{false, std::string("Failed to parse arguments: ") + e.what()};
-    }
-
-    if (!args.contains("path") || !args["path"].is_string()) {
-        return ToolResult{false, "Missing required parameter: path"};
-    }
-    if (!args.contains("old_text") || !args["old_text"].is_string()) {
-        return ToolResult{false, "Missing required parameter: old_text"};
-    }
-    if (!args.contains("new_text") || !args["new_text"].is_string()) {
-        return ToolResult{false, "Missing required parameter: new_text"};
-    }
+    if (auto err = parse_tool_json(args_json, args)) return *err;
+    if (auto err = require_string(args, "path")) return *err;
+    if (auto err = require_string(args, "old_text")) return *err;
+    if (auto err = require_string(args, "new_text")) return *err;
 
     std::string path = args["path"].get<std::string>();
     std::string old_text = args["old_text"].get<std::string>();
