@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "memory/sqlite_memory.hpp"
+#include <ctime>
 #include <filesystem>
 #include <sqlite3.h>
 #include <unistd.h>
@@ -481,6 +482,79 @@ TEST_CASE("SqliteMemory: last_accessed 0 falls back to timestamp for decay", "[s
         uint32_t purged = mem.hygiene_purge(999999999);
         REQUIRE(purged == 1);
         REQUIRE_FALSE(mem.get("legacy").has_value());
+    }
+    std::filesystem::remove(path);
+    std::filesystem::remove(path + "-wal");
+    std::filesystem::remove(path + "-shm");
+}
+
+TEST_CASE("SqliteMemory: idle fade penalizes Knowledge entries nearing deadline", "[sqlite_memory]") {
+    std::string path = sqlite_test_path() + "_idle_fade";
+    {
+        SqliteMemory mem(path);
+        mem.store("fresh-fact", "matching data here", MemoryCategory::Knowledge, "");
+        mem.store("stale-fact", "matching data here", MemoryCategory::Knowledge, "");
+    }
+    // Backdate stale-fact's last_accessed to 25 days ago (past the halfway fade point of 15 days)
+    {
+        auto now = static_cast<int64_t>(std::time(nullptr));
+        auto stale_ts = now - 25 * 86400;
+        std::string sql = "UPDATE memories SET last_accessed = " +
+                          std::to_string(stale_ts) + " WHERE key = 'stale-fact';";
+        sqlite3* db = nullptr;
+        sqlite3_open(path.c_str(), &db);
+        sqlite3_exec(db, sql.c_str(), nullptr, nullptr, nullptr);
+        sqlite3_close(db);
+    }
+    {
+        SqliteMemory mem(path);
+        mem.set_knowledge_decay(30, 0.05);
+
+        auto results = mem.recall("matching data", 10, std::nullopt);
+        REQUIRE(results.size() == 2);
+
+        double fresh_score = 0.0;
+        double stale_score = 0.0;
+        for (const auto& r : results) {
+            if (r.key == "fresh-fact") fresh_score = r.score;
+            if (r.key == "stale-fact") stale_score = r.score;
+        }
+        REQUIRE(fresh_score > stale_score);
+    }
+    std::filesystem::remove(path);
+    std::filesystem::remove(path + "-wal");
+    std::filesystem::remove(path + "-shm");
+}
+
+TEST_CASE("SqliteMemory: idle fade does not affect Core entries", "[sqlite_memory]") {
+    std::string path = sqlite_test_path() + "_idle_fade_core";
+    {
+        SqliteMemory mem(path);
+        mem.store("soul:identity", "matching identity", MemoryCategory::Core, "");
+        mem.store("knowledge-fact", "matching knowledge", MemoryCategory::Knowledge, "");
+    }
+    // Backdate both to very old
+    {
+        sqlite3* db = nullptr;
+        sqlite3_open(path.c_str(), &db);
+        sqlite3_exec(db, "UPDATE memories SET last_accessed = 1000000, timestamp = 1000000;",
+                     nullptr, nullptr, nullptr);
+        sqlite3_close(db);
+    }
+    {
+        SqliteMemory mem(path);
+        mem.set_knowledge_decay(1, 0.0);
+
+        auto results = mem.recall("matching", 10, std::nullopt);
+        REQUIRE(results.size() >= 1);
+
+        double core_score = 0.0;
+        double knowledge_score = 0.0;
+        for (const auto& r : results) {
+            if (r.key == "soul:identity") core_score = r.score;
+            if (r.key == "knowledge-fact") knowledge_score = r.score;
+        }
+        REQUIRE(core_score > knowledge_score);
     }
     std::filesystem::remove(path);
     std::filesystem::remove(path + "-wal");

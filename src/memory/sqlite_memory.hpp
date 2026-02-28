@@ -56,6 +56,7 @@ private:
     void init_schema();
     void populate_links(MemoryEntry& entry);
     void touch_last_accessed(const std::vector<MemoryEntry>& entries);
+    void apply_idle_fade(std::vector<MemoryEntry>& entries);
 
     sqlite3* db_ = nullptr;
     std::string path_;

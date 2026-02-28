@@ -471,6 +471,17 @@ Use-it-or-lose-it memory for Knowledge entries. Entries that aren't recalled gra
 4. Losers are deleted (along with their links). Survivors get `last_accessed` refreshed to now, so they persist until the next hygiene round.
 5. Core entries are never touched. Conversation entries are purged by their own `hygiene_max_age` rule.
 
+### Idle fade in recall
+
+Before an entry reaches its purge deadline, it gradually fades from recall results. Knowledge entries in the second half of their idle window get a linearly decreasing score multiplier:
+
+- **0–50% of idle window**: full score (multiplier = 1.0)
+- **50–100% of idle window**: linear fade from 1.0 to 0.0
+
+This means a Knowledge entry with `knowledge_max_idle_days: 30` that hasn't been accessed in 20 days gets its recall score multiplied by ~0.67. At 25 days idle, the multiplier drops to ~0.33. At 30 days, it's 0.0 (and eligible for purge).
+
+The fade only affects Knowledge entries — Core and Conversation entries are unaffected.
+
 ### Backwards compatibility
 
 - `last_accessed` defaults to `0`. When `0`, the decay check falls back to `timestamp`, so pre-existing entries without `last_accessed` still decay based on when they were created/updated.
