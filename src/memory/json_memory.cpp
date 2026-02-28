@@ -18,7 +18,8 @@ static ptrclaw::MemoryRegistrar reg_json("json",
 
 namespace ptrclaw {
 
-JsonMemory::JsonMemory(const std::string& path) : path_(path) {
+JsonMemory::JsonMemory(const std::string& path) {
+    path_ = path;
     load();
 }
 
@@ -152,26 +153,6 @@ double JsonMemory::score_entry(const MemoryEntry& entry,
     return score / static_cast<double>(tokens.size());
 }
 
-void JsonMemory::set_embedder(Embedder* embedder, double text_weight,
-                               double vector_weight) {
-    embedder_ = embedder;
-    text_weight_ = text_weight;
-    vector_weight_ = vector_weight;
-}
-
-void JsonMemory::set_recency_decay(uint32_t half_life_seconds) {
-    recency_half_life_ = half_life_seconds;
-}
-
-void JsonMemory::set_knowledge_decay(uint32_t max_idle_days, double survival_chance) {
-    knowledge_max_idle_days_ = max_idle_days;
-    knowledge_survival_chance_ = survival_chance;
-}
-
-void JsonMemory::apply_config(const MemoryConfig& cfg) {
-    set_recency_decay(cfg.recency_half_life);
-    set_knowledge_decay(cfg.knowledge_max_idle_days, cfg.knowledge_survival_chance);
-}
 
 std::string JsonMemory::store(const std::string& key, const std::string& content,
                                MemoryCategory category, const std::string& session_id) {

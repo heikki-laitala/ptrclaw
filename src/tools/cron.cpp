@@ -1,6 +1,6 @@
 #include "cron.hpp"
+#include "tool_util.hpp"
 #include "../plugin.hpp"
-#include <nlohmann/json.hpp>
 #include <array>
 #include <sstream>
 #include <sys/wait.h>
@@ -15,11 +15,7 @@ static const std::string kMarkerPrefix = "# ptrclaw:";
 
 ToolResult CronTool::execute(const std::string& args_json) {
     nlohmann::json args;
-    try {
-        args = nlohmann::json::parse(args_json);
-    } catch (const std::exception& e) {
-        return ToolResult{false, std::string("Failed to parse arguments: ") + e.what()};
-    }
+    if (auto err = parse_tool_json(args_json, args)) return *err;
 
     if (!args.contains("action") || !args["action"].is_string()) {
         return ToolResult{false, "Missing required parameter: action (list, add, remove)"};

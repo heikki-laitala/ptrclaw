@@ -1,15 +1,12 @@
 #pragma once
-#include "../memory.hpp"
-#include "../embedder.hpp"
-#include <mutex>
-#include <random>
+#include "base_memory.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
 
 namespace ptrclaw {
 
-class JsonMemory : public Memory {
+class JsonMemory : public BaseMemory {
 public:
     explicit JsonMemory(const std::string& path);
 
@@ -40,13 +37,6 @@ public:
     bool unlink(const std::string& from_key, const std::string& to_key) override;
     std::vector<MemoryEntry> neighbors(const std::string& key, uint32_t limit) override;
 
-    void set_embedder(Embedder* embedder, double text_weight = 0.4,
-                      double vector_weight = 0.6) override;
-    void set_recency_decay(uint32_t half_life_seconds) override;
-    void set_knowledge_decay(uint32_t max_idle_days,
-                             double survival_chance) override;
-    void apply_config(const MemoryConfig& cfg) override;
-
 private:
     void load();
     void save();
@@ -54,20 +44,8 @@ private:
     void remove_links_to(const std::vector<std::string>& dead_keys);
     double score_entry(const MemoryEntry& entry, const std::vector<std::string>& tokens) const;
 
-    std::string path_;
     std::vector<MemoryEntry> entries_;
     std::unordered_map<std::string, size_t> key_index_; // key -> entries_ index
-    mutable std::mutex mutex_;
-
-    // Embedding support
-    Embedder* embedder_ = nullptr;
-    double text_weight_ = 0.4;
-    double vector_weight_ = 0.6;
-    uint32_t recency_half_life_ = 0;
-    uint32_t knowledge_max_idle_days_ = 0;
-    double knowledge_survival_chance_ = 0.05;
-    std::mt19937 rng_{std::random_device{}()};
-    std::uniform_real_distribution<double> dist_{0.0, 1.0};
     std::unordered_map<std::string, Embedding> embeddings_; // key -> embedding
 };
 

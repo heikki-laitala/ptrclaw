@@ -51,7 +51,8 @@ struct StmtGuard {
     ~StmtGuard() { if (stmt) sqlite3_finalize(stmt); }
 };
 
-SqliteMemory::SqliteMemory(const std::string& path) : path_(path) {
+SqliteMemory::SqliteMemory(const std::string& path) {
+    path_ = path;
     // Ensure parent directory exists
     auto parent = std::filesystem::path(path_).parent_path();
     if (!parent.empty()) {
@@ -207,26 +208,6 @@ void SqliteMemory::populate_links(MemoryEntry& entry) {
     }
 }
 
-void SqliteMemory::set_embedder(Embedder* embedder, double text_weight,
-                                 double vector_weight) {
-    embedder_ = embedder;
-    text_weight_ = text_weight;
-    vector_weight_ = vector_weight;
-}
-
-void SqliteMemory::set_recency_decay(uint32_t half_life_seconds) {
-    recency_half_life_ = half_life_seconds;
-}
-
-void SqliteMemory::set_knowledge_decay(uint32_t max_idle_days, double survival_chance) {
-    knowledge_max_idle_days_ = max_idle_days;
-    knowledge_survival_chance_ = survival_chance;
-}
-
-void SqliteMemory::apply_config(const MemoryConfig& cfg) {
-    set_recency_decay(cfg.recency_half_life);
-    set_knowledge_decay(cfg.knowledge_max_idle_days, cfg.knowledge_survival_chance);
-}
 
 void SqliteMemory::touch_last_accessed(const std::vector<MemoryEntry>& entries) {
     if (entries.empty()) return;
