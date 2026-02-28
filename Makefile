@@ -37,7 +37,7 @@ ifeq ($(shell uname),Darwin)
 	brew install meson llvm gcovr sqlite3
 else
 	sudo apt-get update
-	sudo apt-get install -y g++ clang meson ninja-build libssl-dev libsqlite3-dev clang-tidy lld gcovr
+	sudo apt-get install -y g++ clang meson ninja-build pkg-config libssl-dev libmbedtls-dev libsqlite3-dev clang-tidy lld gcovr
 endif
 
 setup:
