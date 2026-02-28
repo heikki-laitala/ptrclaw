@@ -7,6 +7,7 @@
 #include "http.hpp"
 
 #ifdef PTRCLAW_USE_MBEDTLS
+#include <mbedtls/version.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/ctr_drbg.h>
@@ -192,7 +193,12 @@ struct Connection {
 
             mbedtls_ssl_conf_authmode(&conf_, MBEDTLS_SSL_VERIFY_REQUIRED);
             mbedtls_ssl_conf_rng(&conf_, mbedtls_ctr_drbg_random, &drbg_);
+#if MBEDTLS_VERSION_MAJOR >= 3
             mbedtls_ssl_conf_min_tls_version(&conf_, MBEDTLS_SSL_VERSION_TLS1_2);
+#else
+            mbedtls_ssl_conf_min_version(&conf_, MBEDTLS_SSL_MAJOR_VERSION_3,
+                                          MBEDTLS_SSL_MINOR_VERSION_3);
+#endif
 
             // Load system CA certificates. Try the directory first
             // (/etc/ssl/certs, Debian/Ubuntu), then the bundle file
