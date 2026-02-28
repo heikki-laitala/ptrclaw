@@ -1,11 +1,11 @@
 #include "json_memory.hpp"
+#include "../config.hpp"
 #include "entry_json.hpp"
 #include "../plugin.hpp"
 #include "../util.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <algorithm>
-#include <cstdlib>
 
 static ptrclaw::MemoryRegistrar reg_json("json",
     [](const ptrclaw::Config& config) {
@@ -166,6 +166,11 @@ void JsonMemory::set_recency_decay(uint32_t half_life_seconds) {
 void JsonMemory::set_knowledge_decay(uint32_t max_idle_days, double survival_chance) {
     knowledge_max_idle_days_ = max_idle_days;
     knowledge_survival_chance_ = survival_chance;
+}
+
+void JsonMemory::apply_config(const MemoryConfig& cfg) {
+    set_recency_decay(cfg.recency_half_life);
+    set_knowledge_decay(cfg.knowledge_max_idle_days, cfg.knowledge_survival_chance);
 }
 
 std::string JsonMemory::store(const std::string& key, const std::string& content,
@@ -404,7 +409,7 @@ uint32_t JsonMemory::hygiene_purge(uint32_t max_age_seconds) {
             uint64_t access_time = (it->last_accessed > 0) ? it->last_accessed : it->timestamp;
             if (access_time <= knowledge_cutoff) {
                 // Roll random survival chance
-                double roll = static_cast<double>(std::rand()) / RAND_MAX; // NOLINT
+                double roll = dist_(rng_);
                 if (roll >= knowledge_survival_chance_) {
                     should_erase = true;
                 } else {

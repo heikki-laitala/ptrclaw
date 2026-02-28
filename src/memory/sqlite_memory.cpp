@@ -1,11 +1,11 @@
 #include "sqlite_memory.hpp"
+#include "../config.hpp"
 #include "entry_json.hpp"
 #include "../plugin.hpp"
 #include "../util.hpp"
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
 #include <algorithm>
-#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <stdexcept>
@@ -223,17 +223,31 @@ void SqliteMemory::set_knowledge_decay(uint32_t max_idle_days, double survival_c
     knowledge_survival_chance_ = survival_chance;
 }
 
+void SqliteMemory::apply_config(const MemoryConfig& cfg) {
+    set_recency_decay(cfg.recency_half_life);
+    set_knowledge_decay(cfg.knowledge_max_idle_days, cfg.knowledge_survival_chance);
+}
+
 void SqliteMemory::touch_last_accessed(const std::vector<MemoryEntry>& entries) {
     if (entries.empty()) return;
     auto now = static_cast<int64_t>(epoch_seconds());
-    const char* sql = "UPDATE memories SET last_accessed = ? WHERE key = ?;";
-    for (const auto& entry : entries) {
-        StmtGuard g;
-        if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) continue;
-        sqlite3_bind_int64(g.stmt, 1, now);
-        sqlite3_bind_text(g.stmt, 2, entry.key.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_step(g.stmt);
+
+    // Build single UPDATE with IN (...) clause
+    std::string sql = "UPDATE memories SET last_accessed = ? WHERE key IN (";
+    for (size_t i = 0; i < entries.size(); i++) {
+        if (i > 0) sql += ',';
+        sql += '?';
     }
+    sql += ");";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) return;
+    sqlite3_bind_int64(g.stmt, 1, now);
+    for (size_t i = 0; i < entries.size(); i++) {
+        sqlite3_bind_text(g.stmt, static_cast<int>(i + 2),
+                          entries[i].key.c_str(), -1, SQLITE_TRANSIENT);
+    }
+    sqlite3_step(g.stmt);
 }
 
 std::string SqliteMemory::store(const std::string& key, const std::string& content,
@@ -740,7 +754,7 @@ uint32_t SqliteMemory::hygiene_purge(uint32_t max_age_seconds) {
                 while (sqlite3_step(sg.stmt) == SQLITE_ROW) {
                     if (auto* v = sqlite3_column_text(sg.stmt, 0)) {
                         std::string key = reinterpret_cast<const char*>(v);
-                        double roll = static_cast<double>(std::rand()) / RAND_MAX; // NOLINT
+                        double roll = dist_(rng_);
                         if (roll >= knowledge_survival_chance_) {
                             to_delete.push_back(std::move(key));
                         } else {
