@@ -19,10 +19,7 @@ ToolResult FileEditTool::execute(const std::string& args_json) {
     std::string path = args["path"].get<std::string>();
     std::string old_text = args["old_text"].get<std::string>();
     std::string new_text = args["new_text"].get<std::string>();
-
-    if (path.find("..") != std::string::npos) {
-        return ToolResult{false, "Path must not contain '..'"};
-    }
+    if (auto err = validate_safe_path(path)) return *err;
 
     // Read file
     std::ifstream infile(path);

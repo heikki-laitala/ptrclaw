@@ -15,10 +15,7 @@ ToolResult FileReadTool::execute(const std::string& args_json) {
     if (auto err = require_string(args, "path")) return *err;
 
     std::string path = args["path"].get<std::string>();
-
-    if (path.find("..") != std::string::npos) {
-        return ToolResult{false, "Path must not contain '..'"};
-    }
+    if (auto err = validate_safe_path(path)) return *err;
 
     std::ifstream file(path);
     if (!file.is_open()) {

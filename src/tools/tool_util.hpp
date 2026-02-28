@@ -24,6 +24,14 @@ inline std::optional<ToolResult> require_string(const nlohmann::json& args, cons
     return std::nullopt;
 }
 
+// Reject paths containing ".." to prevent directory traversal.
+inline std::optional<ToolResult> validate_safe_path(const std::string& path) {
+    if (path.find("..") != std::string::npos) {
+        return ToolResult{false, "Path must not contain '..'"};
+    }
+    return std::nullopt;
+}
+
 // Memory tool preamble: check memory enabled + parse JSON.
 class Memory;
 inline std::optional<ToolResult> parse_memory_tool_args(
