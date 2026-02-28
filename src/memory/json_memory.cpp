@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <algorithm>
+#include <cstdlib>
 
 static ptrclaw::MemoryRegistrar reg_json("json",
     [](const ptrclaw::Config& config) {
@@ -162,6 +163,11 @@ void JsonMemory::set_recency_decay(uint32_t half_life_seconds) {
     recency_half_life_ = half_life_seconds;
 }
 
+void JsonMemory::set_knowledge_decay(uint32_t max_idle_days, double survival_chance) {
+    knowledge_max_idle_days_ = max_idle_days;
+    knowledge_survival_chance_ = survival_chance;
+}
+
 std::string JsonMemory::store(const std::string& key, const std::string& content,
                                MemoryCategory category, const std::string& session_id) {
     // Compute embedding OUTSIDE the mutex (HTTP call may be slow)
@@ -178,12 +184,14 @@ std::string JsonMemory::store(const std::string& key, const std::string& content
     }
 
     // Upsert: O(1) lookup via key index
+    auto now = epoch_seconds();
     auto it = key_index_.find(key);
     if (it != key_index_.end()) {
         auto& entry = entries_[it->second];
         entry.content = content;
         entry.category = category;
-        entry.timestamp = epoch_seconds();
+        entry.timestamp = now;
+        entry.last_accessed = now;
         entry.session_id = session_id;
         save();
         return entry.id;
@@ -195,7 +203,8 @@ std::string JsonMemory::store(const std::string& key, const std::string& content
     entry.key = key;
     entry.content = content;
     entry.category = category;
-    entry.timestamp = epoch_seconds();
+    entry.timestamp = now;
+    entry.last_accessed = now;
     entry.session_id = session_id;
     key_index_[key] = entries_.size();
     entries_.push_back(std::move(entry));
@@ -267,11 +276,17 @@ std::vector<MemoryEntry> JsonMemory::recall(const std::string& query, uint32_t l
                       [](const auto& a, const auto& b) { return a.first > b.first; });
 
     std::vector<MemoryEntry> result;
+    auto now_ts = epoch_seconds();
+    bool touched = false;
     for (size_t i = 0; i < k; i++) {
-        MemoryEntry entry = entries_[scored[i].second];
+        auto idx = scored[i].second;
+        entries_[idx].last_accessed = now_ts;
+        touched = true;
+        MemoryEntry entry = entries_[idx];
         entry.score = scored[i].first;
         result.push_back(std::move(entry));
     }
+    if (touched) save();
     return result;
 }
 
@@ -364,14 +379,43 @@ uint32_t JsonMemory::snapshot_import(const std::string& json_str) {
 uint32_t JsonMemory::hygiene_purge(uint32_t max_age_seconds) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    uint64_t cutoff = epoch_seconds() - max_age_seconds;
+    uint64_t now = epoch_seconds();
+    uint64_t conv_cutoff = now - max_age_seconds;
     uint32_t purged = 0;
+
+    // Knowledge decay cutoff (days -> seconds)
+    uint64_t knowledge_cutoff = 0;
+    if (knowledge_max_idle_days_ > 0) {
+        knowledge_cutoff = now - static_cast<uint64_t>(knowledge_max_idle_days_) * 86400;
+    }
 
     // Collect keys being purged
     std::vector<std::string> purged_keys;
+    bool survivors_refreshed = false;
     auto it = entries_.begin();
     while (it != entries_.end()) {
-        if (it->category == MemoryCategory::Conversation && it->timestamp <= cutoff) {
+        bool should_erase = false;
+
+        if (it->category == MemoryCategory::Conversation && it->timestamp <= conv_cutoff) {
+            should_erase = true;
+        } else if (knowledge_cutoff > 0 &&
+                   it->category == MemoryCategory::Knowledge) {
+            // Use last_accessed if set, else fall back to timestamp
+            uint64_t access_time = (it->last_accessed > 0) ? it->last_accessed : it->timestamp;
+            if (access_time <= knowledge_cutoff) {
+                // Roll random survival chance
+                double roll = static_cast<double>(std::rand()) / RAND_MAX; // NOLINT
+                if (roll >= knowledge_survival_chance_) {
+                    should_erase = true;
+                } else {
+                    // Survivor — refresh last_accessed
+                    it->last_accessed = now;
+                    survivors_refreshed = true;
+                }
+            }
+        }
+
+        if (should_erase) {
             purged_keys.push_back(it->key);
             embeddings_.erase(it->key);
             it = entries_.erase(it);
@@ -381,9 +425,11 @@ uint32_t JsonMemory::hygiene_purge(uint32_t max_age_seconds) {
         }
     }
 
-    if (!purged_keys.empty()) {
-        remove_links_to(purged_keys);
-        rebuild_index();
+    if (!purged_keys.empty() || survivors_refreshed) {
+        if (!purged_keys.empty()) {
+            remove_links_to(purged_keys);
+            rebuild_index();
+        }
         save();
     }
 

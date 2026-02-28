@@ -54,6 +54,8 @@ struct MemoryConfig {
     bool synthesis = true;
     uint32_t synthesis_interval = 5;    // synthesize every N user messages
     uint32_t recency_half_life = 0;    // 0 = disabled, else seconds for half-life decay
+    uint32_t knowledge_max_idle_days = 30;  // 0 = disabled, else days of inactivity before purge
+    double knowledge_survival_chance = 0.05; // [0.0, 1.0] random survival probability
     EmbeddingConfig embeddings;         // vector search config (disabled by default)
 };
 

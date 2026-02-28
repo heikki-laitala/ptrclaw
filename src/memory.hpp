@@ -18,6 +18,7 @@ struct MemoryEntry {
     std::string content;
     MemoryCategory category = MemoryCategory::Knowledge;
     uint64_t timestamp = 0;
+    uint64_t last_accessed = 0;
     std::string session_id;
     double score = 0.0;
     std::vector<std::string> links;  // keys of bidirectionally linked entries
@@ -82,6 +83,10 @@ public:
     // Set recency decay half-life in seconds (0 = disabled).
     // Scores are multiplied by exp(-ln(2) * age / half_life).
     virtual void set_recency_decay(uint32_t /*half_life_seconds*/) {}
+
+    // Set knowledge decay parameters (0 max_idle_days = disabled).
+    virtual void set_knowledge_decay(uint32_t /*max_idle_days*/,
+                                     double /*survival_chance*/) {}
 };
 
 // Base class for tools that need a Memory* pointer.

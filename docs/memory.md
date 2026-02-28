@@ -43,6 +43,7 @@ struct MemoryEntry {
     std::string content;               // the actual data
     MemoryCategory category;           // Core | Knowledge | Conversation
     uint64_t timestamp;                // epoch seconds
+    uint64_t last_accessed;            // epoch seconds, updated on store/recall
     std::string session_id;            // optional session scoping
     double score;                      // relevance (set during recall)
     std::vector<std::string> links;    // keys of bidirectionally linked entries
@@ -54,7 +55,7 @@ struct MemoryEntry {
 | Category | Purpose | Lifecycle |
 |----------|---------|-----------|
 | `Core` | Identity, personality, soul entries | Permanent. Never auto-purged. |
-| `Knowledge` | Learned facts, atomic notes | Long-lived. Manual deletion only. |
+| `Knowledge` | Learned facts, atomic notes | Subject to knowledge decay (see below). |
 | `Conversation` | Transient operational state | Auto-purged after `hygiene_max_age` (default 7 days). |
 
 ### Interface methods
@@ -69,7 +70,7 @@ struct MemoryEntry {
 | `count(category_filter?)` | Count entries. |
 | `snapshot_export()` | Export all entries as JSON string. |
 | `snapshot_import(json_str)` | Import entries, skip duplicates by key. |
-| `hygiene_purge(max_age_seconds)` | Delete Conversation entries older than cutoff. |
+| `hygiene_purge(max_age_seconds)` | Delete old Conversation entries + idle Knowledge entries (with random survival). |
 | `link(from_key, to_key)` | Bidirectional link between two entries. |
 | `unlink(from_key, to_key)` | Remove bidirectional link. |
 | `neighbors(key, limit)` | Get entries linked to the given key. |
@@ -100,7 +101,9 @@ CREATE TABLE memories (
     content TEXT NOT NULL,
     category TEXT NOT NULL,
     timestamp INTEGER NOT NULL,
-    session_id TEXT NOT NULL
+    session_id TEXT NOT NULL,
+    embedding BLOB,
+    last_accessed INTEGER
 );
 
 CREATE VIRTUAL TABLE memories_fts USING fts5(key, content,
@@ -382,7 +385,9 @@ All memory settings live under the `memory` key in `~/.ptrclaw/config.json`:
         "cache_max_entries": 100,
         "enrich_depth": 1,
         "synthesis": true,
-        "synthesis_interval": 5
+        "synthesis_interval": 5,
+        "knowledge_max_idle_days": 30,
+        "knowledge_survival_chance": 0.05
     }
 }
 ```
@@ -401,6 +406,8 @@ All memory settings live under the `memory` key in `~/.ptrclaw/config.json`:
 | `synthesis` | bool | `true` | Auto-extract atomic notes from conversation. |
 | `synthesis_interval` | uint32 | `5` | Synthesize every N user messages. |
 | `recency_half_life` | uint32 | `0` | Recency decay half-life in seconds. `0` = disabled. See [Recency decay](#recency-decay). |
+| `knowledge_max_idle_days` | uint32 | `30` | Days of inactivity before a Knowledge entry is eligible for purge. `0` = disabled. See [Knowledge decay](#knowledge-decay). |
+| `knowledge_survival_chance` | double | `0.05` | Probability [0.0, 1.0] that an eligible Knowledge entry randomly survives purge. |
 | `embeddings.provider` | string | `""` | Embedding provider: `"openai"`, `"ollama"`, or `""` (disabled). |
 | `embeddings.model` | string | `""` | Model name. Empty uses provider default (`text-embedding-3-small` / `nomic-embed-text`). |
 | `embeddings.base_url` | string | `""` | Override API base URL. Empty uses provider default. |
@@ -451,6 +458,43 @@ Environment variable: `MEMORY_RECENCY_HALF_LIFE`.
 Decay applies **after** hybrid scoring (text + vector), so it multiplies the combined score. This means a semantically relevant old entry can still rank above an irrelevant new one — decay is a tiebreaker, not an override.
 
 Decay applies to both text-only and hybrid search paths in both backends.
+
+## Knowledge decay
+
+Use-it-or-lose-it memory for Knowledge entries. Entries that aren't recalled gradually get purged, mimicking natural memory decay. With a twist: some old memories randomly survive each purge round, just like how humans sometimes remember oddly specific old things.
+
+### How it works
+
+1. Every Knowledge entry has a `last_accessed` timestamp, updated on `store()` and `recall()`.
+2. During `hygiene_purge()`, Knowledge entries idle longer than `knowledge_max_idle_days` are eligible for purge.
+3. Each eligible entry rolls a random survival chance (`knowledge_survival_chance`).
+4. Losers are deleted (along with their links). Survivors get `last_accessed` refreshed to now, so they persist until the next hygiene round.
+5. Core entries are never touched. Conversation entries are purged by their own `hygiene_max_age` rule.
+
+### Backwards compatibility
+
+- `last_accessed` defaults to `0`. When `0`, the decay check falls back to `timestamp`, so pre-existing entries without `last_accessed` still decay based on when they were created/updated.
+- The field is serialized only when non-zero (JSON) or as a nullable column (SQLite), so old files/databases work unchanged.
+
+### Configuration
+
+```json
+{
+    "memory": {
+        "knowledge_max_idle_days": 30,
+        "knowledge_survival_chance": 0.05
+    }
+}
+```
+
+| Value | Effect |
+|-------|--------|
+| `knowledge_max_idle_days: 0` | Disabled (default: 30). No Knowledge decay. |
+| `knowledge_max_idle_days: 7` | Aggressive — unused Knowledge purged after 1 week. |
+| `knowledge_max_idle_days: 90` | Gentle — 3 months of inactivity before purge eligibility. |
+| `knowledge_survival_chance: 0.0` | No random survival. All idle entries are purged deterministically. |
+| `knowledge_survival_chance: 0.05` | 5% chance (default). ~1 in 20 idle entries survives each round. |
+| `knowledge_survival_chance: 1.0` | All entries survive (effectively disables decay). |
 
 ## Embedding / vector search
 
