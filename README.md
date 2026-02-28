@@ -23,7 +23,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Interactive REPL** with slash commands (`/status`, `/model`, `/models`, `/provider`, `/clear`, `/memory`, `/auth`, `/onboard`, `/hatch`, `/help`, `/quit`; `/soul` available in `--dev` mode)
 - **Single-message mode** — pipe a question in and get an answer back
 - **Automatic history compaction** when token usage approaches the context limit
-- **Persistent memory** — knowledge graph with bidirectional links, three-space semantics (core/knowledge/conversation), graph-aware context enrichment, automatic conversation synthesis
+- **Persistent memory** — knowledge graph with bidirectional links, hybrid search (text + vector + recency decay), knowledge decay with idle fade, three-space semantics (core/knowledge/conversation), graph-aware context enrichment, automatic conversation synthesis
 - **Provider failover** — `reliable` provider wraps multiple backends with automatic fallback
 - **Cron scheduling** — the agent can schedule recurring tasks via system crontab and send results back via `--notify`
 - **Multi-session management** with idle eviction
@@ -108,7 +108,15 @@ Create `~/.ptrclaw/config.json`:
     "path": "~/.ptrclaw/memory.db",
     "enrich_depth": 1,
     "synthesis": true,
-    "synthesis_interval": 5
+    "synthesis_interval": 5,
+    "recency_half_life": 86400,
+    "knowledge_max_idle_days": 30,
+    "knowledge_survival_chance": 0.05,
+    "embeddings": {
+      "provider": "openai",
+      "model": "text-embedding-3-small",
+      "api_key": ""
+    }
   },
   "channels": {
     "telegram": {
@@ -261,6 +269,40 @@ Optional hardening:
 WhatsApp is not included in the default build — enable it with `-Dwith_whatsapp=true`. It requires Meta Cloud API credentials and a webhook server behind a reverse proxy.
 
 See [`docs/whatsapp.md`](docs/whatsapp.md) for credentials setup and [`docs/reverse-proxy.md`](docs/reverse-proxy.md) for proxy configuration.
+
+### Memory
+
+PtrClaw has a persistent memory system with two backends: **JSON file** (zero dependencies, default) and **SQLite+FTS5** (better for large stores). Both support the same features.
+
+**Three memory categories:**
+
+| Category | Purpose | Lifecycle |
+| --- | --- | --- |
+| Core | Identity, personality, user preferences | Permanent — never decayed or purged |
+| Knowledge | Facts, learned information | Decays if unused (configurable) |
+| Conversation | Chat context, summaries | Purged after `hygiene_max_age` |
+
+**Hybrid search** — recall combines text matching (BM25/token overlap) with vector similarity (cosine) and recency decay. When embeddings are configured, both signals are weighted; when not, text-only search is used.
+
+**Knowledge decay** — Knowledge entries that aren't recalled gradually fade and are eventually purged:
+- Entries idle beyond `knowledge_max_idle_days` become eligible for purge during hygiene
+- Each eligible entry gets a random survival roll (`knowledge_survival_chance`, default 5%)
+- Survivors get their access timestamp refreshed for another full window
+- In the second half of the idle window, entries receive a linearly decreasing recall score (idle fade)
+- Set `knowledge_max_idle_days` to `0` to keep Knowledge entries permanently
+
+**Embeddings** — configure under `memory.embeddings` to enable vector search. Supports OpenAI and Ollama embedding providers. If no `api_key` is set, PtrClaw auto-detects from the OpenAI provider config.
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `memory.backend` | `"json"` | `"json"`, `"sqlite"`, or `"none"` |
+| `memory.recency_half_life` | `86400` | Recency decay half-life in seconds (0 = disabled) |
+| `memory.knowledge_max_idle_days` | `30` | Days before unused Knowledge entries are purge-eligible (0 = keep permanently) |
+| `memory.knowledge_survival_chance` | `0.05` | Probability an idle Knowledge entry survives each purge round |
+| `memory.embeddings.provider` | `""` | Embedding provider (`"openai"`, `"ollama"`) |
+| `memory.embeddings.model` | `"text-embedding-3-small"` | Embedding model name |
+
+For full details on scoring, the knowledge graph, and memory tools, see [`docs/memory.md`](docs/memory.md).
 
 ## Usage
 
