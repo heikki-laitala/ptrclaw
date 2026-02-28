@@ -55,7 +55,6 @@ Open [@BotFather](https://t.me/BotFather) in Telegram, send `/newbot`, and follo
 
 ```sh
 make deps && make build
-export TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."
 ./builddir/ptrclaw
 ```
 
