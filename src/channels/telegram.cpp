@@ -53,10 +53,15 @@ bool TelegramChannel::health_check() {
 
 bool TelegramChannel::set_my_commands() {
     nlohmann::json commands = nlohmann::json::array({
-        {{"command", "start"}, {"description", "Start conversation"}},
-        {{"command", "new"},   {"description", "Clear conversation history"}},
-        {{"command", "hatch"}, {"description", "Create or recreate assistant identity"}},
-        {{"command", "help"},  {"description", "Show help"}},
+        {{"command", "start"},   {"description", "Start conversation"}},
+        {{"command", "new"},     {"description", "Clear conversation history"}},
+        {{"command", "status"},  {"description", "Show current status"}},
+        {{"command", "model"},   {"description", "Switch model"}},
+        {{"command", "models"},  {"description", "List configured providers"}},
+        {{"command", "memory"},  {"description", "Show memory status"}},
+        {{"command", "auth"},    {"description", "Manage provider credentials"}},
+        {{"command", "hatch"},   {"description", "Create or recreate assistant identity"}},
+        {{"command", "help"},    {"description", "Show available commands"}},
     });
     if (config_.dev) {
         commands.push_back({{"command", "soul"}, {"description", "Show current identity"}});
