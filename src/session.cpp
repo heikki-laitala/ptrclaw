@@ -186,6 +186,89 @@ void SessionManager::subscribe_events() {
                 return;
             }
 
+            // Handle /status command
+            if (ev.message.content == "/status") {
+                std::string result = "Provider: " + agent.provider_name() + "\n"
+                    + "Model: " + agent.model() + "\n"
+                    + "History: " + std::to_string(agent.history_size()) + " messages\n"
+                    + "Estimated tokens: " + std::to_string(agent.estimated_tokens()) + "\n";
+                send_reply(result);
+                return;
+            }
+
+            // Handle /model command
+            if (ev.message.content.rfind("/model ", 0) == 0) {
+                std::string new_model = trim(ev.message.content.substr(7));
+                // Re-create provider if switching between OAuth and API-key mode
+                if (agent.provider_name() == "openai") {
+                    auto oai_it = config_.providers.find("openai");
+                    bool on_oauth = oai_it != config_.providers.end() &&
+                                    oai_it->second.use_oauth;
+                    bool want_oauth = new_model.find("codex") != std::string::npos &&
+                                      oai_it != config_.providers.end() &&
+                                      !oai_it->second.oauth_access_token.empty();
+                    if (on_oauth != want_oauth) {
+                        auto sr = switch_provider("openai", new_model, agent.model(),
+                                                   config_, http_);
+                        if (!sr.error.empty()) {
+                            send_reply(sr.error);
+                        } else {
+                            setup_oauth_refresh(sr.provider.get(), config_);
+                            agent.set_provider(std::move(sr.provider));
+                            if (!sr.model.empty()) agent.set_model(sr.model);
+                            config_.model = agent.model();
+                            config_.persist_selection();
+                            send_reply("Model set to: " + agent.model());
+                        }
+                        return;
+                    }
+                }
+                agent.set_model(new_model);
+                config_.model = new_model;
+                config_.persist_selection();
+                send_reply("Model set to: " + new_model);
+                return;
+            }
+
+            // Handle /memory command
+            if (ev.message.content == "/memory") {
+                auto* mem = agent.memory();
+                if (!mem || mem->backend_name() == "none") {
+                    send_reply("Memory: disabled");
+                } else {
+                    std::string result = "Memory backend: "
+                        + std::string(mem->backend_name()) + "\n"
+                        + "  Core:         "
+                        + std::to_string(mem->count(MemoryCategory::Core)) + " entries\n"
+                        + "  Knowledge:    "
+                        + std::to_string(mem->count(MemoryCategory::Knowledge)) + " entries\n"
+                        + "  Conversation: "
+                        + std::to_string(mem->count(MemoryCategory::Conversation)) + " entries\n"
+                        + "  Total:        "
+                        + std::to_string(mem->count(std::nullopt)) + " entries\n";
+                    send_reply(result);
+                }
+                return;
+            }
+
+            // Handle /help command
+            if (ev.message.content == "/help") {
+                std::string help = "Commands:\n"
+                    "  /new             Clear conversation history\n"
+                    "  /status          Show current status\n"
+                    "  /model X         Switch to model X\n"
+                    "  /models          List configured providers\n"
+                    "  /provider X [M]  Switch to provider X, optional model M\n"
+                    "  /memory          Show memory status\n"
+                    "  /auth            Show auth status for all providers\n"
+                    "  /auth <prov> <key>  Set API key\n"
+                    "  /auth openai start  Begin OAuth flow\n"
+                    "  /hatch           Create or re-create assistant identity\n"
+                    "  /help            Show this help\n";
+                send_reply(help);
+                return;
+            }
+
             // Handle /models command
             if (ev.message.content == "/models") {
                 std::string auth_mode = auth_mode_label(
