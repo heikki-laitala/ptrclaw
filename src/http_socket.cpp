@@ -11,6 +11,7 @@
 #include <mbedtls/entropy.h>
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/error.h>
+#include <mbedtls/net_sockets.h>
 #include <mbedtls/x509_crt.h>
 #else
 #include <openssl/ssl.h>
@@ -193,8 +194,13 @@ struct Connection {
             mbedtls_ssl_conf_rng(&conf_, mbedtls_ctr_drbg_random, &drbg_);
             mbedtls_ssl_conf_min_tls_version(&conf_, MBEDTLS_SSL_VERSION_TLS1_2);
 
-            // Load system CA certificates.
-            mbedtls_x509_crt_parse_path(&cacert_, "/etc/ssl/certs");
+            // Load system CA certificates. Try the directory first
+            // (/etc/ssl/certs, Debian/Ubuntu), then the bundle file
+            // (/etc/ssl/cert.pem, Alpine/RHEL). Fail fast if neither works.
+            int ca_ret = mbedtls_x509_crt_parse_path(&cacert_, "/etc/ssl/certs");
+            if (ca_ret < 0)
+                ca_ret = mbedtls_x509_crt_parse_file(&cacert_, "/etc/ssl/cert.pem");
+            if (ca_ret < 0) return false;
             mbedtls_ssl_conf_ca_chain(&conf_, &cacert_, nullptr);
 
             if (mbedtls_ssl_setup(&ssl_, &conf_) != 0) return false;
