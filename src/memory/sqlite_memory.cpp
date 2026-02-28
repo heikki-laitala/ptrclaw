@@ -250,6 +250,69 @@ void SqliteMemory::touch_last_accessed(const std::vector<MemoryEntry>& entries) 
     sqlite3_step(g.stmt);
 }
 
+void SqliteMemory::apply_idle_fade(std::vector<MemoryEntry>& entries) {
+    if (knowledge_max_idle_days_ == 0 || entries.empty()) return;
+
+    // Collect Knowledge entry keys
+    std::vector<size_t> knowledge_indices;
+    for (size_t i = 0; i < entries.size(); i++) {
+        if (entries[i].category == MemoryCategory::Knowledge) {
+            knowledge_indices.push_back(i);
+        }
+    }
+    if (knowledge_indices.empty()) return;
+
+    // Batch-fetch last_accessed for Knowledge entries
+    std::string sql = "SELECT key, COALESCE(NULLIF(last_accessed, 0), timestamp)"
+                      " FROM memories WHERE key IN (";
+    for (size_t i = 0; i < knowledge_indices.size(); i++) {
+        if (i > 0) sql += ',';
+        sql += '?';
+    }
+    sql += ");";
+
+    std::unordered_map<std::string, uint64_t> access_times;
+    {
+        StmtGuard sg;
+        if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &sg.stmt, nullptr) == SQLITE_OK) {
+            for (size_t i = 0; i < knowledge_indices.size(); i++) {
+                sqlite3_bind_text(sg.stmt, static_cast<int>(i + 1),
+                                  entries[knowledge_indices[i]].key.c_str(),
+                                  -1, SQLITE_TRANSIENT);
+            }
+            while (sqlite3_step(sg.stmt) == SQLITE_ROW) {
+                if (auto* v = sqlite3_column_text(sg.stmt, 0)) {
+                    std::string key = reinterpret_cast<const char*>(v);
+                    auto ts = static_cast<uint64_t>(sqlite3_column_int64(sg.stmt, 1));
+                    access_times[key] = ts;
+                }
+            }
+        }
+    }
+
+    // Apply idle fade multiplier
+    uint64_t now = epoch_seconds();
+    auto max_idle = static_cast<uint64_t>(knowledge_max_idle_days_) * 86400;
+    bool needs_resort = false;
+    for (size_t idx : knowledge_indices) {
+        auto it = access_times.find(entries[idx].key);
+        if (it == access_times.end()) continue;
+        uint64_t idle = (now > it->second) ? now - it->second : 0;
+        double fade = idle_fade(idle, max_idle);
+        if (fade < 1.0) {
+            entries[idx].score *= fade;
+            needs_resort = true;
+        }
+    }
+
+    if (needs_resort) {
+        std::sort(entries.begin(), entries.end(),
+                  [](const MemoryEntry& a, const MemoryEntry& b) {
+                      return a.score > b.score;
+                  });
+    }
+}
+
 std::string SqliteMemory::store(const std::string& key, const std::string& content,
                                  MemoryCategory category, const std::string& session_id) {
     // Compute embedding OUTSIDE the mutex (HTTP call may be slow)
@@ -397,7 +460,8 @@ std::vector<MemoryEntry> SqliteMemory::recall(const std::string& query, uint32_t
                       });
         }
 
-        // Touch last_accessed for returned entries
+        // Apply idle fade and touch last_accessed
+        apply_idle_fade(results);
         touch_last_accessed(results);
 
         for (auto& entry : results) {
@@ -511,7 +575,8 @@ std::vector<MemoryEntry> SqliteMemory::recall(const std::string& query, uint32_t
         results.push_back(std::move(scored[i].entry));
     }
 
-    // Touch last_accessed for returned entries
+    // Apply idle fade and touch last_accessed
+    apply_idle_fade(results);
     touch_last_accessed(results);
 
     return results;

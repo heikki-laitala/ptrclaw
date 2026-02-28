@@ -74,6 +74,22 @@ inline double recency_decay(uint64_t age_seconds, uint32_t half_life_seconds) {
                            / static_cast<double>(half_life_seconds));
 }
 
+// Idle fade multiplier for knowledge decay.
+// Returns 1.0 when entry is fresh, fades linearly to 0.0 as it approaches
+// the idle deadline.  Fade kicks in at the halfway point of the idle window.
+//   idle_seconds < max/2  → 1.0
+//   idle_seconds = max/2  → 1.0
+//   idle_seconds = max    → 0.0
+// Returns 1.0 when max_idle_seconds is 0 (decay disabled).
+inline double idle_fade(uint64_t idle_seconds, uint64_t max_idle_seconds) {
+    if (max_idle_seconds == 0) return 1.0;
+    if (idle_seconds >= max_idle_seconds) return 0.0;
+    uint64_t fade_start = max_idle_seconds / 2;
+    if (idle_seconds <= fade_start) return 1.0;
+    return static_cast<double>(max_idle_seconds - idle_seconds)
+         / static_cast<double>(max_idle_seconds - fade_start);
+}
+
 // Create an embedder from config. Returns nullptr if embeddings are disabled
 // or the configured provider is not recognized.
 std::unique_ptr<Embedder> create_embedder(const Config& config, HttpClient& http);

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "memory/json_memory.hpp"
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -528,6 +529,78 @@ TEST_CASE("JsonMemory: last_accessed 0 falls back to timestamp for decay", "[jso
     uint32_t purged = mem.hygiene_purge(999999999);
     REQUIRE(purged == 1);
     REQUIRE_FALSE(mem.get("legacy").has_value());
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("JsonMemory: idle fade penalizes Knowledge entries nearing deadline", "[json_memory]") {
+    std::string path = test_path() + "_idle_fade";
+
+    // Create two Knowledge entries with the same content but different idle times.
+    // "fresh" was accessed recently (last_accessed = very large / near-now).
+    // "stale" was accessed long ago (last_accessed = now - 25 days, with 30-day max).
+    // 25 days is past the halfway fade point (15 days), so stale should score lower.
+    uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+    uint64_t stale_access = now - 25 * 86400;  // 25 days ago
+    std::string json = R"([
+        {"id":"1","key":"fresh-fact","content":"matching data","category":"knowledge","timestamp":1000000,"session_id":"","last_accessed":)" +
+        std::to_string(now) + R"(},
+        {"id":"2","key":"stale-fact","content":"matching data","category":"knowledge","timestamp":1000000,"session_id":"","last_accessed":)" +
+        std::to_string(stale_access) + R"(}
+    ])";
+    std::ofstream out(path);
+    out << json;
+    out.close();
+
+    JsonMemory mem(path);
+    mem.set_knowledge_decay(30, 0.05);
+
+    auto results = mem.recall("matching data", 10, std::nullopt);
+    REQUIRE(results.size() == 2);
+
+    // Both match equally on text, but stale-fact should have a lower score
+    double fresh_score = 0.0;
+    double stale_score = 0.0;
+    for (const auto& r : results) {
+        if (r.key == "fresh-fact") fresh_score = r.score;
+        if (r.key == "stale-fact") stale_score = r.score;
+    }
+    REQUIRE(fresh_score > stale_score);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("JsonMemory: idle fade does not affect Core entries", "[json_memory]") {
+    std::string path = test_path() + "_idle_fade_core";
+
+    uint64_t old_ts = 1000000;
+    std::string json = R"([
+        {"id":"1","key":"soul:identity","content":"matching identity","category":"core","timestamp":)" +
+        std::to_string(old_ts) + R"(,"session_id":"","last_accessed":)" +
+        std::to_string(old_ts) + R"(},
+        {"id":"2","key":"knowledge-fact","content":"matching knowledge","category":"knowledge","timestamp":)" +
+        std::to_string(old_ts) + R"(,"session_id":"","last_accessed":)" +
+        std::to_string(old_ts) + R"(}
+    ])";
+    std::ofstream out(path);
+    out << json;
+    out.close();
+
+    JsonMemory mem(path);
+    mem.set_knowledge_decay(1, 0.0);
+
+    auto results = mem.recall("matching", 10, std::nullopt);
+    REQUIRE(results.size() >= 1);
+
+    // Core entry should not be penalized; knowledge entry should be
+    double core_score = 0.0;
+    double knowledge_score = 0.0;
+    for (const auto& r : results) {
+        if (r.key == "soul:identity") core_score = r.score;
+        if (r.key == "knowledge-fact") knowledge_score = r.score;
+    }
+    // Core should have higher score since knowledge-fact is idle and faded
+    REQUIRE(core_score > knowledge_score);
 
     std::filesystem::remove(path);
 }

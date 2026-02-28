@@ -270,6 +270,14 @@ std::vector<MemoryEntry> JsonMemory::recall(const std::string& query, uint32_t l
             uint64_t age = (now > entries_[i].timestamp) ? now - entries_[i].timestamp : 0;
             combined *= recency_decay(age, recency_half_life_);
         }
+        if (knowledge_max_idle_days_ > 0 &&
+            entries_[i].category == MemoryCategory::Knowledge) {
+            uint64_t access_time = (entries_[i].last_accessed > 0)
+                ? entries_[i].last_accessed : entries_[i].timestamp;
+            uint64_t idle = (now > access_time) ? now - access_time : 0;
+            combined *= idle_fade(idle,
+                static_cast<uint64_t>(knowledge_max_idle_days_) * 86400);
+        }
         if (combined > 0.0) {
             scored.emplace_back(combined, i);
         }
