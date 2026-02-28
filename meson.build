@@ -93,7 +93,6 @@ core_sources = files(
   'src/event_bus.cpp', 'src/oauth.cpp', 'src/onboard.cpp', 'src/plugin.cpp',
   'src/prompt.cpp', 'src/provider.cpp', 'src/session.cpp',
   'src/stream_relay.cpp', 'src/tool.cpp', 'src/util.cpp',
-  'src/providers/reliable.cpp',
 ) + http_impl_source
 
 # ── Optional sources (gated by feature flags) ──────────────────
@@ -185,7 +184,6 @@ core_test_sources = files(
   'tests/test_dispatcher.cpp',
   'tests/test_config.cpp',
   'tests/test_agent.cpp',
-  'tests/test_reliable.cpp',
   'tests/test_prompt.cpp',
   'tests/test_provider.cpp',
   'tests/test_session.cpp',
