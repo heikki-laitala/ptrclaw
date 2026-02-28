@@ -53,6 +53,8 @@ The best personal setup uses **OpenAI codex models** through your ChatGPT subscr
 2. Choose a display name and a username (must end with `bot`, e.g. `ptrclaw_helper_bot`).
 3. Copy the bot token BotFather gives you (format: `123456:ABC-DEF...`). You'll need this during the setup wizard.
 
+Optional hardening: run `/setprivacy` in BotFather — **enable** privacy mode for group chats where you only want commands/mentions, **disable** it if your bot needs to read all group messages.
+
 **2. Build and run the setup wizard:**
 
 ```sh
