@@ -70,7 +70,7 @@ brew install meson llvm gcovr sqlite3
 ### Linux (Debian/Ubuntu)
 
 ```sh
-sudo apt-get install g++ clang meson ninja-build libssl-dev libsqlite3-dev clang-tidy lld gcovr
+sudo apt-get install g++ clang meson ninja-build pkg-config libssl-dev libmbedtls-dev libsqlite3-dev clang-tidy lld gcovr
 ```
 
 Linux builds use `clang++` with the `lld` linker (required for LTO) via `meson-native-linux.ini`. If `clang++` is not available, the build falls back to the default system compiler.
