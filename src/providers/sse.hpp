@@ -23,6 +23,8 @@ public:
 
 private:
     std::string buffer_;
+    std::string current_event_;
+    std::string current_data_;
 };
 
 } // namespace ptrclaw
