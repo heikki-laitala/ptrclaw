@@ -388,11 +388,13 @@ std::string SqliteMemory::store(const std::string& key, const std::string& conte
 static Embedding read_embedding_blob(sqlite3_stmt* stmt, int col) {
     const void* blob = sqlite3_column_blob(stmt, col);
     int bytes = sqlite3_column_bytes(stmt, col);
-    if (!blob || bytes <= 0) return {};
+    if (!blob || bytes <= 0 ||
+        (bytes % static_cast<int>(sizeof(float)) != 0))
+        return {};
 
     size_t count = static_cast<size_t>(bytes) / sizeof(float);
     Embedding emb(count);
-    std::memcpy(emb.data(), blob, static_cast<size_t>(bytes));
+    std::memcpy(emb.data(), blob, count * sizeof(float));
     return emb;
 }
 
