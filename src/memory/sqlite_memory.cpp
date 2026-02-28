@@ -832,36 +832,60 @@ uint32_t SqliteMemory::hygiene_purge(uint32_t max_age_seconds) {
             }
         }
 
-        // Delete losers (and their links)
-        for (const auto& key : to_delete) {
+        // Batch-delete losers and their links
+        if (!to_delete.empty()) {
+            std::string placeholders;
+            for (size_t i = 0; i < to_delete.size(); i++) {
+                if (i > 0) placeholders += ',';
+                placeholders += '?';
+            }
+
+            // Delete links referencing any deleted key
             {
                 StmtGuard lg;
-                const char* link_sql =
-                    "DELETE FROM memory_links WHERE from_key = ? OR to_key = ?;";
-                if (sqlite3_prepare_v2(db_, link_sql, -1, &lg.stmt, nullptr) == SQLITE_OK) {
-                    sqlite3_bind_text(lg.stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
-                    sqlite3_bind_text(lg.stmt, 2, key.c_str(), -1, SQLITE_TRANSIENT);
+                std::string link_sql = "DELETE FROM memory_links WHERE from_key IN ("
+                    + placeholders + ") OR to_key IN (" + placeholders + ");";
+                if (sqlite3_prepare_v2(db_, link_sql.c_str(), -1, &lg.stmt, nullptr) == SQLITE_OK) {
+                    auto n = static_cast<int>(to_delete.size());
+                    for (int i = 0; i < n; i++) {
+                        sqlite3_bind_text(lg.stmt, i + 1, to_delete[i].c_str(), -1, SQLITE_TRANSIENT);
+                        sqlite3_bind_text(lg.stmt, n + i + 1, to_delete[i].c_str(), -1, SQLITE_TRANSIENT);
+                    }
                     sqlite3_step(lg.stmt);
                 }
             }
+
+            // Delete the entries themselves
             {
                 StmtGuard dg;
-                const char* del_sql = "DELETE FROM memories WHERE key = ?;";
-                if (sqlite3_prepare_v2(db_, del_sql, -1, &dg.stmt, nullptr) == SQLITE_OK) {
-                    sqlite3_bind_text(dg.stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+                std::string del_sql = "DELETE FROM memories WHERE key IN (" + placeholders + ");";
+                if (sqlite3_prepare_v2(db_, del_sql.c_str(), -1, &dg.stmt, nullptr) == SQLITE_OK) {
+                    for (size_t i = 0; i < to_delete.size(); i++) {
+                        sqlite3_bind_text(dg.stmt, static_cast<int>(i + 1),
+                                          to_delete[i].c_str(), -1, SQLITE_TRANSIENT);
+                    }
                     sqlite3_step(dg.stmt);
                     total_purged += static_cast<uint32_t>(sqlite3_changes(db_));
                 }
             }
         }
 
-        // Refresh survivors' last_accessed
-        for (const auto& key : survivors) {
+        // Batch-refresh survivors' last_accessed
+        if (!survivors.empty()) {
+            std::string placeholders;
+            for (size_t i = 0; i < survivors.size(); i++) {
+                if (i > 0) placeholders += ',';
+                placeholders += '?';
+            }
             StmtGuard ug;
-            const char* upd_sql = "UPDATE memories SET last_accessed = ? WHERE key = ?;";
-            if (sqlite3_prepare_v2(db_, upd_sql, -1, &ug.stmt, nullptr) == SQLITE_OK) {
+            std::string upd_sql = "UPDATE memories SET last_accessed = ? WHERE key IN ("
+                + placeholders + ");";
+            if (sqlite3_prepare_v2(db_, upd_sql.c_str(), -1, &ug.stmt, nullptr) == SQLITE_OK) {
                 sqlite3_bind_int64(ug.stmt, 1, now);
-                sqlite3_bind_text(ug.stmt, 2, key.c_str(), -1, SQLITE_TRANSIENT);
+                for (size_t i = 0; i < survivors.size(); i++) {
+                    sqlite3_bind_text(ug.stmt, static_cast<int>(i + 2),
+                                      survivors[i].c_str(), -1, SQLITE_TRANSIENT);
+                }
                 sqlite3_step(ug.stmt);
             }
         }
