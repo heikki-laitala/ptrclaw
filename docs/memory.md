@@ -500,7 +500,7 @@ The fade only affects Knowledge entries — Core and Conversation entries are un
 
 | Value | Effect |
 |-------|--------|
-| `knowledge_max_idle_days: 0` | Disabled (default: 30). No Knowledge decay. |
+| `knowledge_max_idle_days: 0` | Knowledge entries are kept permanently — no idle fade or purge. |
 | `knowledge_max_idle_days: 7` | Aggressive — unused Knowledge purged after 1 week. |
 | `knowledge_max_idle_days: 90` | Gentle — 3 months of inactivity before purge eligibility. |
 | `knowledge_survival_chance: 0.0` | No random survival. All idle entries are purged deterministically. |
