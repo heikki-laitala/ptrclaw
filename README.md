@@ -47,16 +47,21 @@ You can re-run the wizard at any time with `/onboard`, or set credentials indivi
 
 The best personal setup uses **OpenAI codex models** through your ChatGPT subscription (Plus/Pro/Team) and **Telegram** as the messaging channel. Codex models are included in your subscription — no per-token API billing. Add an **OpenAI API key** for embedding-powered memory search, and you get a capable assistant accessible from any device.
 
-**1. Build and run the setup wizard:**
+**1. Create a Telegram bot:**
+
+Open [@BotFather](https://t.me/BotFather) in Telegram, send `/newbot`, and follow the prompts. Copy the bot token (format: `123456:ABC-DEF...`). You'll need this during the setup wizard.
+
+**2. Build and run the setup wizard:**
 
 ```sh
 make deps && make build
+export TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."
 ./builddir/ptrclaw
 ```
 
-On first run, choose OpenAI as your provider, then select "OAuth login" when prompted. This opens your browser to authorize with your ChatGPT account.
+On first run, the wizard walks you through provider setup — choose OpenAI, then select "OAuth login" when prompted. This opens your browser to authorize with your ChatGPT account. The wizard also detects the Telegram token and offers to configure the channel.
 
-**2. Add an API key for embeddings:**
+**3. Add an API key for embeddings:**
 
 Codex models are covered by your subscription, but memory vector search needs an OpenAI API key (minimal cost — embedding calls are cheap). Run `/auth openai` again and add your API key, or set it in config:
 
@@ -78,16 +83,13 @@ Codex models are covered by your subscription, but memory vector search needs an
 
 PtrClaw uses OAuth for codex model calls and the API key for embeddings — both coexist.
 
-**3. Set up Telegram:**
-
-Create a bot via [@BotFather](https://t.me/BotFather), then run:
+**4. Start the Telegram bot:**
 
 ```sh
-export TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."
 ./builddir/ptrclaw --channel telegram
 ```
 
-**4. Deploy to a server:**
+**5. Deploy to a server:**
 
 ```sh
 make build-static   # ~2.7 MB self-contained binary
