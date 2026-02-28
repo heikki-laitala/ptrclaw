@@ -351,7 +351,7 @@ make coverage       # generate HTML coverage report
 make clean          # remove build artifacts
 ```
 
-Distribution builds (`build-static`, `build-minimal`) compile only the main binary with size optimizations. On Linux: `-ffunction-sections`, `-fdata-sections`, `-fvisibility=hidden`, `--gc-sections`, `--strip-all`, plus `strip --strip-unneeded`. On macOS: `strip -x` (Apple's linker handles dead stripping with LTO).
+Distribution builds (`build-static`, `build-minimal`) compile only the main binary with size optimizations. On Linux: `-ffunction-sections`, `-fdata-sections`, `-fvisibility=hidden`, `--gc-sections`, `--icf=all` (identical code folding), `--strip-all`, plus `strip --strip-unneeded`. Static builds on Linux use mbedTLS instead of OpenSSL for a smaller TLS footprint. On macOS: `strip -x` (Apple's linker handles dead stripping with LTO).
 
 ### Feature flags
 
@@ -372,6 +372,7 @@ Every provider, channel, and tool is a compile-time feature flag in `meson_optio
 | `with_sqlite_memory` | SQLite+FTS5 memory backend | `true` |
 | `with_memory_tools` | Memory tools (store, recall, forget, link) | `true` |
 | `with_embeddings` | Embedding/vector search for memory | `true` |
+| `with_mbedtls` | Use mbedTLS instead of OpenSSL (Linux only) | `false` |
 
 Pass `-D` flags to `meson setup`:
 

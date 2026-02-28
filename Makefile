@@ -12,7 +12,7 @@ ifeq ($(shell uname),Darwin)
 else
   CLANG_TIDY_EXTRA :=
   SIZE_FLAGS := -Dcpp_args='-ffunction-sections -fdata-sections -fvisibility=hidden' \
-    -Dcpp_link_args='-Wl,--gc-sections -Wl,--strip-all'
+    -Dcpp_link_args='-Wl,--gc-sections -Wl,--icf=all -Wl,--strip-all'
   STRIP_CMD = strip --strip-unneeded $1
   ifeq ($(shell command -v clang++ >/dev/null 2>&1; echo $$?),0)
     NATIVE_FILE := meson-native-linux.ini
@@ -58,7 +58,7 @@ build-minimal:
 	$(call STRIP_CMD,$(MINDIR)/ptrclaw) 2>/dev/null || true
 
 build-static:
-	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) $(NATIVE_ARGS) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false $(SIZE_FLAGS); fi
+	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) $(NATIVE_ARGS) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false -Dwith_mbedtls=true $(SIZE_FLAGS); fi
 	meson compile -C $(STATICDIR) ptrclaw
 	$(call STRIP_CMD,$(STATICDIR)/ptrclaw) 2>/dev/null || true
 
