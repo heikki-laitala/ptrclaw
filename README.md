@@ -49,7 +49,9 @@ The best personal setup uses **OpenAI codex models** through your ChatGPT subscr
 
 **1. Create a Telegram bot:**
 
-Open [@BotFather](https://t.me/BotFather) in Telegram, send `/newbot`, and follow the prompts. Copy the bot token (format: `123456:ABC-DEF...`). You'll need this during the setup wizard.
+1. Open [@BotFather](https://t.me/BotFather) in Telegram and send `/newbot`.
+2. Choose a display name and a username (must end with `bot`, e.g. `ptrclaw_helper_bot`).
+3. Copy the bot token BotFather gives you (format: `123456:ABC-DEF...`). You'll need this during the setup wizard.
 
 **2. Build and run the setup wizard:**
 
@@ -317,24 +319,9 @@ Provider and model changes are persisted to `~/.ptrclaw/config.json`.
 - OpenAI OAuth tokens are refreshed automatically when they expire (requires `oauth_refresh_token`).
 - The `use_oauth` field in config is managed automatically — you don't need to set it manually.
 
-### How to get a Telegram bot token
+### Telegram bot token
 
-1. Open Telegram and start a chat with [@BotFather](https://t.me/BotFather).
-2. Send `/newbot` and follow the prompts:
-   - Bot display name (can contain spaces)
-   - Bot username (must end with `bot`, e.g. `ptrclaw_helper_bot`)
-3. BotFather returns an HTTP API token in this format:
-   - `123456789:AA...`
-4. Add it to config or env:
-
-```sh
-export TELEGRAM_BOT_TOKEN="123456789:AA..."
-```
-
-Optional hardening:
-- In BotFather, run `/setprivacy` for your bot.
-  - **Enable** privacy mode for group chats where you only want commands/mentions.
-  - **Disable** privacy mode if your bot needs to read all group messages.
+See [Create a Telegram bot](#recommended-setup-personal-use) in the recommended setup for how to get a token from BotFather. You can also set the token via environment variable: `export TELEGRAM_BOT_TOKEN="123456:AA..."`
 
 ### WhatsApp setup
 
