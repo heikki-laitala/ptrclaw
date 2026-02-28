@@ -95,8 +95,7 @@ std::string repair_json(const std::string& json_str) {
 
     // Try to parse; if fails, return original
     try {
-        auto parsed = nlohmann::json::parse(result);
-        (void)parsed;
+        [[maybe_unused]] auto _ = nlohmann::json::parse(result);
         return result;
     } catch (const std::exception&) {
         return json_str;

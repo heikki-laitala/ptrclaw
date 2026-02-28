@@ -89,10 +89,10 @@ endif
 
 # ── Core sources (always compiled) ─────────────────────────────
 core_sources = files(
-  'src/agent.cpp', 'src/channel.cpp', 'src/config.cpp', 'src/dispatcher.cpp',
-  'src/event_bus.cpp', 'src/oauth.cpp', 'src/onboard.cpp', 'src/plugin.cpp',
-  'src/prompt.cpp', 'src/provider.cpp', 'src/session.cpp',
-  'src/stream_relay.cpp', 'src/tool.cpp', 'src/util.cpp',
+  'src/agent.cpp', 'src/channel.cpp', 'src/commands.cpp', 'src/config.cpp',
+  'src/dispatcher.cpp', 'src/event_bus.cpp', 'src/oauth.cpp',
+  'src/onboard.cpp', 'src/plugin.cpp', 'src/prompt.cpp', 'src/provider.cpp',
+  'src/session.cpp', 'src/stream_relay.cpp', 'src/tool.cpp', 'src/util.cpp',
 ) + http_impl_source
 
 # ── Optional sources (gated by feature flags) ──────────────────

@@ -22,8 +22,9 @@ ToolResult MemoryRecallTool::execute(const std::string& args_json) {
     }
 
     std::optional<MemoryCategory> cat_filter;
-    if (args.contains("category") && args["category"].is_string()) {
-        cat_filter = category_from_string(args["category"].get<std::string>());
+    auto cat_str = get_optional_string(args, "category");
+    if (!cat_str.empty()) {
+        cat_filter = category_from_string(cat_str);
     }
 
     uint32_t depth = 0;

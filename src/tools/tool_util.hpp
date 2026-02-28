@@ -40,4 +40,14 @@ inline std::optional<ToolResult> parse_memory_tool_args(
     return parse_tool_json(args_json, out);
 }
 
+// Get an optional string field from JSON, returning a default if missing.
+inline std::string get_optional_string(const nlohmann::json& args,
+                                        const char* field,
+                                        const char* default_value = "") {
+    if (args.contains(field) && args[field].is_string()) {
+        return args[field].get<std::string>();
+    }
+    return default_value;
+}
+
 } // namespace ptrclaw
