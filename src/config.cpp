@@ -56,6 +56,8 @@ nlohmann::json Config::defaults_json() {
             {"synthesis", true},
             {"synthesis_interval", 5},
             {"recency_half_life", 0},
+            {"knowledge_max_idle_days", 30},
+            {"knowledge_survival_chance", 0.05},
             {"embeddings", {
                 {"provider", ""},
                 {"model", ""},
@@ -194,6 +196,10 @@ Config Config::load() {
             cfg.memory.synthesis_interval = m["synthesis_interval"].get<uint32_t>();
         if (m.contains("recency_half_life") && m["recency_half_life"].is_number_unsigned())
             cfg.memory.recency_half_life = m["recency_half_life"].get<uint32_t>();
+        if (m.contains("knowledge_max_idle_days") && m["knowledge_max_idle_days"].is_number_unsigned())
+            cfg.memory.knowledge_max_idle_days = m["knowledge_max_idle_days"].get<uint32_t>();
+        if (m.contains("knowledge_survival_chance") && m["knowledge_survival_chance"].is_number())
+            cfg.memory.knowledge_survival_chance = m["knowledge_survival_chance"].get<double>();
         if (m.contains("embeddings") && m["embeddings"].is_object()) {
             auto& e = m["embeddings"];
             if (e.contains("provider") && e["provider"].is_string())

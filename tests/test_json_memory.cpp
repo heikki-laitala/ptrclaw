@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "memory/json_memory.hpp"
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -398,6 +399,135 @@ TEST_CASE("JsonMemory: persists across instances", "[json_memory]") {
         REQUIRE(entry.has_value());
         REQUIRE(entry.value_or(MemoryEntry{}).content == "data here");
     }
+
+    std::filesystem::remove(path);
+}
+
+// ── Knowledge decay ──────────────────────────────────────────
+
+TEST_CASE("JsonMemory: recall updates last_accessed", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.store("topic", "some knowledge", MemoryCategory::Knowledge, "");
+
+    auto before = f.mem.get("topic");
+    REQUIRE(before.has_value());
+    uint64_t stored_ts = before.value_or(MemoryEntry{}).last_accessed;
+    REQUIRE(stored_ts > 0);
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    f.mem.recall("knowledge", 10, std::nullopt);
+
+    auto after = f.mem.get("topic");
+    REQUIRE(after.has_value());
+    REQUIRE(after.value_or(MemoryEntry{}).last_accessed >= stored_ts);
+}
+
+TEST_CASE("JsonMemory: hygiene purges idle Knowledge entries", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    // survival_chance = 0.0 for deterministic test
+    f.mem.set_knowledge_decay(1, 0.0);  // 1 day idle max
+
+    f.mem.store("old-knowledge", "stale info", MemoryCategory::Knowledge, "");
+    f.mem.store("conv", "chat message", MemoryCategory::Conversation, "");
+
+    // Backdate last_accessed by directly reloading with manipulated data
+    // Instead, wait and use a very short idle period. The store sets last_accessed = now.
+    // We need to make the entry appear old. Let's manipulate via the file.
+    // Simpler: store, then sleep 2s, set decay to 0 days (=disabled) — no, use 1 day.
+    // Actually, let's just write a raw JSON file with old timestamps.
+    {
+        std::string path2 = test_path() + "_decay";
+        // Write a JSON file with an old Knowledge entry
+        uint64_t old_ts = 1000000;  // very old timestamp
+        std::string json = R"([
+            {"id":"1","key":"old-fact","content":"old data","category":"knowledge","timestamp":)" +
+            std::to_string(old_ts) + R"(,"session_id":"","last_accessed":)" +
+            std::to_string(old_ts) + R"(},
+            {"id":"2","key":"recent-fact","content":"new data","category":"knowledge","timestamp":)" +
+            std::to_string(old_ts) + R"(,"session_id":"","last_accessed":99999999999}
+        ])";
+        std::ofstream out(path2);
+        out << json;
+        out.close();
+
+        JsonMemory mem2(path2);
+        mem2.set_knowledge_decay(1, 0.0);
+
+        // hygiene_purge should purge old-fact but keep recent-fact
+        uint32_t purged = mem2.hygiene_purge(999999999);
+        REQUIRE(purged == 1);
+        REQUIRE_FALSE(mem2.get("old-fact").has_value());
+        REQUIRE(mem2.get("recent-fact").has_value());
+
+        std::filesystem::remove(path2);
+    }
+}
+
+TEST_CASE("JsonMemory: hygiene never purges Core entries", "[json_memory]") {
+    std::string path = test_path() + "_core_decay";
+    uint64_t old_ts = 1000000;
+    std::string json = R"([
+        {"id":"1","key":"soul:identity","content":"I am bot","category":"core","timestamp":)" +
+        std::to_string(old_ts) + R"(,"session_id":"","last_accessed":)" +
+        std::to_string(old_ts) + R"(}
+    ])";
+    std::ofstream out(path);
+    out << json;
+    out.close();
+
+    JsonMemory mem(path);
+    mem.set_knowledge_decay(1, 0.0);
+    uint32_t purged = mem.hygiene_purge(999999999);
+    REQUIRE(purged == 0);
+    REQUIRE(mem.get("soul:identity").has_value());
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("JsonMemory: knowledge decay survivors get last_accessed refreshed", "[json_memory]") {
+    std::string path = test_path() + "_survivor";
+    uint64_t old_ts = 1000000;
+    std::string json = R"([
+        {"id":"1","key":"lucky","content":"survives","category":"knowledge","timestamp":)" +
+        std::to_string(old_ts) + R"(,"session_id":"","last_accessed":)" +
+        std::to_string(old_ts) + R"(}
+    ])";
+    std::ofstream out(path);
+    out << json;
+    out.close();
+
+    JsonMemory mem(path);
+    mem.set_knowledge_decay(1, 1.0);  // 100% survival chance
+
+    uint32_t purged = mem.hygiene_purge(999999999);
+    REQUIRE(purged == 0);
+
+    auto entry = mem.get("lucky");
+    REQUIRE(entry.has_value());
+    // last_accessed should be refreshed to ~now
+    REQUIRE(entry.value_or(MemoryEntry{}).last_accessed > old_ts);
+}
+
+TEST_CASE("JsonMemory: last_accessed 0 falls back to timestamp for decay", "[json_memory]") {
+    std::string path = test_path() + "_fallback";
+    uint64_t old_ts = 1000000;
+    // No last_accessed field — should fall back to timestamp
+    std::string json = R"([
+        {"id":"1","key":"legacy","content":"old entry","category":"knowledge","timestamp":)" +
+        std::to_string(old_ts) + R"(,"session_id":""}
+    ])";
+    std::ofstream out(path);
+    out << json;
+    out.close();
+
+    JsonMemory mem(path);
+    mem.set_knowledge_decay(1, 0.0);
+
+    uint32_t purged = mem.hygiene_purge(999999999);
+    REQUIRE(purged == 1);
+    REQUIRE_FALSE(mem.get("legacy").has_value());
 
     std::filesystem::remove(path);
 }

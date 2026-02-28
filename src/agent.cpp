@@ -37,6 +37,8 @@ Agent::Agent(std::unique_ptr<Provider> provider,
     memory_ = create_memory(config_);
     if (memory_) {
         memory_->set_recency_decay(config_.memory.recency_half_life);
+        memory_->set_knowledge_decay(config_.memory.knowledge_max_idle_days,
+                                     config_.memory.knowledge_survival_chance);
     }
     wire_memory_tools();
 
@@ -136,7 +138,8 @@ std::string Agent::process(const std::string& user_message) {
 
         ChatResponse response;
         try {
-            if (provider_->supports_streaming() && !config_.agent.disable_streaming) {
+            if (provider_->supports_streaming() && !config_.agent.disable_streaming
+                && !hatching_) {
                 response = provider_->chat_stream(
                     history_, tool_specs, model_, config_.temperature,
                     [this, &stream_started](const std::string& delta) -> bool {
@@ -367,6 +370,8 @@ void Agent::set_memory(std::unique_ptr<Memory> memory) {
     memory_ = std::move(memory);
     if (memory_) {
         memory_->set_recency_decay(config_.memory.recency_half_life);
+        memory_->set_knowledge_decay(config_.memory.knowledge_max_idle_days,
+                                     config_.memory.knowledge_survival_chance);
     }
     wire_memory_tools();
     if (memory_ && embedder_) {

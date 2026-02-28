@@ -13,6 +13,7 @@ inline MemoryEntry entry_from_json(const nlohmann::json& item) {
     entry.content = item.value("content", "");
     entry.category = category_from_string(item.value("category", "knowledge"));
     entry.timestamp = item.value("timestamp", uint64_t{0});
+    entry.last_accessed = item.value("last_accessed", uint64_t{0});
     entry.session_id = item.value("session_id", "");
     if (item.contains("links") && item["links"].is_array()) {
         for (const auto& lnk : item["links"]) {
@@ -31,6 +32,9 @@ inline nlohmann::json entry_to_json(const MemoryEntry& entry) {
         {"timestamp", entry.timestamp},
         {"session_id", entry.session_id}
     };
+    if (entry.last_accessed > 0) {
+        item["last_accessed"] = entry.last_accessed;
+    }
     if (!entry.links.empty()) {
         item["links"] = entry.links;
     }

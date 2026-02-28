@@ -5,9 +5,10 @@
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <stdexcept>
-#include <cstring>
 
 static ptrclaw::MemoryRegistrar reg_sqlite("sqlite",
     [](const ptrclaw::Config& config) {
@@ -134,6 +135,10 @@ void SqliteMemory::init_schema() {
     sqlite3_exec(db_, "ALTER TABLE memories ADD COLUMN embedding BLOB;",
                  nullptr, nullptr, nullptr);
 
+    // Add last_accessed column (silently ignored if it already exists)
+    sqlite3_exec(db_, "ALTER TABLE memories ADD COLUMN last_accessed INTEGER;",
+                 nullptr, nullptr, nullptr);
+
     // Links table for knowledge graph
     const char* create_links =
         "CREATE TABLE IF NOT EXISTS memory_links ("
@@ -213,6 +218,24 @@ void SqliteMemory::set_recency_decay(uint32_t half_life_seconds) {
     recency_half_life_ = half_life_seconds;
 }
 
+void SqliteMemory::set_knowledge_decay(uint32_t max_idle_days, double survival_chance) {
+    knowledge_max_idle_days_ = max_idle_days;
+    knowledge_survival_chance_ = survival_chance;
+}
+
+void SqliteMemory::touch_last_accessed(const std::vector<MemoryEntry>& entries) {
+    if (entries.empty()) return;
+    auto now = static_cast<int64_t>(epoch_seconds());
+    const char* sql = "UPDATE memories SET last_accessed = ? WHERE key = ?;";
+    for (const auto& entry : entries) {
+        StmtGuard g;
+        if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) continue;
+        sqlite3_bind_int64(g.stmt, 1, now);
+        sqlite3_bind_text(g.stmt, 2, entry.key.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_step(g.stmt);
+    }
+}
+
 std::string SqliteMemory::store(const std::string& key, const std::string& content,
                                  MemoryCategory category, const std::string& session_id) {
     // Compute embedding OUTSIDE the mutex (HTTP call may be slow)
@@ -256,6 +279,17 @@ std::string SqliteMemory::store(const std::string& key, const std::string& conte
     sqlite3_bind_int64(g.stmt, 5, ts);
     sqlite3_bind_text(g.stmt, 6, session_id.c_str(), -1, SQLITE_STATIC);
     sqlite3_step(g.stmt);
+
+    // Set last_accessed = now
+    {
+        StmtGuard lg;
+        const char* la_sql = "UPDATE memories SET last_accessed = ? WHERE key = ?;";
+        if (sqlite3_prepare_v2(db_, la_sql, -1, &lg.stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int64(lg.stmt, 1, ts);
+            sqlite3_bind_text(lg.stmt, 2, key.c_str(), -1, SQLITE_STATIC);
+            sqlite3_step(lg.stmt);
+        }
+    }
 
     // Store embedding as BLOB if computed
     if (!emb.empty()) {
@@ -348,6 +382,9 @@ std::vector<MemoryEntry> SqliteMemory::recall(const std::string& query, uint32_t
                           return a.score > b.score;
                       });
         }
+
+        // Touch last_accessed for returned entries
+        touch_last_accessed(results);
 
         for (auto& entry : results) {
             populate_links(entry);
@@ -459,6 +496,10 @@ std::vector<MemoryEntry> SqliteMemory::recall(const std::string& query, uint32_t
         populate_links(scored[i].entry);
         results.push_back(std::move(scored[i].entry));
     }
+
+    // Touch last_accessed for returned entries
+    touch_last_accessed(results);
+
     return results;
 }
 
@@ -648,9 +689,11 @@ uint32_t SqliteMemory::snapshot_import(const std::string& json_str) {
 uint32_t SqliteMemory::hygiene_purge(uint32_t max_age_seconds) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    auto cutoff = static_cast<int64_t>(epoch_seconds()) - static_cast<int64_t>(max_age_seconds);
+    auto now = static_cast<int64_t>(epoch_seconds());
+    auto conv_cutoff = now - static_cast<int64_t>(max_age_seconds);
+    uint32_t total_purged = 0;
 
-    // Clean up links referencing entries about to be purged
+    // Clean up links referencing conversation entries about to be purged
     {
         StmtGuard lg;
         const char* link_sql =
@@ -659,22 +702,91 @@ uint32_t SqliteMemory::hygiene_purge(uint32_t max_age_seconds) {
             "OR to_key IN "
             "(SELECT key FROM memories WHERE category = 'conversation' AND timestamp <= ?);";
         if (sqlite3_prepare_v2(db_, link_sql, -1, &lg.stmt, nullptr) == SQLITE_OK) {
-            sqlite3_bind_int64(lg.stmt, 1, cutoff);
-            sqlite3_bind_int64(lg.stmt, 2, cutoff);
+            sqlite3_bind_int64(lg.stmt, 1, conv_cutoff);
+            sqlite3_bind_int64(lg.stmt, 2, conv_cutoff);
             sqlite3_step(lg.stmt);
         }
     }
 
-    StmtGuard g;
-    const char* sql =
-        "DELETE FROM memories WHERE category = 'conversation' AND timestamp <= ?;";
-    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) {
-        return 0;
+    // Purge old conversation entries
+    {
+        StmtGuard g;
+        const char* sql =
+            "DELETE FROM memories WHERE category = 'conversation' AND timestamp <= ?;";
+        if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int64(g.stmt, 1, conv_cutoff);
+            sqlite3_step(g.stmt);
+            total_purged += static_cast<uint32_t>(sqlite3_changes(db_));
+        }
     }
-    sqlite3_bind_int64(g.stmt, 1, cutoff);
-    sqlite3_step(g.stmt);
 
-    return static_cast<uint32_t>(sqlite3_changes(db_));
+    // Knowledge decay: purge idle Knowledge entries with random survival
+    if (knowledge_max_idle_days_ > 0) {
+        auto knowledge_cutoff = now - static_cast<int64_t>(knowledge_max_idle_days_) * 86400;
+
+        // Select eligible Knowledge entries (idle beyond cutoff)
+        // Use COALESCE: last_accessed if set, else timestamp
+        const char* select_sql =
+            "SELECT key FROM memories"
+            " WHERE category = 'knowledge'"
+            " AND COALESCE(NULLIF(last_accessed, 0), timestamp) <= ?;";
+
+        std::vector<std::string> to_delete;
+        std::vector<std::string> survivors;
+        {
+            StmtGuard sg;
+            if (sqlite3_prepare_v2(db_, select_sql, -1, &sg.stmt, nullptr) == SQLITE_OK) {
+                sqlite3_bind_int64(sg.stmt, 1, knowledge_cutoff);
+                while (sqlite3_step(sg.stmt) == SQLITE_ROW) {
+                    if (auto* v = sqlite3_column_text(sg.stmt, 0)) {
+                        std::string key = reinterpret_cast<const char*>(v);
+                        double roll = static_cast<double>(std::rand()) / RAND_MAX; // NOLINT
+                        if (roll >= knowledge_survival_chance_) {
+                            to_delete.push_back(std::move(key));
+                        } else {
+                            survivors.push_back(std::move(key));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Delete losers (and their links)
+        for (const auto& key : to_delete) {
+            {
+                StmtGuard lg;
+                const char* link_sql =
+                    "DELETE FROM memory_links WHERE from_key = ? OR to_key = ?;";
+                if (sqlite3_prepare_v2(db_, link_sql, -1, &lg.stmt, nullptr) == SQLITE_OK) {
+                    sqlite3_bind_text(lg.stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_bind_text(lg.stmt, 2, key.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_step(lg.stmt);
+                }
+            }
+            {
+                StmtGuard dg;
+                const char* del_sql = "DELETE FROM memories WHERE key = ?;";
+                if (sqlite3_prepare_v2(db_, del_sql, -1, &dg.stmt, nullptr) == SQLITE_OK) {
+                    sqlite3_bind_text(dg.stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+                    sqlite3_step(dg.stmt);
+                    total_purged += static_cast<uint32_t>(sqlite3_changes(db_));
+                }
+            }
+        }
+
+        // Refresh survivors' last_accessed
+        for (const auto& key : survivors) {
+            StmtGuard ug;
+            const char* upd_sql = "UPDATE memories SET last_accessed = ? WHERE key = ?;";
+            if (sqlite3_prepare_v2(db_, upd_sql, -1, &ug.stmt, nullptr) == SQLITE_OK) {
+                sqlite3_bind_int64(ug.stmt, 1, now);
+                sqlite3_bind_text(ug.stmt, 2, key.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_step(ug.stmt);
+            }
+        }
+    }
+
+    return total_purged;
 }
 
 bool SqliteMemory::link(const std::string& from_key, const std::string& to_key) {

@@ -47,10 +47,13 @@ public:
     void set_embedder(Embedder* embedder, double text_weight = 0.4,
                       double vector_weight = 0.6) override;
     void set_recency_decay(uint32_t half_life_seconds) override;
+    void set_knowledge_decay(uint32_t max_idle_days,
+                             double survival_chance) override;
 
 private:
     void init_schema();
     void populate_links(MemoryEntry& entry);
+    void touch_last_accessed(const std::vector<MemoryEntry>& entries);
 
     sqlite3* db_ = nullptr;
     std::string path_;
@@ -61,6 +64,8 @@ private:
     double text_weight_ = 0.4;
     double vector_weight_ = 0.6;
     uint32_t recency_half_life_ = 0;
+    uint32_t knowledge_max_idle_days_ = 0;
+    double knowledge_survival_chance_ = 0.05;
 };
 
 } // namespace ptrclaw
