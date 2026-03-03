@@ -40,6 +40,9 @@ nlohmann::json Config::defaults_json() {
             {"telegram", {{"bot_token", ""}, {"allow_from", nlohmann::json::array()}, {"reply_in_private", true}, {"proxy", ""}}},
             {"whatsapp", {{"access_token", ""}, {"phone_number_id", ""}, {"verify_token", ""}, {"app_secret", ""}, {"allow_from", nlohmann::json::array()}, {"webhook_listen", ""}, {"webhook_secret", ""}, {"webhook_max_body", 65536}}}
         }},
+        {"tools", {
+            {"acp", {{"base_url", "http://localhost:8333"}, {"api_key", ""}}}
+        }},
         {"memory", {
 #ifdef PTRCLAW_HAS_SQLITE_MEMORY
             {"backend", "sqlite"},
@@ -217,6 +220,18 @@ Config Config::load() {
         }
     }
 
+    // Tools configuration
+    if (j.contains("tools") && j["tools"].is_object()) {
+        auto& t = j["tools"];
+        if (t.contains("acp") && t["acp"].is_object()) {
+            auto& a = t["acp"];
+            if (a.contains("base_url") && a["base_url"].is_string())
+                cfg.tools_acp.base_url = a["base_url"].get<std::string>();
+            if (a.contains("api_key") && a["api_key"].is_string())
+                cfg.tools_acp.api_key = a["api_key"].get<std::string>();
+        }
+    }
+
     // Environment variables always override config file
     if (const char* v = std::getenv("ANTHROPIC_API_KEY"))
         cfg.providers["anthropic"].api_key = v;
@@ -269,6 +284,12 @@ Config Config::load() {
         cfg.memory.embeddings.model = v;
     if (const char* v = std::getenv("EMBEDDING_API_KEY"))
         cfg.memory.embeddings.api_key = v;
+
+    // ACP tool env var overrides
+    if (const char* v = std::getenv("ACP_BASE_URL"))
+        cfg.tools_acp.base_url = v;
+    if (const char* v = std::getenv("ACP_API_KEY"))
+        cfg.tools_acp.api_key = v;
 
     return cfg;
 }

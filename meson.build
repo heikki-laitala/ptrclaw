@@ -53,6 +53,7 @@ opt_ollama     = get_option('with_ollama')
 opt_telegram   = get_option('with_telegram')
 opt_whatsapp   = get_option('with_whatsapp')
 opt_tools      = get_option('with_tools')
+opt_acp        = get_option('with_acp')
 
 # Memory features
 opt_memory        = get_option('with_memory')
@@ -131,6 +132,9 @@ if opt_tools
     'src/tools/file_write.cpp', 'src/tools/shell.cpp',
     'src/tools/cron.cpp',
   )
+endif
+if opt_acp
+  optional_sources += files('src/tools/acp_invoke.cpp')
 endif
 
 # Memory system
@@ -216,6 +220,9 @@ endif
 if opt_anthropic and opt_openai and opt_ollama and opt_openrouter and opt_compatible
   optional_test_sources += files('tests/test_providers.cpp')
 endif
+if opt_acp
+  optional_test_sources += files('tests/test_acp_invoke.cpp')
+endif
 if opt_memory
   optional_test_sources += files(
     'tests/test_memory.cpp',
@@ -287,10 +294,18 @@ else
   tls_backend = 'libcurl (system)'
 endif
 
+tools_list = []
+if opt_tools
+  tools_list += ['file_read', 'file_write', 'file_edit', 'shell', 'cron']
+endif
+if opt_acp
+  tools_list += ['acp_invoke']
+endif
+
 summary({
   'Providers': providers.length() > 0 ? ', '.join(providers) : 'none',
   'Channels':  channels.length() > 0  ? ', '.join(channels)  : 'none',
-  'Tools':     opt_tools ? 'file_read, file_write, file_edit, shell, cron' : 'none',
+  'Tools':     tools_list.length() > 0 ? ', '.join(tools_list) : 'none',
   'Memory':    memory_features.length() > 0 ? ', '.join(memory_features) : 'none',
   'Memory tools': opt_memory_tools ? 'memory_store, memory_recall, memory_forget, memory_link' : 'none',
   'TLS backend': tls_backend,

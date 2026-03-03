@@ -19,6 +19,8 @@ option('with_whatsapp', type: 'boolean', value: false,
 # Tool features
 option('with_tools', type: 'boolean', value: true,
        description: 'Build all tool implementations (file_read, file_write, file_edit, shell)')
+option('with_acp', type: 'boolean', value: true,
+       description: 'Build the acp_invoke tool for on-demand ACP coding agent invocation')
 
 # Memory features
 option('with_memory', type: 'boolean', value: true,
