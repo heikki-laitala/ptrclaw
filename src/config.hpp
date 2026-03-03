@@ -59,6 +59,11 @@ struct MemoryConfig {
     EmbeddingConfig embeddings;         // vector search config (disabled by default)
 };
 
+struct AcpToolConfig {
+    std::string base_url;  // empty = use "http://localhost:8333" default
+    std::string api_key;
+};
+
 struct Config {
     std::string provider = "anthropic";
     std::string model = "claude-sonnet-4-6";
@@ -71,6 +76,7 @@ struct Config {
     AgentConfig agent;
     std::unordered_map<std::string, nlohmann::json> channels;
     MemoryConfig memory;
+    AcpToolConfig tools_acp;  // tools.acp config for the acp_invoke tool
 
     // Load from ~/.ptrclaw/config.json + env vars
     static Config load();
