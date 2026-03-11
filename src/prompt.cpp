@@ -23,13 +23,21 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
     }
 
     // ── Tooling ──
+    // Contextual selection: omit memory tools when memory is inactive
+    bool memory_active = has_memory && memory && memory->backend_name() != "none";
     if (!tools.empty()) {
         if (include_tool_descriptions) {
             // Non-native providers: full tool schemas in prompt + XML call format
             ss << "## Tooling\n";
             ss << "Available tools:\n";
             for (const auto& tool : tools) {
-                ss << "- " << tool->tool_name() << ": " << tool->description() << "\n";
+                const auto& name = tool->tool_name();
+                if (!memory_active &&
+                    (name == "memory_store" || name == "memory_recall" ||
+                     name == "memory_forget" || name == "memory_link")) {
+                    continue;
+                }
+                ss << "- " << name << ": " << tool->description() << "\n";
                 ss << "  Parameters: " << tool->parameters_json() << "\n";
             }
             ss << "\nTo use a tool, wrap your call in XML tags:\n";
@@ -39,7 +47,13 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
             ss << "## Tooling\n";
             ss << "You have tools to interact with the system:\n";
             for (const auto& tool : tools) {
-                ss << "- " << tool->tool_name() << ": " << tool->description() << "\n";
+                const auto& name = tool->tool_name();
+                if (!memory_active &&
+                    (name == "memory_store" || name == "memory_recall" ||
+                     name == "memory_forget" || name == "memory_link")) {
+                    continue;
+                }
+                ss << "- " << name << ": " << tool->description() << "\n";
             }
             ss << "\nUse tools proactively to accomplish tasks. "
                << "When the user asks you to do something, take action rather than just explaining how.\n\n";

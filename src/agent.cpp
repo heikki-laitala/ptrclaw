@@ -5,6 +5,7 @@
 #include "event.hpp"
 #include "event_bus.hpp"
 #include "dispatcher.hpp"
+#include "output_filter.hpp"
 #include "prompt.hpp"
 #include "util.hpp"
 #include <iostream>
@@ -93,10 +94,18 @@ std::string Agent::process(const std::string& user_message) {
     history_.push_back(ChatMessage{Role::User, enriched_message, {}, {}});
 
     // Build tool specs (skip during hatching — no tools needed for interview)
+    // Contextual selection: omit memory tools when memory backend is inactive
     std::vector<ToolSpec> tool_specs;
     if (!hatching_ && provider_->supports_native_tools()) {
+        bool memory_active = has_active_memory();
         tool_specs.reserve(tools_.size());
         for (const auto& tool : tools_) {
+            const auto& name = tool->tool_name();
+            if (!memory_active &&
+                (name == "memory_store" || name == "memory_recall" ||
+                 name == "memory_forget" || name == "memory_link")) {
+                continue;
+            }
             tool_specs.push_back(tool->spec());
         }
     }
@@ -233,6 +242,9 @@ std::string Agent::process(const std::string& user_message) {
             }
 
             ToolResult result = dispatch_tool(call, tools_);
+
+            // Filter tool output to reduce token consumption
+            result.output = filter_tool_output(result.output);
 
             // Emit ToolCallResult event
             if (event_bus_) {

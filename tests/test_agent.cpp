@@ -21,13 +21,15 @@ public:
     bool should_throw = false;
     int chat_call_count = 0;
     std::vector<ChatMessage> last_messages;
+    std::vector<ToolSpec> last_tool_specs;
 
     ChatResponse chat(const std::vector<ChatMessage>& messages,
-                      const std::vector<ToolSpec>&,
+                      const std::vector<ToolSpec>& tool_specs,
                       const std::string&,
                       double) override {
         chat_call_count++;
         last_messages = messages;
+        last_tool_specs = tool_specs;
         if (should_throw) {
             throw std::runtime_error("provider error");
         }
@@ -65,6 +67,35 @@ public:
     }
     std::string tool_name() const override { return "mock_tool"; }
     std::string description() const override { return "A mock tool"; }
+    std::string parameters_json() const override { return R"({"type":"object"})"; }
+};
+
+// Mock memory tool for contextual selection tests
+// Must inherit MemoryAwareTool — Agent::wire_memory_tools() static_casts to it.
+class MockMemoryTool : public MemoryAwareTool {
+    std::string name_;
+public:
+    explicit MockMemoryTool(std::string name) : name_(std::move(name)) {}
+    ToolResult execute(const std::string&) override {
+        return ToolResult{true, "memory result"};
+    }
+    std::string tool_name() const override { return name_; }
+    std::string description() const override { return "Mock " + name_; }
+    std::string parameters_json() const override { return R"({"type":"object"})"; }
+};
+
+// Mock tool that returns verbose output (for output filter tests)
+class VerboseOutputTool : public Tool {
+public:
+    ToolResult execute(const std::string&) override {
+        std::string output = "\033[32mLine 1\033[0m\n";
+        for (int i = 2; i <= 10; i++) {
+            output += "Line " + std::to_string(i) + "\n";
+        }
+        return ToolResult{true, output};
+    }
+    std::string tool_name() const override { return "verbose_tool"; }
+    std::string description() const override { return "Produces verbose output"; }
     std::string parameters_json() const override { return R"({"type":"object"})"; }
 };
 
@@ -583,4 +614,121 @@ TEST_CASE("Agent: synthesis passes system prompt and message correctly", "[agent
     REQUIRE(mock->last_simple_message.find("Hello world") != std::string::npos);
 
     std::filesystem::remove(mem_path);
+}
+
+// ── Contextual tool selection ───────────────────────────────────
+
+TEST_CASE("Agent: memory tools excluded from specs when memory inactive", "[agent]") {
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->native_tools = true;
+    mock->next_response.content = "ok";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<MockTool>());
+    tools.push_back(std::make_unique<MockMemoryTool>("memory_store"));
+    tools.push_back(std::make_unique<MockMemoryTool>("memory_recall"));
+    tools.push_back(std::make_unique<MockMemoryTool>("memory_forget"));
+    tools.push_back(std::make_unique<MockMemoryTool>("memory_link"));
+
+    Config cfg;
+    cfg.agent.max_tool_iterations = 5;
+    cfg.memory.backend = "none"; // Explicitly inactive
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    agent.process("test");
+
+    // Only mock_tool should appear in specs, memory tools excluded
+    REQUIRE(mock->last_tool_specs.size() == 1);
+    REQUIRE(mock->last_tool_specs[0].name == "mock_tool");
+}
+
+TEST_CASE("Agent: memory tools included when memory is active", "[agent]") {
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->native_tools = true;
+    mock->next_response.content = "ok";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<MockTool>());
+    tools.push_back(std::make_unique<MockMemoryTool>("memory_store"));
+    tools.push_back(std::make_unique<MockMemoryTool>("memory_recall"));
+
+    Config cfg;
+    cfg.agent.max_tool_iterations = 5;
+    cfg.memory.backend = "json";
+
+    std::string mem_path = "/tmp/ptrclaw_test_ctx_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    agent.process("test");
+
+    // All three tools should appear (mock_tool + 2 memory tools)
+    REQUIRE(mock->last_tool_specs.size() == 3);
+
+    std::filesystem::remove(mem_path);
+}
+
+TEST_CASE("Agent: memory tools excluded from system prompt for non-native provider", "[agent]") {
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->native_tools = false;
+    mock->next_response.content = "ok";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<MockTool>());
+    tools.push_back(std::make_unique<MockMemoryTool>("memory_store"));
+    tools.push_back(std::make_unique<MockMemoryTool>("memory_recall"));
+
+    Config cfg;
+    cfg.agent.max_tool_iterations = 5;
+    cfg.memory.backend = "none"; // Explicitly inactive
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    agent.process("test");
+
+    // System prompt should list mock_tool but not memory tools
+    const auto& sys = mock->last_messages[0].content;
+    REQUIRE(sys.find("mock_tool") != std::string::npos);
+    REQUIRE(sys.find("memory_store") == std::string::npos);
+    REQUIRE(sys.find("memory_recall") == std::string::npos);
+}
+
+// ── Output filtering in agent loop ──────────────────────────────
+
+TEST_CASE("Agent: tool output is filtered (ANSI stripped)", "[agent]") {
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->native_tools = true;
+
+    // First response: call verbose_tool
+    ChatResponse r1;
+    r1.content = "";
+    r1.tool_calls = {ToolCall{"call1", "verbose_tool", "{}"}};
+
+    // Second response: final content
+    ChatResponse r2;
+    r2.content = "done";
+
+    mock->responses = {r1, r2};
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<VerboseOutputTool>());
+    Config cfg;
+    cfg.agent.max_tool_iterations = 5;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    agent.process("run verbose");
+
+    // On second call, Tool message should have ANSI stripped
+    for (const auto& msg : mock->last_messages) {
+        if (msg.role == Role::Tool) {
+            // Should contain "Line 1" but no ANSI escape codes
+            REQUIRE(msg.content.find("Line 1") != std::string::npos);
+            REQUIRE(msg.content.find("\033[") == std::string::npos);
+        }
+    }
 }
