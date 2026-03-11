@@ -52,4 +52,12 @@ void rotate_tee_files(const std::string& tee_dir,
 // important lines (signatures, imports, braces) and show omission markers.
 std::string smart_truncate(const std::string& output, uint32_t max_lines = 200);
 
+// Group repeated compiler/linter diagnostics by message pattern.
+// E.g. 20 "unused variable" warnings become one line + "(12 more in ...files)".
+std::string group_diagnostics(const std::string& output);
+
+// Strip noise directories (node_modules, .git, target, etc.) from
+// tree/find/ls -R output lines.
+std::string filter_noise_dirs(const std::string& output);
+
 } // namespace ptrclaw

@@ -484,3 +484,161 @@ TEST_CASE("smart_truncate: preserves error lines", "[shell_filter]") {
     std::string result = smart_truncate(input, 30);
     REQUIRE(result.find("error: undefined reference") != std::string::npos);
 }
+
+// ═══ Diagnostic grouping ════════════════════════════════════════
+
+TEST_CASE("group_diagnostics: groups repeated warnings", "[shell_filter]") {
+    std::string input =
+        "src/a.cpp:10:5: warning: unused variable 'x'\n"
+        "src/b.cpp:20:3: warning: unused variable 'x'\n"
+        "src/c.cpp:30:1: warning: unused variable 'x'\n"
+        "src/d.cpp:40:7: warning: unused variable 'x'\n"
+        "src/e.cpp:50:2: warning: unused variable 'x'\n"
+        "Build succeeded.\n";
+
+    std::string result = group_diagnostics(input);
+    // First occurrence kept
+    REQUIRE(result.find("src/a.cpp:10:5: warning: unused variable 'x'") != std::string::npos);
+    // Others grouped
+    REQUIRE(result.find("4 more") != std::string::npos);
+    // Duplicates removed
+    REQUIRE(result.find("src/b.cpp:20:3") == std::string::npos);
+    // Non-diagnostic kept
+    REQUIRE(result.find("Build succeeded") != std::string::npos);
+}
+
+TEST_CASE("group_diagnostics: groups repeated errors", "[shell_filter]") {
+    std::string input =
+        "src/foo.cpp:1:1: error: undeclared identifier 'x'\n"
+        "src/bar.cpp:2:1: error: undeclared identifier 'x'\n"
+        "src/baz.cpp:3:1: error: undeclared identifier 'x'\n"
+        "src/foo.cpp:5:1: warning: unused import\n"
+        "src/bar.cpp:6:1: warning: unused import\n"
+        "3 errors generated.\n";
+
+    std::string result = group_diagnostics(input);
+    REQUIRE(result.find("2 more") != std::string::npos);  // errors
+    REQUIRE(result.find("1 more") != std::string::npos);  // warnings
+    REQUIRE(result.find("3 errors generated") != std::string::npos);
+}
+
+TEST_CASE("group_diagnostics: unique diagnostics unchanged", "[shell_filter]") {
+    std::string input =
+        "src/a.cpp:1: error: type mismatch\n"
+        "src/b.cpp:2: warning: shadow variable\n"
+        "src/c.cpp:3: error: missing semicolon\n";
+
+    REQUIRE(group_diagnostics(input) == input);
+}
+
+TEST_CASE("group_diagnostics: short input unchanged", "[shell_filter]") {
+    std::string input = "one error\ntwo lines\n";
+    REQUIRE(group_diagnostics(input) == input);
+}
+
+TEST_CASE("group_diagnostics: shows affected files", "[shell_filter]") {
+    std::string input =
+        "src/alpha.cpp:10: warning: conversion\n"
+        "src/beta.cpp:20: warning: conversion\n"
+        "src/gamma.cpp:30: warning: conversion\n"
+        "src/delta.cpp:40: warning: conversion\n"
+        "src/epsilon.cpp:50: warning: conversion\n"
+        "done\n";
+
+    std::string result = group_diagnostics(input);
+    REQUIRE(result.find("src/beta.cpp") != std::string::npos);
+    REQUIRE(result.find("src/gamma.cpp") != std::string::npos);
+}
+
+TEST_CASE("group_diagnostics: integrated with build filter", "[shell_filter]") {
+    std::string input =
+        "[1/10] Compiling a.cpp\n"
+        "src/a.cpp:5: warning: unused 'x'\n"
+        "[2/10] Compiling b.cpp\n"
+        "src/b.cpp:5: warning: unused 'x'\n"
+        "[3/10] Compiling c.cpp\n"
+        "src/c.cpp:5: warning: unused 'x'\n"
+        "[4/10] Linking app\n"
+        "Build succeeded.\n";
+
+    std::string result = filter_shell_output("ninja", input);
+    // Warnings should be grouped
+    REQUIRE(result.find("2 more") != std::string::npos);
+    REQUIRE(result.find("Build succeeded") != std::string::npos);
+}
+
+// ═══ Noise directory filtering ══════════════════════════════════
+
+TEST_CASE("filter_noise_dirs: strips node_modules", "[shell_filter]") {
+    std::string input =
+        ".\n"
+        "├── src\n"
+        "│   ├── main.cpp\n"
+        "│   └── util.cpp\n"
+        "├── node_modules\n"
+        "│   ├── express\n"
+        "│   └── lodash\n"
+        "├── .git\n"
+        "│   ├── objects\n"
+        "│   └── refs\n"
+        "└── README.md\n";
+
+    std::string result = filter_noise_dirs(input);
+    REQUIRE(result.find("src") != std::string::npos);
+    REQUIRE(result.find("main.cpp") != std::string::npos);
+    REQUIRE(result.find("README.md") != std::string::npos);
+    REQUIRE(result.find("node_modules") == std::string::npos);
+    REQUIRE(result.find(".git") == std::string::npos);
+    REQUIRE(result.find("noise entries stripped") != std::string::npos);
+}
+
+TEST_CASE("filter_noise_dirs: strips from find output", "[shell_filter]") {
+    std::string input =
+        "./src/main.cpp\n"
+        "./src/util.cpp\n"
+        "./node_modules/express/index.js\n"
+        "./node_modules/lodash/lodash.js\n"
+        "./__pycache__/foo.pyc\n"
+        "./.venv/lib/python3.11/site.py\n"
+        "./README.md\n";
+
+    std::string result = filter_noise_dirs(input);
+    REQUIRE(result.find("src/main.cpp") != std::string::npos);
+    REQUIRE(result.find("README.md") != std::string::npos);
+    REQUIRE(result.find("node_modules") == std::string::npos);
+    REQUIRE(result.find("__pycache__") == std::string::npos);
+    REQUIRE(result.find(".venv") == std::string::npos);
+}
+
+TEST_CASE("filter_noise_dirs: integrated with filter_shell_output", "[shell_filter]") {
+    std::string input =
+        ".\n"
+        "├── src\n"
+        "├── node_modules\n"
+        "├── .git\n"
+        "├── target\n"
+        "└── Makefile\n";
+
+    std::string result = filter_shell_output("tree", input);
+    REQUIRE(result.find("src") != std::string::npos);
+    REQUIRE(result.find("Makefile") != std::string::npos);
+    REQUIRE(result.find("node_modules") == std::string::npos);
+    REQUIRE(result.find("noise entries stripped") != std::string::npos);
+}
+
+TEST_CASE("filter_noise_dirs: no noise unchanged", "[shell_filter]") {
+    std::string input = "src/main.cpp\nsrc/util.cpp\nMakefile\n";
+    REQUIRE(filter_noise_dirs(input) == input);
+}
+
+TEST_CASE("filter_noise_dirs: strips .DS_Store", "[shell_filter]") {
+    std::string input =
+        "src/main.cpp\n"
+        ".DS_Store\n"
+        "src/.DS_Store\n"
+        "README.md\n";
+
+    std::string result = filter_noise_dirs(input);
+    REQUIRE(result.find("main.cpp") != std::string::npos);
+    REQUIRE(result.find(".DS_Store") == std::string::npos);
+}
