@@ -142,6 +142,16 @@ static bool contains(const std::string& s, const std::string& needle) {
     return s.find(needle) != std::string::npos;
 }
 
+static bool contains_icase(const std::string& s, const std::string& needle) {
+    if (needle.size() > s.size()) return false;
+    auto it = std::search(s.begin(), s.end(), needle.begin(), needle.end(),
+                          [](char a, char b) {
+                              return std::tolower(static_cast<unsigned char>(a)) ==
+                                     std::tolower(static_cast<unsigned char>(b));
+                          });
+    return it != s.end();
+}
+
 static ShellCommandType classify_command(const std::string& command) {
     // Trim leading whitespace / env vars for matching
     std::string cmd = command;
@@ -403,12 +413,11 @@ static std::string filter_build_log(const std::string& output) {
     }
 
     // Always include last few lines (often summary).
-    // Use a set to avoid O(n²) duplicate checking.
     if (lines.size() > 3) {
-        std::unordered_set<std::string> kept_set(kept.begin(), kept.end());
         size_t tail_start = lines.size() - 3;
         for (size_t i = tail_start; i < lines.size(); i++) {
-            if (!lines[i].empty() && kept_set.find(lines[i]) == kept_set.end()) {
+            if (!lines[i].empty() &&
+                std::find(kept.begin(), kept.end(), lines[i]) == kept.end()) {
                 kept.push_back(lines[i]);
             }
         }
@@ -1124,23 +1133,17 @@ std::string extract_json_schema(const std::string& json_str) {
 }
 
 bool is_sensitive_command(const std::string& command) {
-    std::string cmd = command;
-    size_t start = cmd.find_first_not_of(" \t");
-    if (start != std::string::npos) cmd = cmd.substr(start);
+    // Reuse classifier for env/printenv/export detection
+    if (classify_command(command) == ShellCommandType::EnvVars) return true;
 
-    // Commands that commonly expose secrets/tokens
-    if (starts_with(cmd, "env") || starts_with(cmd, "printenv") ||
-        starts_with(cmd, "export") || starts_with(cmd, "set ")) {
-        return true;
-    }
-    // Auth/token/secret-related commands
-    if (contains(cmd, "token") || contains(cmd, "secret") ||
-        contains(cmd, "password") || contains(cmd, "credential") ||
-        contains(cmd, "auth") || contains(cmd, "login")) {
+    // Auth/token/secret-related commands not caught by classifier
+    if (contains_icase(command, "token") || contains_icase(command, "secret") ||
+        contains_icase(command, "password") || contains_icase(command, "credential") ||
+        contains_icase(command, "auth") || contains_icase(command, "login")) {
         return true;
     }
     // .env files
-    if (contains(cmd, ".env")) return true;
+    if (contains(command, ".env")) return true;
 
     return false;
 }
@@ -1154,12 +1157,9 @@ static std::string redact_sensitive_output(const std::string& output) {
         auto eq = line.find('=');
         if (eq != std::string::npos && eq > 0 && eq < line.size() - 1) {
             std::string key = line.substr(0, eq);
-            // Redact values for keys that look like secrets
-            if (contains(key, "KEY") || contains(key, "SECRET") ||
-                contains(key, "TOKEN") || contains(key, "PASSWORD") ||
-                contains(key, "CREDENTIAL") || contains(key, "AUTH") ||
-                contains(key, "key") || contains(key, "secret") ||
-                contains(key, "token") || contains(key, "password")) {
+            if (contains_icase(key, "key") || contains_icase(key, "secret") ||
+                contains_icase(key, "token") || contains_icase(key, "password") ||
+                contains_icase(key, "credential") || contains_icase(key, "auth")) {
                 result.push_back(key + "=[REDACTED]");
                 continue;
             }
