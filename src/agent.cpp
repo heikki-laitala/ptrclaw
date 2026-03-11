@@ -100,10 +100,7 @@ std::string Agent::process(const std::string& user_message) {
         bool memory_active = has_active_memory();
         tool_specs.reserve(tools_.size());
         for (const auto& tool : tools_) {
-            const auto& name = tool->tool_name();
-            if (!memory_active &&
-                (name == "memory_store" || name == "memory_recall" ||
-                 name == "memory_forget" || name == "memory_link")) {
+            if (!memory_active && is_memory_tool(tool->tool_name())) {
                 continue;
             }
             tool_specs.push_back(tool->spec());

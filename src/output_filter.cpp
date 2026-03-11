@@ -1,7 +1,6 @@
 #include "output_filter.hpp"
 #include "util.hpp"
 #include <filesystem>
-#include <fstream>
 #include <sstream>
 #include <vector>
 
@@ -206,7 +205,7 @@ static std::string filter_git_status(const std::string& output) {
 
     for (const auto& line : lines) {
         // Drop hint lines from git status
-        if (contains(line, "(use \"git ") || contains(line, "(use \"git")) continue;
+        if (contains(line, "(use \"git")) continue;
 
         kept.push_back(line);
     }
@@ -278,18 +277,15 @@ static std::string filter_build_log(const std::string& output) {
     for (size_t i = 0; i < lines.size(); i++) {
         const auto& line = lines[i];
 
-        // Keep error and warning lines + context
+        // Keep error and warning lines + 1 line before for file context
         if (contains(line, "error") || contains(line, "Error") ||
             contains(line, "warning:") || contains(line, "Warning:") ||
             contains(line, "undefined reference") ||
             contains(line, "cannot find") || contains(line, "fatal")) {
-            // Include 1 line before for file context
-            if (!kept.empty() || i == 0) {
-                kept.push_back(line);
-            } else {
+            if (i > 0 && (kept.empty() || kept.back() != lines[i - 1])) {
                 kept.push_back(lines[i - 1]);
-                kept.push_back(line);
             }
+            kept.push_back(line);
             continue;
         }
 
@@ -354,7 +350,7 @@ std::string filter_shell_output(const std::string& command,
     switch (classify_command(command)) {
         case ShellCommandType::GitDiff:    filtered = filter_git_diff(cleaned);    break;
         case ShellCommandType::GitStatus:  filtered = filter_git_status(cleaned);  break;
-        case ShellCommandType::GitLog:     filtered = filter_tool_output(cleaned, config); break;
+        case ShellCommandType::GitLog:     filtered = cleaned; break;
         case ShellCommandType::TestRunner: filtered = filter_test_output(cleaned); break;
         case ShellCommandType::BuildLog:   filtered = filter_build_log(cleaned);   break;
         case ShellCommandType::Other:      filtered = cleaned; break;
