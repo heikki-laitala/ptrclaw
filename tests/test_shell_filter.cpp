@@ -926,3 +926,262 @@ TEST_CASE("filter_shell_output: pip freeze classified as package", "[shell_filte
     REQUIRE(result.find("package-0==1.0.0") != std::string::npos);
     REQUIRE(result.find("package-14==1.0.0") != std::string::npos);
 }
+
+// ═══ Git operations filtering ═══════════════════════════════════
+
+TEST_CASE("filter_shell_output: git push strips progress", "[shell_filter]") {
+    std::string input =
+        "Enumerating objects: 5, done.\n"
+        "Counting objects: 100% (5/5), done.\n"
+        "Compressing objects: 100% (3/3), done.\n"
+        "Writing objects: 100% (3/3), 1.22 KiB | 1.22 MiB/s, done.\n"
+        "Total 3 (delta 2), reused 0 (delta 0)\n"
+        "remote: Resolving deltas: 100% (2/2), completed with 2 local objects.\n"
+        "To https://github.com/user/repo.git\n"
+        "   abc1234..def5678  main -> main\n";
+
+    std::string result = filter_shell_output("git push", input);
+    // Progress stripped
+    REQUIRE(result.find("Enumerating objects") == std::string::npos);
+    REQUIRE(result.find("Compressing objects") == std::string::npos);
+    REQUIRE(result.find("Writing objects") == std::string::npos);
+    // Important info kept
+    REQUIRE(result.find("abc1234..def5678") != std::string::npos);
+    REQUIRE(result.find("github.com") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: git clone strips progress", "[shell_filter]") {
+    std::string input =
+        "Cloning into 'repo'...\n"
+        "remote: Enumerating objects: 1000, done.\n"
+        "remote: Counting objects: 100% (1000/1000), done.\n"
+        "remote: Compressing objects: 100% (500/500), done.\n"
+        "remote: Total 1000 (delta 300), reused 800 (delta 200)\n"
+        "Receiving objects: 100% (1000/1000), 5.00 MiB | 10.00 MiB/s, done.\n"
+        "Resolving deltas: 100% (300/300), done.\n";
+
+    std::string result = filter_shell_output("git clone https://github.com/user/repo.git", input);
+    REQUIRE(result.find("Cloning into") != std::string::npos);
+    REQUIRE(result.find("remote: Counting") == std::string::npos);
+    REQUIRE(result.find("Receiving objects") == std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: git commit output preserved", "[shell_filter]") {
+    std::string input =
+        "[main abc1234] fix: resolve race condition in session manager\n"
+        " 2 files changed, 15 insertions(+), 3 deletions(-)\n";
+
+    std::string result = filter_shell_output("git commit -m 'fix: resolve race'", input);
+    REQUIRE(result.find("abc1234") != std::string::npos);
+    REQUIRE(result.find("2 files changed") != std::string::npos);
+}
+
+// ═══ GitHub CLI filtering ═══════════════════════════════════════
+
+TEST_CASE("filter_shell_output: gh pr list caps items", "[shell_filter]") {
+    std::string input = "ID\tTITLE\tBRANCH\tSTATE\n";
+    for (int i = 0; i < 30; i++) {
+        input += "#" + std::to_string(i + 1) + "\tPR title " + std::to_string(i) + "\tfeat/branch-" + std::to_string(i) + "\tOPEN\n";
+    }
+
+    std::string result = filter_shell_output("gh pr list", input);
+    REQUIRE(result.find("#1\t") != std::string::npos);
+    REQUIRE(result.find("more items") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: gh issue list truncates wide lines", "[shell_filter]") {
+    std::string title(200, 'x');
+    std::string input =
+        "ID\tTITLE\tSTATE\n"
+        "#1\t" + title + "\tOPEN\n"
+        "#2\tShort title\tCLOSED\n";
+
+    std::string result = filter_shell_output("gh issue list", input);
+    REQUIRE(result.find("...") != std::string::npos);
+    REQUIRE(result.find("Short title") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: gh small output unchanged", "[shell_filter]") {
+    std::string input = "#1\tFix bug\tmain\tMERGED\n";
+    std::string result = filter_shell_output("gh pr list", input);
+    REQUIRE(result.find("Fix bug") != std::string::npos);
+}
+
+// ═══ Environment variable filtering ═════════════════════════════
+
+TEST_CASE("filter_shell_output: env strips noise vars", "[shell_filter]") {
+    std::string input;
+    input += "HOME=/Users/user\n";
+    input += "PATH=/usr/bin:/usr/local/bin\n";
+    input += "API_KEY=secret123\n";
+    input += "NODE_ENV=production\n";
+    input += "LS_COLORS=rs=0:di=01;34:ln=01;36:very:long:color:spec\n";
+    input += "PS1=\\u@\\h:\\w\\$\n";
+    input += "SHLVL=2\n";
+    input += "OLDPWD=/tmp\n";
+    input += "PWD=/home/user\n";
+    input += "COLORTERM=truecolor\n";
+    input += "DATABASE_URL=postgres://localhost/db\n";
+
+    std::string result = filter_shell_output("env", input);
+    // Important vars kept
+    REQUIRE(result.find("HOME=") != std::string::npos);
+    REQUIRE(result.find("API_KEY=") != std::string::npos);
+    REQUIRE(result.find("NODE_ENV=") != std::string::npos);
+    REQUIRE(result.find("DATABASE_URL=") != std::string::npos);
+    // Noise stripped
+    REQUIRE(result.find("LS_COLORS=") == std::string::npos);
+    REQUIRE(result.find("PS1=") == std::string::npos);
+    REQUIRE(result.find("SHLVL=") == std::string::npos);
+    REQUIRE(result.find("noise env vars stripped") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: env truncates long values", "[shell_filter]") {
+    std::string long_path = "PATH=";
+    for (int i = 0; i < 50; i++) {
+        long_path += "/usr/local/bin" + std::to_string(i) + ":";
+    }
+    std::string input;
+    for (int i = 0; i < 12; i++) {
+        input += "VAR_" + std::to_string(i) + "=value\n";
+    }
+    input += long_path + "\n";
+
+    std::string result = filter_shell_output("printenv", input);
+    REQUIRE(result.find("PATH=") != std::string::npos);
+    REQUIRE(result.find("...") != std::string::npos);
+}
+
+// ═══ Dependency file summarization ══════════════════════════════
+
+TEST_CASE("filter_shell_output: cat Cargo.toml summarized", "[shell_filter]") {
+    std::string input;
+    input += "[package]\n";
+    input += "name = \"my-crate\"\n";
+    input += "version = \"0.1.0\"\n";
+    input += "\n";
+    input += "[dependencies]\n";
+    for (int i = 0; i < 25; i++) {
+        input += "dep-" + std::to_string(i) + " = \"1.0\"\n";
+    }
+    input += "\n";
+    input += "[dev-dependencies]\n";
+    for (int i = 0; i < 10; i++) {
+        input += "dev-dep-" + std::to_string(i) + " = \"2.0\"\n";
+    }
+
+    std::string result = filter_shell_output("cat Cargo.toml", input);
+    REQUIRE(result.find("[package]") != std::string::npos);
+    REQUIRE(result.find("[dependencies]") != std::string::npos);
+    REQUIRE(result.find("dep-0") != std::string::npos);
+    REQUIRE(result.find("more entries hidden") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: cat requirements.txt summarized", "[shell_filter]") {
+    std::string input;
+    for (int i = 0; i < 30; i++) {
+        input += "package-" + std::to_string(i) + "==1.0." + std::to_string(i) + "\n";
+    }
+
+    std::string result = filter_shell_output("cat requirements.txt", input);
+    REQUIRE(result.find("package-0==1.0.0") != std::string::npos);
+    REQUIRE(result.find("package-14==1.0.14") != std::string::npos);
+    REQUIRE(result.find("more packages") != std::string::npos);
+    // Deep packages should be hidden
+    REQUIRE(result.find("package-29") == std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: cat go.mod summarized", "[shell_filter]") {
+    std::string input;
+    input += "module github.com/user/project\n";
+    input += "go 1.21\n";
+    input += "\n";
+    input += "require (\n";
+    for (int i = 0; i < 30; i++) {
+        input += "\tgithub.com/dep/dep" + std::to_string(i) + " v1.0." + std::to_string(i) + "\n";
+    }
+    input += ")\n";
+
+    std::string result = filter_shell_output("cat go.mod", input);
+    REQUIRE(result.find("module github.com") != std::string::npos);
+    REQUIRE(result.find("more lines") != std::string::npos);
+}
+
+// ═══ Git diff file-level summary ════════════════════════════════
+
+TEST_CASE("filter_shell_output: large git diff gets file summary", "[shell_filter]") {
+    std::string input;
+    // Generate a large diff with multiple files
+    for (int f = 0; f < 5; f++) {
+        input += "diff --git a/file" + std::to_string(f) + ".cpp b/file" + std::to_string(f) + ".cpp\n";
+        input += "--- a/file" + std::to_string(f) + ".cpp\n";
+        input += "+++ b/file" + std::to_string(f) + ".cpp\n";
+        input += "@@ -1,10 +1,15 @@\n";
+        for (int l = 0; l < 10; l++) {
+            input += "+added line " + std::to_string(l) + "\n";
+        }
+        for (int l = 0; l < 3; l++) {
+            input += "-removed line " + std::to_string(l) + "\n";
+        }
+    }
+
+    std::string result = filter_shell_output("git diff", input);
+    // Should have file summary at top
+    REQUIRE(result.find("Files changed:") != std::string::npos);
+    REQUIRE(result.find("file0.cpp (+10/-3)") != std::string::npos);
+    REQUIRE(result.find("file4.cpp (+10/-3)") != std::string::npos);
+    // Original diff content preserved
+    REQUIRE(result.find("diff --git") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: small git diff no summary", "[shell_filter]") {
+    std::string input =
+        "diff --git a/foo.cpp b/foo.cpp\n"
+        "--- a/foo.cpp\n"
+        "+++ b/foo.cpp\n"
+        "@@ -1,3 +1,3 @@\n"
+        "-old\n"
+        "+new\n";
+
+    std::string result = filter_shell_output("git diff", input);
+    // Small diffs should not get file summary
+    REQUIRE(result.find("Files changed:") == std::string::npos);
+}
+
+// ═══ npm boilerplate stripping ══════════════════════════════════
+
+TEST_CASE("filter_shell_output: npm install strips boilerplate", "[shell_filter]") {
+    std::string input;
+    input += "> my-project@1.0.0 postinstall\n";
+    input += "> node scripts/postinstall.js\n";
+    input += "\n";
+    input += "npm WARN deprecated package@1.0.0: use package@2.0.0 instead\n";
+    input += "npm notice New major version available!\n";
+    input += "my-project@1.0.0\n";
+    input += "├── express@4.18.0\n";
+    input += "├── lodash@4.17.21\n";
+    input += "└── typescript@5.0.0\n";
+
+    std::string result = filter_shell_output("npm list", input);
+    // Boilerplate stripped
+    REQUIRE(result.find("> my-project@1.0.0") == std::string::npos);
+    REQUIRE(result.find("npm WARN") == std::string::npos);
+    REQUIRE(result.find("npm notice") == std::string::npos);
+    // Content kept
+    REQUIRE(result.find("express@4.18.0") != std::string::npos);
+}
+
+// ═══ Search result enhancements ═════════════════════════════════
+
+TEST_CASE("filter_shell_output: grep shortens long paths", "[shell_filter]") {
+    std::string input;
+    for (int i = 0; i < 12; i++) {
+        input += "src/components/deeply/nested/very/long/path/file.tsx:" +
+                 std::to_string(i + 1) + ":    const match = something;\n";
+    }
+
+    std::string result = filter_shell_output("grep -rn match src/", input);
+    // Long path should be shortened
+    REQUIRE(result.find("src/...") != std::string::npos);
+    REQUIRE(result.find("12 matches") != std::string::npos);
+}
