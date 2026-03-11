@@ -129,8 +129,9 @@ static std::string join_lines(const std::vector<std::string>& lines) {
 // ── Command classifier ──────────────────────────────────────────
 
 enum class ShellCommandType {
-    GitDiff, GitStatus, GitLog, TestRunner, BuildLog, DirListing,
-    Linter, SearchResult, HttpResponse, ContainerOps, PackageManager, Other
+    GitDiff, GitStatus, GitLog, GitOps, TestRunner, BuildLog, DirListing,
+    Linter, SearchResult, HttpResponse, ContainerOps, PackageManager,
+    GitHubCli, EnvVars, DepFile, Other
 };
 
 static bool starts_with(const std::string& s, const std::string& prefix) {
@@ -150,6 +151,14 @@ static ShellCommandType classify_command(const std::string& command) {
     if (starts_with(cmd, "git diff") || contains(cmd, "| git diff")) return ShellCommandType::GitDiff;
     if (starts_with(cmd, "git status")) return ShellCommandType::GitStatus;
     if (starts_with(cmd, "git log") || starts_with(cmd, "git shortlog")) return ShellCommandType::GitLog;
+    // Git operations (add, commit, push, pull, fetch, clone, merge, rebase, checkout)
+    if (starts_with(cmd, "git add") || starts_with(cmd, "git commit") ||
+        starts_with(cmd, "git push") || starts_with(cmd, "git pull") ||
+        starts_with(cmd, "git fetch") || starts_with(cmd, "git clone") ||
+        starts_with(cmd, "git merge") || starts_with(cmd, "git rebase") ||
+        starts_with(cmd, "git checkout") || starts_with(cmd, "git switch")) {
+        return ShellCommandType::GitOps;
+    }
 
     // Test runners
     if (contains(cmd, "pytest") || contains(cmd, "cargo test") ||
@@ -212,6 +221,26 @@ static ShellCommandType classify_command(const std::string& command) {
         (starts_with(cmd, "gem ") && contains(cmd, "list")) ||
         (starts_with(cmd, "brew ") && contains(cmd, "list"))) {
         return ShellCommandType::PackageManager;
+    }
+
+    // GitHub CLI
+    if (starts_with(cmd, "gh ")) {
+        return ShellCommandType::GitHubCli;
+    }
+
+    // Environment variables
+    if (starts_with(cmd, "env") || starts_with(cmd, "printenv") ||
+        starts_with(cmd, "set ") || starts_with(cmd, "export")) {
+        return ShellCommandType::EnvVars;
+    }
+
+    // Dependency file reads (cat package.json, cat Cargo.toml, etc.)
+    if (starts_with(cmd, "cat ") &&
+        (contains(cmd, "package.json") || contains(cmd, "Cargo.toml") ||
+         contains(cmd, "requirements.txt") || contains(cmd, "pyproject.toml") ||
+         contains(cmd, "go.mod") || contains(cmd, "Gemfile") ||
+         contains(cmd, "build.gradle") || contains(cmd, "pom.xml"))) {
+        return ShellCommandType::DepFile;
     }
 
     return ShellCommandType::Other;
@@ -418,6 +447,31 @@ static std::string filter_linter_output(const std::string& output) {
 
 // ── Search result filter ────────────────────────────────────────
 // Groups grep/rg/ag results by file, caps matches per file.
+// Shortens long paths and centers match content in a window.
+
+// Shorten long paths: src/components/deeply/nested/file.cpp -> src/.../nested/file.cpp
+static std::string compact_path(const std::string& path) {
+    if (path.size() <= 50) return path;
+    auto last_slash = path.rfind('/');
+    if (last_slash == std::string::npos) return path;
+    auto second_last = path.rfind('/', last_slash - 1);
+    auto first_slash = path.find('/');
+    if (first_slash == std::string::npos || first_slash >= second_last) return path;
+    return path.substr(0, first_slash + 1) + "..." +
+           path.substr(second_last);
+}
+
+// Truncate match content to ~80 chars, centering around the non-path portion.
+static std::string truncate_match_content(const std::string& line, size_t content_start) {
+    constexpr size_t max_content = 80;
+    if (line.size() - content_start <= max_content) return line;
+    std::string prefix = line.substr(0, content_start);
+    std::string content = line.substr(content_start);
+    if (content.size() > max_content) {
+        content = content.substr(0, max_content) + "...";
+    }
+    return prefix + content;
+}
 
 static std::string filter_search_results(const std::string& output) {
     auto lines = split_lines(output);
@@ -461,16 +515,21 @@ static std::string filter_search_results(const std::string& output) {
 
     for (const auto& file : file_order) {
         const auto& indices = file_matches[file];
+        std::string short_path = compact_path(file);
         uint32_t shown = 0;
         for (size_t idx : indices) {
             if (shown < max_matches_per_file) {
-                result.push_back(lines[idx]);
+                const auto& line = lines[idx];
+                // Rebuild line with shortened path + truncated content
+                auto colon1 = line.find(':');
+                std::string rebuilt = short_path + line.substr(colon1);
+                result.push_back(truncate_match_content(rebuilt, short_path.size()));
                 shown++;
             }
         }
         if (indices.size() > max_matches_per_file) {
             result.push_back("  [..." + std::to_string(indices.size() - max_matches_per_file) +
-                             " more matches in " + file + "]");
+                             " more matches in " + short_path + "]");
         }
     }
 
@@ -672,6 +731,256 @@ static std::string filter_package_output(const std::string& output) {
     return join_lines(kept);
 }
 
+// ── Git operations filter ───────────────────────────────────────
+// Compress verbose git add/commit/push/pull/fetch/clone output.
+
+static std::string filter_git_ops(const std::string& output) {
+    auto lines = split_lines(output);
+    std::vector<std::string> kept;
+
+    for (const auto& line : lines) {
+        // Skip progress indicators from push/pull/fetch/clone
+        if (contains(line, "Enumerating objects:") ||
+            contains(line, "Counting objects:") ||
+            contains(line, "Compressing objects:") ||
+            contains(line, "Writing objects:") ||
+            contains(line, "Receiving objects:") ||
+            contains(line, "Resolving deltas:") ||
+            contains(line, "remote: Counting") ||
+            contains(line, "remote: Compressing") ||
+            contains(line, "remote: Total")) {
+            continue;
+        }
+        // Skip npm-style progress lines
+        if (contains(line, "Unpacking objects:")) continue;
+        kept.push_back(line);
+    }
+
+    return join_lines(kept);
+}
+
+// ── GitHub CLI filter ───────────────────────────────────────────
+// Compact gh pr/issue/run list output.
+
+static std::string filter_github_cli(const std::string& output) {
+    auto lines = split_lines(output);
+    if (lines.size() < 3) return output;
+
+    std::vector<std::string> kept;
+    constexpr uint32_t max_items = 15;
+    uint32_t item_count = 0;
+
+    for (const auto& line : lines) {
+        // Truncate wide table rows (gh outputs are tab-separated)
+        if (line.size() > 150) {
+            kept.push_back(line.substr(0, 150) + "...");
+        } else {
+            kept.push_back(line);
+        }
+        item_count++;
+        if (item_count > max_items + 1) { // +1 for header row
+            kept.push_back("[..." + std::to_string(lines.size() - max_items - 1) + " more items]");
+            break;
+        }
+    }
+
+    return join_lines(kept);
+}
+
+// ── Environment variable filter ─────────────────────────────────
+// Strips noisy env vars, keeps project-relevant ones.
+
+static std::string filter_env_vars(const std::string& output) {
+    auto lines = split_lines(output);
+    if (lines.size() < 10) return output;
+
+    // Noisy env var prefixes to strip
+    static const char* const noise_prefixes[] = {
+        "LS_COLORS=", "LESS_TERMCAP_", "LSCOLORS=",
+        "TERMCAP=", "PS1=", "PS2=", "PROMPT_COMMAND=",
+        "BASH_FUNC_", "COMP_", "FIGNORE=",
+        "_=", "SHLVL=", "OLDPWD=", "PWD=",
+        "COLORTERM=", "TERM_PROGRAM_VERSION=",
+    };
+
+    std::vector<std::string> kept;
+    uint32_t stripped = 0;
+
+    for (const auto& line : lines) {
+        bool is_noise = false;
+        for (const char* prefix : noise_prefixes) {
+            if (starts_with(line, prefix)) {
+                is_noise = true;
+                break;
+            }
+        }
+        // Also strip very long values (e.g., PATH with 50+ entries)
+        if (!is_noise && line.size() > 200) {
+            auto eq = line.find('=');
+            if (eq < 40) {  // npos is always > 40
+                kept.push_back(line.substr(0, eq + 1) + line.substr(eq + 1, 100) + "...");
+                continue;
+            }
+        }
+        if (is_noise) {
+            stripped++;
+        } else {
+            kept.push_back(line);
+        }
+    }
+
+    if (stripped > 0) {
+        kept.push_back("[" + std::to_string(stripped) + " noise env vars stripped]");
+    }
+
+    return join_lines(kept);
+}
+
+// ── Dependency file summarizer ──────────────────────────────────
+// Summarize package.json, Cargo.toml, requirements.txt, etc.
+
+static std::string summarize_dep_file(const std::string& output) {
+    auto lines = split_lines(output);
+    if (lines.size() < 15) return output;
+
+    // Detect format and summarize
+    bool is_json = !output.empty() && (output[0] == '{' || output[0] == '[');
+    bool is_toml = false;
+    bool is_requirements = false;
+
+    for (const auto& line : lines) {
+        if (starts_with(line, "[dependencies]") || starts_with(line, "[package]")) {
+            is_toml = true;
+            break;
+        }
+        // requirements.txt: lines like "package==version" or "package>=version"
+        if (contains(line, "==") || (contains(line, ">=") && !contains(line, "{"))) {
+            is_requirements = true;
+        }
+    }
+
+    if (is_json) {
+        // Try JSON schema extraction for package.json
+        std::string schema = extract_json_schema(output);
+        if (!schema.empty()) return schema;
+    }
+
+    if (is_toml) {
+        // Show section headers + first N entries per section
+        std::vector<std::string> kept;
+        constexpr uint32_t max_per_section = 10;
+        uint32_t section_count = 0;
+        uint32_t hidden = 0;
+
+        for (const auto& line : lines) {
+            if (starts_with(line, "[")) {
+                section_count = 0;
+                kept.push_back(line);
+                continue;
+            }
+            if (section_count < max_per_section || line.empty()) {
+                kept.push_back(line);
+                section_count++;
+            } else {
+                hidden++;
+            }
+        }
+        if (hidden > 0) {
+            kept.push_back("[" + std::to_string(hidden) + " more entries hidden]");
+        }
+        return join_lines(kept);
+    }
+
+    if (is_requirements) {
+        // Show first 15 packages
+        constexpr uint32_t max_pkgs = 15;
+        if (lines.size() <= max_pkgs) return output;
+        std::vector<std::string> kept(lines.begin(), lines.begin() + max_pkgs);
+        kept.push_back("[..." + std::to_string(lines.size() - max_pkgs) + " more packages]");
+        return join_lines(kept);
+    }
+
+    // go.mod or unknown: show first 20 lines
+    constexpr uint32_t max_lines_dep = 20;
+    if (lines.size() <= max_lines_dep) return output;
+    std::vector<std::string> kept(lines.begin(), lines.begin() + max_lines_dep);
+    kept.push_back("[..." + std::to_string(lines.size() - max_lines_dep) + " more lines]");
+    return join_lines(kept);
+}
+
+// ── Diff file-level summary ─────────────────────────────────────
+// For very long diffs, add per-file +/-/~ summary at the top.
+
+static std::string enhance_git_diff(const std::string& filtered_diff) {
+    auto lines = split_lines(filtered_diff);
+    // Only enhance if diff is large
+    if (lines.size() < 50) return filtered_diff;
+
+    // Count changes per file
+    struct FileStats {
+        uint32_t added = 0;
+        uint32_t removed = 0;
+    };
+    std::vector<std::string> file_order;
+    std::unordered_map<std::string, FileStats> stats;
+    std::string current_file;
+
+    for (const auto& line : lines) {
+        if (starts_with(line, "diff --git")) {
+            // Extract file name: "diff --git a/foo b/foo" -> "foo"
+            auto b_pos = line.find(" b/");
+            if (b_pos != std::string::npos) {
+                current_file = line.substr(b_pos + 3);
+                if (stats.find(current_file) == stats.end()) {
+                    file_order.push_back(current_file);
+                    stats[current_file] = {};
+                }
+            }
+        } else if (!current_file.empty()) {
+            if (line.size() > 0 && line[0] == '+' && !starts_with(line, "+++")) {
+                stats[current_file].added++;
+            } else if (line.size() > 0 && line[0] == '-' && !starts_with(line, "---")) {
+                stats[current_file].removed++;
+            }
+        }
+    }
+
+    if (file_order.size() < 2) return filtered_diff;
+
+    // Prepend summary
+    std::string summary = "Files changed:\n";
+    for (const auto& file : file_order) {
+        const auto& s = stats[file];
+        summary += "  " + file + " (+" + std::to_string(s.added) +
+                   "/-" + std::to_string(s.removed) + ")\n";
+    }
+    summary += "\n";
+
+    return summary + filtered_diff;
+}
+
+// ── npm/pnpm boilerplate stripping ──────────────────────────────
+// Called within the PackageManager filter for npm/pnpm commands.
+
+static std::string strip_npm_boilerplate(const std::string& output) {
+    auto lines = split_lines(output);
+    std::vector<std::string> kept;
+
+    for (const auto& line : lines) {
+        // Strip script header lines: "> project@version script"
+        if (starts_with(line, "> ") && contains(line, "@")) continue;
+        // Strip npm WARN/notice
+        if (starts_with(line, "npm WARN") || starts_with(line, "npm notice")) continue;
+        // Strip pnpm progress indicators
+        if (contains(line, "Progress:") || contains(line, "Packages:")) continue;
+        // Skip empty lines that follow stripped content
+        if (line.empty() && !kept.empty() && kept.back().empty()) continue;
+        kept.push_back(line);
+    }
+
+    return join_lines(kept);
+}
+
 // ── Short-circuit rules ─────────────────────────────────────────
 // If output matches a known success pattern (and no error indicator),
 // return a one-line summary instead of processing the full output.
@@ -712,20 +1021,30 @@ std::string filter_shell_output(const std::string& command,
     // Apply command-specific filter
     std::string filtered;
     switch (cmd_type) {
-        case ShellCommandType::GitDiff:    filtered = filter_git_diff(cleaned);    break;
+        case ShellCommandType::GitDiff:
+            filtered = filter_git_diff(cleaned);
+            filtered = enhance_git_diff(filtered);
+            break;
         case ShellCommandType::GitStatus:  filtered = filter_git_status(cleaned);  break;
         case ShellCommandType::GitLog:     filtered = cleaned; break;
+        case ShellCommandType::GitOps:     filtered = filter_git_ops(cleaned);     break;
         case ShellCommandType::TestRunner: filtered = filter_test_output(cleaned); break;
         case ShellCommandType::BuildLog:
             filtered = filter_build_log(cleaned);
             filtered = group_diagnostics(filtered);
             break;
-        case ShellCommandType::DirListing:    filtered = filter_noise_dirs(cleaned);      break;
-        case ShellCommandType::Linter:        filtered = filter_linter_output(cleaned);   break;
-        case ShellCommandType::SearchResult:  filtered = filter_search_results(cleaned);  break;
-        case ShellCommandType::HttpResponse:  filtered = filter_http_response(cleaned);   break;
-        case ShellCommandType::ContainerOps:  filtered = filter_container_output(cleaned); break;
-        case ShellCommandType::PackageManager: filtered = filter_package_output(cleaned);  break;
+        case ShellCommandType::DirListing:     filtered = filter_noise_dirs(cleaned);       break;
+        case ShellCommandType::Linter:         filtered = filter_linter_output(cleaned);    break;
+        case ShellCommandType::SearchResult:   filtered = filter_search_results(cleaned);   break;
+        case ShellCommandType::HttpResponse:   filtered = filter_http_response(cleaned);    break;
+        case ShellCommandType::ContainerOps:   filtered = filter_container_output(cleaned); break;
+        case ShellCommandType::PackageManager:
+            filtered = strip_npm_boilerplate(cleaned);
+            filtered = filter_package_output(filtered);
+            break;
+        case ShellCommandType::GitHubCli:      filtered = filter_github_cli(cleaned);       break;
+        case ShellCommandType::EnvVars:        filtered = filter_env_vars(cleaned);          break;
+        case ShellCommandType::DepFile:        filtered = summarize_dep_file(cleaned);       break;
         case ShellCommandType::Other: {
             // Try JSON schema extraction for API/curl responses
             std::string schema = extract_json_schema(cleaned);
