@@ -30,6 +30,12 @@ public:
     }
 };
 
+// Check if a tool name is a memory tool (memory_store, memory_recall, etc.)
+inline bool is_memory_tool(const std::string& name) {
+    return name == "memory_store" || name == "memory_recall" ||
+           name == "memory_forget" || name == "memory_link";
+}
+
 // Create all built-in tools
 std::vector<std::unique_ptr<Tool>> create_builtin_tools();
 
