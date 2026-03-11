@@ -244,7 +244,28 @@ std::string Agent::process(const std::string& user_message) {
             ToolResult result = dispatch_tool(call, tools_);
 
             // Filter tool output to reduce token consumption
-            result.output = filter_tool_output(result.output);
+            if (call.name == "shell") {
+                // Extract command for smart filtering
+                std::string command;
+                try {
+                    auto args = nlohmann::json::parse(call.arguments);
+                    command = args.value("command", "");
+                } catch (...) {} // NOLINT(bugprone-empty-catch)
+
+                // Tee full output to disk before filtering
+                std::string tee_path;
+                if (!command.empty()) {
+                    tee_path = tee_shell_output(result.output);
+                }
+
+                result.output = filter_shell_output(command, result.output);
+
+                if (!tee_path.empty()) {
+                    result.output += "\n[Full output saved to " + tee_path + "]";
+                }
+            } else {
+                result.output = filter_tool_output(result.output);
+            }
 
             // Emit ToolCallResult event
             if (event_bus_) {

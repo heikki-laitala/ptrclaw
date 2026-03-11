@@ -20,4 +20,17 @@ std::string filter_tool_output(const std::string& output,
 // Strip ANSI escape sequences from a string.
 std::string strip_ansi_codes(const std::string& input);
 
+// Command-aware shell output filtering.
+// Detects the command type (git, test runner, build) and applies smart
+// filters. Falls back to generic filter_tool_output for unknown commands.
+std::string filter_shell_output(const std::string& command,
+                                const std::string& output,
+                                const OutputFilterConfig& config = {});
+
+// Save full shell output to disk for later retrieval.
+// Returns the file path on success, empty string on failure.
+// When tee_dir is empty, defaults to ~/.ptrclaw/tee/.
+std::string tee_shell_output(const std::string& output,
+                             const std::string& tee_dir = "");
+
 } // namespace ptrclaw
