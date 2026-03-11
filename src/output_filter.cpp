@@ -6,7 +6,6 @@
 #include <nlohmann/json.hpp>
 #include <regex>
 #include <sstream>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -343,40 +342,18 @@ static std::string filter_build_log(const std::string& output) {
 // If output matches a known success pattern (and no error indicator),
 // return a one-line summary instead of processing the full output.
 
-struct ShortCircuitRule {
-    const char* pattern;    // must be present in output
-    const char* unless;     // if present, don't short-circuit (comma-separated)
-    const char* message;    // replacement message
-};
-
-static const ShortCircuitRule build_short_circuits[] = {
-    {"Finished", "error,warning", "Build succeeded"},         // cargo build
-    {"BUILD SUCCESSFUL", "FAILED,warning", "Build succeeded"},  // gradle
-};
-
-static std::string try_short_circuit(const std::string& output,
-                                     const ShortCircuitRule* rules, size_t count) {
-    for (size_t i = 0; i < count; i++) {
-        const auto& rule = rules[i];
-        if (!rule.message) continue;
-        if (!contains(output, rule.pattern)) continue;
-        // Check all unless keywords (comma-separated)
-        if (rule.unless) {
-            std::string unless_str = rule.unless;
-            bool blocked = false;
-            size_t pos = 0;
-            while (pos < unless_str.size()) {
-                size_t comma = unless_str.find(',', pos);
-                std::string keyword = (comma != std::string::npos)
-                    ? unless_str.substr(pos, comma - pos)
-                    : unless_str.substr(pos);
-                if (contains(output, keyword)) { blocked = true; break; }
-                pos = (comma != std::string::npos) ? comma + 1 : unless_str.size();
-            }
-            if (blocked) continue;
-        }
-        return rule.message;
+// Check if output matches a known success pattern without any blocker keywords.
+// Returns the replacement message, or empty string if no match.
+static std::string try_build_short_circuit(const std::string& output) {
+    // Blockers: if any of these appear, don't short-circuit
+    if (contains(output, "error") || contains(output, "warning") ||
+        contains(output, "FAILED")) {
+        return "";
     }
+
+    if (contains(output, "Finished")) return "Build succeeded";         // cargo
+    if (contains(output, "BUILD SUCCESSFUL")) return "Build succeeded"; // gradle
+
     return "";
 }
 
@@ -394,8 +371,7 @@ std::string filter_shell_output(const std::string& command,
 
     // Try short-circuit before full filtering
     if (cmd_type == ShellCommandType::BuildLog) {
-        std::string sc = try_short_circuit(cleaned, build_short_circuits,
-                                           std::size(build_short_circuits));
+        std::string sc = try_build_short_circuit(cleaned);
         if (!sc.empty()) return sc;
     }
 
@@ -415,12 +391,15 @@ std::string filter_shell_output(const std::string& command,
         }
     }
 
-    // Apply generic limits as final pass (smart truncation instead of naive cut)
+    // Apply generic limits as final pass.
+    // Smart truncation replaces the naive line-count cut, so disable max_lines
+    // in filter_tool_output to avoid double truncation.
     if (config.max_lines > 0) {
         filtered = smart_truncate(filtered, config.max_lines);
     }
     OutputFilterConfig final_config = config;
-    final_config.strip_ansi = false; // already stripped
+    final_config.strip_ansi = false;  // already stripped
+    final_config.max_lines = 0;       // already handled by smart_truncate
     return filter_tool_output(filtered, final_config);
 }
 
@@ -501,6 +480,8 @@ std::string tee_shell_output(const std::string& output,
     std::string path = dir + "/" + filename;
 
     if (atomic_write_file(path, output)) {
+        // Rotate lazily after successful write
+        rotate_tee_files(dir);
         return path;
     }
     return "";
@@ -634,8 +615,7 @@ static bool is_structural_line(const std::string& line) {
     // Imports / includes
     if (starts_with(trimmed, "import ") || starts_with(trimmed, "from ") ||
         starts_with(trimmed, "#include") || starts_with(trimmed, "use ") ||
-        starts_with(trimmed, "require(") || starts_with(trimmed, "const ") ||
-        starts_with(trimmed, "pub ") || starts_with(trimmed, "export ")) {
+        starts_with(trimmed, "require(") || starts_with(trimmed, "export ")) {
         return true;
     }
 
@@ -644,8 +624,8 @@ static bool is_structural_line(const std::string& line) {
         return true;
     }
 
-    // Error/warning lines (always keep)
-    if (contains(trimmed, "error") || contains(trimmed, "Error") ||
+    // Error/warning lines (always keep) — match diagnostic patterns, not substrings
+    if (contains(trimmed, "error:") || contains(trimmed, "Error:") ||
         contains(trimmed, "warning:") || contains(trimmed, "FAIL")) {
         return true;
     }
