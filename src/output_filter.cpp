@@ -1123,7 +1123,55 @@ std::string extract_json_schema(const std::string& json_str) {
     return "";
 }
 
-std::string tee_shell_output(const std::string& output,
+bool is_sensitive_command(const std::string& command) {
+    std::string cmd = command;
+    size_t start = cmd.find_first_not_of(" \t");
+    if (start != std::string::npos) cmd = cmd.substr(start);
+
+    // Commands that commonly expose secrets/tokens
+    if (starts_with(cmd, "env") || starts_with(cmd, "printenv") ||
+        starts_with(cmd, "export") || starts_with(cmd, "set ")) {
+        return true;
+    }
+    // Auth/token/secret-related commands
+    if (contains(cmd, "token") || contains(cmd, "secret") ||
+        contains(cmd, "password") || contains(cmd, "credential") ||
+        contains(cmd, "auth") || contains(cmd, "login")) {
+        return true;
+    }
+    // .env files
+    if (contains(cmd, ".env")) return true;
+
+    return false;
+}
+
+// Redact lines that look like key=value secrets
+static std::string redact_sensitive_output(const std::string& output) {
+    auto lines = split_lines(output);
+    std::vector<std::string> result;
+
+    for (const auto& line : lines) {
+        auto eq = line.find('=');
+        if (eq != std::string::npos && eq > 0 && eq < line.size() - 1) {
+            std::string key = line.substr(0, eq);
+            // Redact values for keys that look like secrets
+            if (contains(key, "KEY") || contains(key, "SECRET") ||
+                contains(key, "TOKEN") || contains(key, "PASSWORD") ||
+                contains(key, "CREDENTIAL") || contains(key, "AUTH") ||
+                contains(key, "key") || contains(key, "secret") ||
+                contains(key, "token") || contains(key, "password")) {
+                result.push_back(key + "=[REDACTED]");
+                continue;
+            }
+        }
+        result.push_back(line);
+    }
+
+    return join_lines(result);
+}
+
+std::string tee_shell_output(const std::string& command,
+                             const std::string& output,
                              const std::string& tee_dir) {
     if (output.empty()) return "";
 
@@ -1135,10 +1183,15 @@ std::string tee_shell_output(const std::string& output,
         return "";
     }
 
+    // Redact sensitive commands before writing to disk
+    std::string safe_output = is_sensitive_command(command)
+        ? redact_sensitive_output(output)
+        : output;
+
     std::string filename = std::to_string(epoch_seconds()) + "_" + generate_id() + ".log";
     std::string path = dir + "/" + filename;
 
-    if (atomic_write_file(path, output)) {
+    if (atomic_write_file(path, safe_output)) {
         // Rotate lazily after successful write
         rotate_tee_files(dir);
         return path;

@@ -250,10 +250,14 @@ std::string Agent::process(const std::string& user_message) {
                     command = args.value("command", "");
                 } catch (...) {} // NOLINT(bugprone-empty-catch)
 
-                // Tee full output to disk before filtering
+                // Tee output to disk before filtering (opt-in via config)
                 std::string tee_path;
-                if (!command.empty()) {
-                    tee_path = tee_shell_output(result.output);
+                if (!command.empty() && config_.agent.tee_mode != "off") {
+                    bool should_tee = (config_.agent.tee_mode == "always") ||
+                                      (config_.agent.tee_mode == "failures" && !result.success);
+                    if (should_tee) {
+                        tee_path = tee_shell_output(command, result.output);
+                    }
                 }
 
                 // Deduplicate repetitive log lines before command-specific filter

@@ -26,6 +26,7 @@ struct AgentConfig {
     uint32_t max_history_messages = 50;
     uint32_t token_limit = 128000;
     bool disable_streaming = false;
+    std::string tee_mode = "off";  // "off", "failures", "always"
 };
 
 struct EmbeddingConfig {
