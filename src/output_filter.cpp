@@ -517,6 +517,17 @@ void rotate_tee_files(const std::string& tee_dir,
         return;
     }
 
+    // Early exit if within limits
+    if (logs.size() <= max_files) {
+        bool any_oversized = false;
+        for (const auto& entry : logs) {
+            try {
+                if (entry.file_size() > max_file_size) { any_oversized = true; break; }
+            } catch (...) {}
+        }
+        if (!any_oversized) return;
+    }
+
     std::sort(logs.begin(), logs.end(),
               [](const fs::directory_entry& a, const fs::directory_entry& b) {
                   return fs::last_write_time(a) < fs::last_write_time(b);
@@ -818,36 +829,27 @@ std::string group_diagnostics(const std::string& output) {
 // ── Noise directory filtering ───────────────────────────────────
 
 static const char* const noise_dirs[] = {
-    "node_modules", ".git", "target", "__pycache__", ".next", "dist",
-    "build", ".cache", ".turbo", ".vercel", ".pytest_cache", ".mypy_cache",
+    "node_modules", ".git", "__pycache__", ".next",
+    ".cache", ".turbo", ".vercel", ".pytest_cache", ".mypy_cache",
     ".tox", ".venv", "venv", ".env", "coverage", ".nyc_output",
     ".DS_Store", "Thumbs.db", ".idea", ".vscode", ".vs",
 };
 
 static bool is_noise_path(const std::string& line) {
     for (const char* dir : noise_dirs) {
-        // Match "/dir/" or "/dir" at end, or "dir/" at start (tree output)
-        std::string slash_dir = std::string("/") + dir + "/";
-        std::string slash_end = std::string("/") + dir;
-        std::string dir_slash = std::string(dir) + "/";
-
-        if (contains(line, slash_dir)) return true;
-        // Check end of line (without trailing slash)
-        if (line.size() >= slash_end.size() &&
-            line.compare(line.size() - slash_end.size(), slash_end.size(), slash_end) == 0) {
-            return true;
-        }
-        // Tree output: "├── node_modules" or "│   ├── .git"
-        if (contains(line, dir_slash)) return true;
-        // Exact match at end after tree decoration
-        if (line.size() >= strlen(dir)) {
-            auto pos = line.rfind(dir);
-            if (pos != std::string::npos && pos + strlen(dir) == line.size()) {
-                // Verify it's preceded by a non-alphanumeric char (tree decoration or /)
-                if (pos == 0 || !std::isalnum(static_cast<unsigned char>(line[pos - 1]))) {
-                    return true;
-                }
-            }
+        size_t dir_len = strlen(dir);
+        // Find all occurrences of the noise dir name in the line
+        size_t pos = 0;
+        while ((pos = line.find(dir, pos)) != std::string::npos) {
+            // Check boundary: must be preceded by non-alnum (/, space, tree decoration, start)
+            bool left_ok = (pos == 0) ||
+                           !std::isalnum(static_cast<unsigned char>(line[pos - 1]));
+            // Check boundary: must be followed by non-alnum (/, end, space, tree decoration)
+            size_t end = pos + dir_len;
+            bool right_ok = (end == line.size()) ||
+                            !std::isalnum(static_cast<unsigned char>(line[end]));
+            if (left_ok && right_ok) return true;
+            pos = end;
         }
     }
     return false;
@@ -869,9 +871,7 @@ std::string filter_noise_dirs(const std::string& output) {
     if (stripped == 0) return output;
 
     std::string result = join_lines(kept);
-    if (stripped > 0) {
-        result += "\n[" + std::to_string(stripped) + " noise entries stripped]";
-    }
+    result += "\n[" + std::to_string(stripped) + " noise entries stripped]";
     return result;
 }
 
