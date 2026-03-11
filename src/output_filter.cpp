@@ -177,7 +177,7 @@ static ShellCommandType classify_command(const std::string& command) {
         return ShellCommandType::BuildLog;
     }
 
-    // Linters (before build tools — some overlap with cargo clippy)
+    // Linters (after build tools — cargo clippy is caught above, which is fine)
     if (starts_with(cmd, "eslint") || contains(cmd, "npx eslint") ||
         starts_with(cmd, "tsc") || contains(cmd, "npx tsc") ||
         starts_with(cmd, "ruff ") || starts_with(cmd, "pylint") ||
@@ -425,10 +425,8 @@ static std::string filter_linter_output(const std::string& output) {
     auto lines = split_lines(output);
     if (lines.size() < 5) return output;
 
-    // Linter output is already diagnostic-heavy; apply grouping directly
+    // Group repeated diagnostics, then strip remaining noise
     std::string grouped = group_diagnostics(output);
-
-    // Additionally strip common linter noise
     auto glines = split_lines(grouped);
     std::vector<std::string> kept;
     for (const auto& line : glines) {
@@ -453,10 +451,11 @@ static std::string filter_linter_output(const std::string& output) {
 static std::string compact_path(const std::string& path) {
     if (path.size() <= 50) return path;
     auto last_slash = path.rfind('/');
-    if (last_slash == std::string::npos) return path;
+    if (last_slash == std::string::npos || last_slash == 0) return path;
     auto second_last = path.rfind('/', last_slash - 1);
+    if (second_last == std::string::npos || second_last == 0) return path;
     auto first_slash = path.find('/');
-    if (first_slash == std::string::npos || first_slash >= second_last) return path;
+    if (first_slash >= second_last) return path;
     return path.substr(0, first_slash + 1) + "..." +
            path.substr(second_last);
 }
@@ -553,27 +552,29 @@ static std::string filter_http_response(const std::string& output) {
     bool past_headers = false;
     uint32_t header_count = 0;
 
+    // Emit stripped-header summary and transition to body mode
+    auto end_headers = [&]() {
+        in_headers = false;
+        past_headers = true;
+        if (header_count > 2) {
+            kept.push_back("[" + std::to_string(header_count - 2) + " headers stripped]");
+        }
+    };
+
     for (const auto& line : lines) {
-        // curl -v: lines starting with < are response headers, > are request headers
+        // curl -v: lines starting with > or * are request headers / connection info
         if (starts_with(line, "> ") || starts_with(line, "* ") ||
             line == ">" || line == "*") {
-            // Request headers and connection info — skip
             continue;
         }
 
         if (starts_with(line, "< ") || line == "<") {
             if (line == "<") {
-                // curl -v separator line between headers and body
-                in_headers = false;
-                past_headers = true;
-                if (header_count > 2) {
-                    kept.push_back("[" + std::to_string(header_count - 2) + " headers stripped]");
-                }
+                end_headers();
                 continue;
             }
-            // Response header
+            // Response header — keep status line and content-type only
             std::string hdr = line.substr(2);
-            // Keep status line and content-type
             if (starts_with(hdr, "HTTP/") ||
                 contains(hdr, "content-type") || contains(hdr, "Content-Type")) {
                 kept.push_back(hdr);
@@ -598,11 +599,7 @@ static std::string filter_http_response(const std::string& output) {
 
         // Empty line after headers = body starts
         if (in_headers && line.empty()) {
-            in_headers = false;
-            past_headers = true;
-            if (header_count > 2) {
-                kept.push_back("[" + std::to_string(header_count - 2) + " headers stripped]");
-            }
+            end_headers();
             continue;
         }
 
@@ -937,9 +934,9 @@ static std::string enhance_git_diff(const std::string& filtered_diff) {
                 }
             }
         } else if (!current_file.empty()) {
-            if (line.size() > 0 && line[0] == '+' && !starts_with(line, "+++")) {
+            if (!line.empty() && line[0] == '+' && !starts_with(line, "+++")) {
                 stats[current_file].added++;
-            } else if (line.size() > 0 && line[0] == '-' && !starts_with(line, "---")) {
+            } else if (!line.empty() && line[0] == '-' && !starts_with(line, "---")) {
                 stats[current_file].removed++;
             }
         }
