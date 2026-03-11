@@ -27,11 +27,16 @@ std::string filter_shell_output(const std::string& command,
                                 const std::string& output,
                                 const OutputFilterConfig& config = {});
 
-// Save full shell output to disk for later retrieval.
+// Save shell output to disk for later retrieval.
 // Returns the file path on success, empty string on failure.
 // When tee_dir is empty, defaults to ~/.ptrclaw/tee/.
-std::string tee_shell_output(const std::string& output,
+// Sensitive commands (env, printenv, auth/token) are redacted before writing.
+std::string tee_shell_output(const std::string& command,
+                             const std::string& output,
                              const std::string& tee_dir = "");
+
+// Check if a command may produce sensitive output (env vars, tokens, etc.)
+bool is_sensitive_command(const std::string& command);
 
 // Extract a compact JSON schema from a JSON value.
 // E.g. {"name":"John","age":42} -> {name: string, age: number}

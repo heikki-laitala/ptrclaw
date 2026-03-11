@@ -34,7 +34,8 @@ nlohmann::json Config::defaults_json() {
             {"max_tool_iterations", 10},
             {"max_history_messages", 50},
             {"token_limit", 128000},
-            {"disable_streaming", false}
+            {"disable_streaming", false},
+            {"tee_mode", "off"}
         }},
         {"channels", {
             {"telegram", {{"bot_token", ""}, {"allow_from", nlohmann::json::array()}, {"reply_in_private", true}, {"proxy", ""}}},
@@ -159,6 +160,12 @@ Config Config::load() {
             cfg.agent.token_limit = a["token_limit"].get<uint32_t>();
         if (a.contains("disable_streaming") && a["disable_streaming"].is_boolean())
             cfg.agent.disable_streaming = a["disable_streaming"].get<bool>();
+        if (a.contains("tee_mode") && a["tee_mode"].is_string()) {
+            auto mode = a["tee_mode"].get<std::string>();
+            if (mode == "off" || mode == "failures" || mode == "always") {
+                cfg.agent.tee_mode = mode;
+            }
+        }
     }
 
     // Channel configurations — store raw JSON per channel name

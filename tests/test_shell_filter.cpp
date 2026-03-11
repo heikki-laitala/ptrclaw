@@ -182,7 +182,7 @@ TEST_CASE("tee_shell_output: writes file to disk", "[shell_filter]") {
     REQUIRE_FALSE(dir.empty());
 
     std::string output = "full shell output\nline 2\nline 3\n";
-    std::string path = tee_shell_output(output, dir);
+    std::string path = tee_shell_output("echo hello", output, dir);
 
     REQUIRE_FALSE(path.empty());
     REQUIRE(std::filesystem::exists(path));
@@ -195,7 +195,7 @@ TEST_CASE("tee_shell_output: returns valid path in specified dir", "[shell_filte
     auto dir = make_temp_dir();
     REQUIRE_FALSE(dir.empty());
 
-    std::string path = tee_shell_output("test output", dir);
+    std::string path = tee_shell_output("ls", "test output", dir);
     REQUIRE(path.find(dir) == 0);
     REQUIRE(path.find(".log") != std::string::npos);
 
@@ -207,7 +207,7 @@ TEST_CASE("tee_shell_output: creates tee directory", "[shell_filter]") {
     REQUIRE_FALSE(base.empty());
     std::string nested = base + "/sub/tee";
 
-    std::string path = tee_shell_output("test", nested);
+    std::string path = tee_shell_output("ls", "test", nested);
     REQUIRE_FALSE(path.empty());
     REQUIRE(std::filesystem::exists(nested));
 
@@ -215,19 +215,71 @@ TEST_CASE("tee_shell_output: creates tee directory", "[shell_filter]") {
 }
 
 TEST_CASE("tee_shell_output: empty output returns empty", "[shell_filter]") {
-    REQUIRE(tee_shell_output("").empty());
+    REQUIRE(tee_shell_output("ls", "").empty());
 }
 
 TEST_CASE("tee_shell_output: multiple writes create separate files", "[shell_filter]") {
     auto dir = make_temp_dir();
     REQUIRE_FALSE(dir.empty());
 
-    std::string path1 = tee_shell_output("output 1", dir);
-    std::string path2 = tee_shell_output("output 2", dir);
+    std::string path1 = tee_shell_output("ls", "output 1", dir);
+    std::string path2 = tee_shell_output("ls", "output 2", dir);
 
     REQUIRE(path1 != path2);
     REQUIRE(read_file(path1) == "output 1");
     REQUIRE(read_file(path2) == "output 2");
+
+    std::filesystem::remove_all(dir);
+}
+
+// ═══ Sensitive command detection ═════════════════════════════════
+
+TEST_CASE("is_sensitive_command: detects env commands", "[shell_filter]") {
+    REQUIRE(is_sensitive_command("env"));
+    REQUIRE(is_sensitive_command("printenv"));
+    REQUIRE(is_sensitive_command("export FOO=bar"));
+    REQUIRE(is_sensitive_command("  env | grep PATH"));
+}
+
+TEST_CASE("is_sensitive_command: detects token/secret commands", "[shell_filter]") {
+    REQUIRE(is_sensitive_command("cat .env"));
+    REQUIRE(is_sensitive_command("gh auth token"));
+    REQUIRE(is_sensitive_command("aws configure get secret"));
+}
+
+TEST_CASE("is_sensitive_command: normal commands are not sensitive", "[shell_filter]") {
+    REQUIRE_FALSE(is_sensitive_command("ls -la"));
+    REQUIRE_FALSE(is_sensitive_command("git status"));
+    REQUIRE_FALSE(is_sensitive_command("make build"));
+    REQUIRE_FALSE(is_sensitive_command("cat README.md"));
+}
+
+TEST_CASE("tee_shell_output: redacts sensitive env output", "[shell_filter]") {
+    auto dir = make_temp_dir();
+    REQUIRE_FALSE(dir.empty());
+
+    std::string output = "HOME=/Users/test\nAPI_KEY=sk-secret-123\nPATH=/usr/bin\nSECRET_TOKEN=abc\n";
+    std::string path = tee_shell_output("env", output, dir);
+    REQUIRE_FALSE(path.empty());
+
+    std::string contents = read_file(path);
+    REQUIRE(contents.find("HOME=/Users/test") != std::string::npos);
+    REQUIRE(contents.find("PATH=/usr/bin") != std::string::npos);
+    REQUIRE(contents.find("sk-secret-123") == std::string::npos);
+    REQUIRE(contents.find("API_KEY=[REDACTED]") != std::string::npos);
+    REQUIRE(contents.find("SECRET_TOKEN=[REDACTED]") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("tee_shell_output: non-sensitive command not redacted", "[shell_filter]") {
+    auto dir = make_temp_dir();
+    REQUIRE_FALSE(dir.empty());
+
+    std::string output = "API_KEY=visible-in-non-sensitive\n";
+    std::string path = tee_shell_output("cat config.txt", output, dir);
+    REQUIRE_FALSE(path.empty());
+    REQUIRE(read_file(path) == output);
 
     std::filesystem::remove_all(dir);
 }
