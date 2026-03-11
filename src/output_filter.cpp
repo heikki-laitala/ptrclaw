@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <regex>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -127,7 +128,7 @@ static std::string join_lines(const std::vector<std::string>& lines) {
 
 // ── Command classifier ──────────────────────────────────────────
 
-enum class ShellCommandType { GitDiff, GitStatus, GitLog, TestRunner, BuildLog, Other };
+enum class ShellCommandType { GitDiff, GitStatus, GitLog, TestRunner, BuildLog, DirListing, Other };
 
 static bool starts_with(const std::string& s, const std::string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
@@ -162,6 +163,12 @@ static ShellCommandType classify_command(const std::string& command) {
         starts_with(cmd, "npm run build") || starts_with(cmd, "go build") ||
         starts_with(cmd, "ninja") || starts_with(cmd, "meson compile")) {
         return ShellCommandType::BuildLog;
+    }
+
+    // Directory listing tools
+    if (starts_with(cmd, "tree") || starts_with(cmd, "find ") ||
+        starts_with(cmd, "ls -") || starts_with(cmd, "fd ")) {
+        return ShellCommandType::DirListing;
     }
 
     return ShellCommandType::Other;
@@ -382,7 +389,11 @@ std::string filter_shell_output(const std::string& command,
         case ShellCommandType::GitStatus:  filtered = filter_git_status(cleaned);  break;
         case ShellCommandType::GitLog:     filtered = cleaned; break;
         case ShellCommandType::TestRunner: filtered = filter_test_output(cleaned); break;
-        case ShellCommandType::BuildLog:   filtered = filter_build_log(cleaned);   break;
+        case ShellCommandType::BuildLog:
+            filtered = filter_build_log(cleaned);
+            filtered = group_diagnostics(filtered);
+            break;
+        case ShellCommandType::DirListing: filtered = filter_noise_dirs(cleaned);  break;
         case ShellCommandType::Other: {
             // Try JSON schema extraction for API/curl responses
             std::string schema = extract_json_schema(cleaned);
@@ -680,6 +691,188 @@ std::string smart_truncate(const std::string& output, uint32_t max_lines) {
     }
 
     return join_lines(result);
+}
+
+// ── Diagnostic grouping ─────────────────────────────────────────
+
+// Extract the diagnostic message from a compiler line, stripping location.
+// E.g. "src/foo.cpp:10:5: warning: unused variable 'x'" -> "warning: unused variable 'x'"
+// Returns empty if the line doesn't look like a diagnostic.
+static std::string extract_diagnostic_key(const std::string& line) {
+    // Match patterns like "file:line:col: type: message" or "file(line): type: message"
+    // Look for "error:" or "warning:" after a location prefix
+    for (const char* tag : {"error:", "warning:", "note:"}) {
+        auto pos = line.find(tag);
+        if (pos != std::string::npos && pos > 0) {
+            return line.substr(pos);
+        }
+    }
+    return "";
+}
+
+// Extract just the file path from a diagnostic line.
+static std::string extract_diagnostic_file(const std::string& line) {
+    // "src/foo.cpp:10:5: ..." or "src/foo.cpp(10): ..."
+    auto colon = line.find(':');
+    auto paren = line.find('(');
+    size_t end = std::string::npos;
+    if (colon != std::string::npos && paren != std::string::npos) {
+        end = std::min(colon, paren);
+    } else if (colon != std::string::npos) {
+        end = colon;
+    } else if (paren != std::string::npos) {
+        end = paren;
+    }
+    if (end != std::string::npos && end > 0) {
+        return line.substr(0, end);
+    }
+    return "";
+}
+
+std::string group_diagnostics(const std::string& output) {
+    auto lines = split_lines(output);
+    if (lines.size() < 5) return output;  // too short to benefit
+
+    // First pass: count each unique diagnostic message
+    struct DiagInfo {
+        std::string first_line;  // full line of first occurrence
+        std::vector<std::string> files;  // files where it appears
+        uint32_t count = 0;
+    };
+    std::unordered_map<std::string, DiagInfo> diag_counts;
+    std::vector<std::string> diag_order;  // preserve first-seen order
+
+    for (const auto& line : lines) {
+        std::string key = extract_diagnostic_key(line);
+        if (key.empty()) continue;
+
+        auto it = diag_counts.find(key);
+        if (it == diag_counts.end()) {
+            DiagInfo info;
+            info.first_line = line;
+            info.count = 1;
+            std::string file = extract_diagnostic_file(line);
+            if (!file.empty()) info.files.push_back(file);
+            diag_counts[key] = std::move(info);
+            diag_order.push_back(key);
+        } else {
+            it->second.count++;
+            std::string file = extract_diagnostic_file(line);
+            if (!file.empty() && it->second.files.size() < 5) {
+                // Avoid duplicate file names
+                bool found = false;
+                for (const auto& f : it->second.files) {
+                    if (f == file) { found = true; break; }
+                }
+                if (!found) it->second.files.push_back(file);
+            }
+        }
+    }
+
+    // If no grouping benefit (all unique), return as-is
+    bool has_duplicates = false;
+    for (const auto& key : diag_order) {
+        if (diag_counts[key].count > 1) { has_duplicates = true; break; }
+    }
+    if (!has_duplicates) return output;
+
+    // Second pass: rebuild output, replacing duplicate diagnostics with grouped form
+    std::unordered_set<std::string> emitted;
+    std::vector<std::string> result;
+
+    for (const auto& line : lines) {
+        std::string key = extract_diagnostic_key(line);
+        if (key.empty()) {
+            // Non-diagnostic line — keep as-is
+            result.push_back(line);
+            continue;
+        }
+
+        if (emitted.count(key) > 0) continue;  // already grouped
+        emitted.insert(key);
+
+        const auto& info = diag_counts[key];
+        if (info.count == 1) {
+            result.push_back(info.first_line);
+        } else {
+            result.push_back(info.first_line);
+            std::string summary = "  (" + std::to_string(info.count - 1) + " more";
+            if (info.files.size() > 1) {
+                summary += " in ";
+                for (size_t i = 1; i < info.files.size() && i < 4; i++) {
+                    if (i > 1) summary += ", ";
+                    summary += info.files[i];
+                }
+                if (info.files.size() > 4) {
+                    summary += ", ...";
+                }
+            }
+            summary += ")";
+            result.push_back(summary);
+        }
+    }
+
+    return join_lines(result);
+}
+
+// ── Noise directory filtering ───────────────────────────────────
+
+static const char* const noise_dirs[] = {
+    "node_modules", ".git", "target", "__pycache__", ".next", "dist",
+    "build", ".cache", ".turbo", ".vercel", ".pytest_cache", ".mypy_cache",
+    ".tox", ".venv", "venv", ".env", "coverage", ".nyc_output",
+    ".DS_Store", "Thumbs.db", ".idea", ".vscode", ".vs",
+};
+
+static bool is_noise_path(const std::string& line) {
+    for (const char* dir : noise_dirs) {
+        // Match "/dir/" or "/dir" at end, or "dir/" at start (tree output)
+        std::string slash_dir = std::string("/") + dir + "/";
+        std::string slash_end = std::string("/") + dir;
+        std::string dir_slash = std::string(dir) + "/";
+
+        if (contains(line, slash_dir)) return true;
+        // Check end of line (without trailing slash)
+        if (line.size() >= slash_end.size() &&
+            line.compare(line.size() - slash_end.size(), slash_end.size(), slash_end) == 0) {
+            return true;
+        }
+        // Tree output: "├── node_modules" or "│   ├── .git"
+        if (contains(line, dir_slash)) return true;
+        // Exact match at end after tree decoration
+        if (line.size() >= strlen(dir)) {
+            auto pos = line.rfind(dir);
+            if (pos != std::string::npos && pos + strlen(dir) == line.size()) {
+                // Verify it's preceded by a non-alphanumeric char (tree decoration or /)
+                if (pos == 0 || !std::isalnum(static_cast<unsigned char>(line[pos - 1]))) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+std::string filter_noise_dirs(const std::string& output) {
+    auto lines = split_lines(output);
+    std::vector<std::string> kept;
+    uint32_t stripped = 0;
+
+    for (const auto& line : lines) {
+        if (is_noise_path(line)) {
+            stripped++;
+        } else {
+            kept.push_back(line);
+        }
+    }
+
+    if (stripped == 0) return output;
+
+    std::string result = join_lines(kept);
+    if (stripped > 0) {
+        result += "\n[" + std::to_string(stripped) + " noise entries stripped]";
+    }
+    return result;
 }
 
 } // namespace ptrclaw
