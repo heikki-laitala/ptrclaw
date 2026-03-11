@@ -241,6 +241,7 @@ std::string Agent::process(const std::string& user_message) {
             ToolResult result = dispatch_tool(call, tools_);
 
             // Filter tool output to reduce token consumption
+            uint32_t raw_tokens = estimate_tokens(result.output);
             if (call.name == "shell") {
                 // Extract command for smart filtering
                 std::string command;
@@ -263,6 +264,14 @@ std::string Agent::process(const std::string& user_message) {
             } else {
                 result.output = filter_tool_output(result.output);
             }
+            uint32_t filtered_tokens = estimate_tokens(result.output);
+
+            // Log token savings for non-trivial reductions
+            if (raw_tokens > filtered_tokens + 10) {
+                std::cerr << "[filter] " << call.name << ": "
+                          << raw_tokens << " -> " << filtered_tokens << " tokens ("
+                          << (raw_tokens - filtered_tokens) << " saved)\n";
+            }
 
             // Emit ToolCallResult event
             if (event_bus_) {
@@ -270,6 +279,8 @@ std::string Agent::process(const std::string& user_message) {
                 ev.session_id = session_id_;
                 ev.tool_name = call.name;
                 ev.success = result.success;
+                ev.raw_tokens = raw_tokens;
+                ev.filtered_tokens = filtered_tokens;
                 event_bus_->publish(ev);
             }
 

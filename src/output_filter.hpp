@@ -33,4 +33,17 @@ std::string filter_shell_output(const std::string& command,
 std::string tee_shell_output(const std::string& output,
                              const std::string& tee_dir = "");
 
+// Extract a compact JSON schema from a JSON value.
+// E.g. {"name":"John","age":42} -> {name: string, age: number}
+// Returns empty string if input is not valid JSON or schema is longer.
+std::string extract_json_schema(const std::string& json_str);
+
+// Token savings from a filter operation.
+struct FilterStats {
+    std::string tool_name;
+    uint32_t raw_tokens = 0;
+    uint32_t filtered_tokens = 0;
+    uint32_t savings() const { return raw_tokens > filtered_tokens ? raw_tokens - filtered_tokens : 0; }
+};
+
 } // namespace ptrclaw

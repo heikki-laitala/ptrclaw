@@ -231,3 +231,64 @@ TEST_CASE("tee_shell_output: multiple writes create separate files", "[shell_fil
 
     std::filesystem::remove_all(dir);
 }
+
+// ═══ JSON schema extraction ═════════════════════════════════════
+
+TEST_CASE("extract_json_schema: simple object", "[shell_filter]") {
+    std::string input = R"({"name":"John Doe","age":42,"active":true,"email":"john.doe@example.com","role":"senior-admin","department":"platform-engineering","location":"San Francisco, CA"})";
+    std::string schema = extract_json_schema(input);
+    REQUIRE_FALSE(schema.empty());
+    REQUIRE(schema.find("name: string") != std::string::npos);
+    REQUIRE(schema.find("age: int") != std::string::npos);
+    REQUIRE(schema.find("active: bool") != std::string::npos);
+}
+
+TEST_CASE("extract_json_schema: nested object", "[shell_filter]") {
+    std::string input = R"({"user":{"name":"John","email":"john@example.com","bio":"Software engineer with 10 years experience"},"count":5,"org":"Acme Corp"})";
+    std::string schema = extract_json_schema(input);
+    REQUIRE_FALSE(schema.empty());
+    REQUIRE(schema.find("user: {") != std::string::npos);
+    REQUIRE(schema.find("name: string") != std::string::npos);
+    REQUIRE(schema.find("count: int") != std::string::npos);
+}
+
+TEST_CASE("extract_json_schema: array of objects", "[shell_filter]") {
+    std::string input = R"([{"id":1,"name":"Alice"},{"id":2,"name":"Bob"},{"id":3,"name":"Charlie"}])";
+    std::string schema = extract_json_schema(input);
+    REQUIRE_FALSE(schema.empty());
+    REQUIRE(schema.find("[{id: int, name: string}]") != std::string::npos);
+}
+
+TEST_CASE("extract_json_schema: not JSON returns empty", "[shell_filter]") {
+    REQUIRE(extract_json_schema("not json at all").empty());
+    REQUIRE(extract_json_schema("ls -la output").empty());
+}
+
+TEST_CASE("extract_json_schema: empty string returns empty", "[shell_filter]") {
+    REQUIRE(extract_json_schema("").empty());
+}
+
+TEST_CASE("extract_json_schema: small JSON not replaced", "[shell_filter]") {
+    // Schema wouldn't be shorter than the original
+    std::string input = R"({"a":1})";
+    std::string schema = extract_json_schema(input);
+    // Schema "{a: int}" is roughly same length — should return empty
+    REQUIRE(schema.empty());
+}
+
+TEST_CASE("extract_json_schema: verbose JSON gets replaced in filter", "[shell_filter]") {
+    // Simulate a curl response through filter_shell_output
+    std::string verbose_json = R"({"data":[{"id":1,"name":"Project Alpha","description":"A very long description that takes many tokens","status":"active","created_at":"2025-01-01T00:00:00Z"},{"id":2,"name":"Project Beta","description":"Another long description","status":"archived","created_at":"2025-06-15T12:00:00Z"}],"pagination":{"page":1,"per_page":20,"total":2}})";
+    std::string result = filter_shell_output("curl -s https://api.example.com/projects", verbose_json);
+    // Should be significantly shorter than the original
+    REQUIRE(result.size() < verbose_json.size());
+    REQUIRE(result.find("string") != std::string::npos);
+}
+
+TEST_CASE("extract_json_schema: handles null values", "[shell_filter]") {
+    std::string input = R"({"name":"test","value":null,"count":0})";
+    std::string schema = extract_json_schema(input);
+    if (!schema.empty()) {
+        REQUIRE(schema.find("null") != std::string::npos);
+    }
+}
