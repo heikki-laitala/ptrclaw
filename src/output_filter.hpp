@@ -38,4 +38,18 @@ std::string tee_shell_output(const std::string& output,
 // Returns empty string if input is not valid JSON or schema is longer.
 std::string extract_json_schema(const std::string& json_str);
 
+// Deduplicate repeated log lines. Normalizes timestamps, UUIDs, hex, and
+// large numbers before grouping. Returns output with counts, e.g. "[x3] msg".
+std::string deduplicate_log_lines(const std::string& output);
+
+// Rotate tee files: keep at most max_files in the directory, delete oldest.
+// Truncates files larger than max_file_size bytes.
+void rotate_tee_files(const std::string& tee_dir,
+                      uint32_t max_files = 20,
+                      uint64_t max_file_size = 1024ULL * 1024);
+
+// Smart truncation: when output exceeds max_lines, preserve structurally
+// important lines (signatures, imports, braces) and show omission markers.
+std::string smart_truncate(const std::string& output, uint32_t max_lines = 200);
+
 } // namespace ptrclaw

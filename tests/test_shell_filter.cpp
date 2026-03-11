@@ -292,3 +292,195 @@ TEST_CASE("extract_json_schema: handles null values", "[shell_filter]") {
         REQUIRE(schema.find("null") != std::string::npos);
     }
 }
+
+// ═══ Short-circuit matching ═════════════════════════════════════
+
+TEST_CASE("filter_shell_output: build short-circuits on clean Finished", "[shell_filter]") {
+    std::string input =
+        "[1/10] Compiling foo.cpp\n"
+        "[2/10] Compiling bar.cpp\n"
+        "[10/10] Linking target myapp\n"
+        "    Finished release [optimized] target(s) in 5.23s\n";
+
+    std::string result = filter_shell_output("cargo build", input);
+    REQUIRE(result == "Build succeeded");
+}
+
+TEST_CASE("filter_shell_output: build does not short-circuit with errors", "[shell_filter]") {
+    std::string input =
+        "[1/3] Compiling foo.cpp\n"
+        "error[E0308]: mismatched types\n"
+        "    Finished dev [unoptimized] target(s) in 0.5s\n";
+
+    std::string result = filter_shell_output("cargo build", input);
+    REQUIRE(result != "Build succeeded");
+    REQUIRE(result.find("error") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: build does not short-circuit with warnings", "[shell_filter]") {
+    std::string input =
+        "[1/3] Compiling foo.cpp\n"
+        "warning: unused variable `x`\n"
+        "    Finished dev [unoptimized] target(s) in 0.5s\n";
+
+    std::string result = filter_shell_output("cargo build", input);
+    REQUIRE(result != "Build succeeded");
+    REQUIRE(result.find("warning") != std::string::npos);
+}
+
+// ═══ Log deduplication ══════════════════════════════════════════
+
+TEST_CASE("deduplicate_log_lines: collapses repeated lines", "[shell_filter]") {
+    std::string input;
+    for (int i = 0; i < 20; i++) {
+        input += "ERROR: connection refused\n";
+    }
+    std::string result = deduplicate_log_lines(input);
+    REQUIRE(result.find("[x20]") != std::string::npos);
+    REQUIRE(result.find("connection refused") != std::string::npos);
+    // Should be significantly shorter
+    REQUIRE(result.size() < input.size() / 2);
+}
+
+TEST_CASE("deduplicate_log_lines: normalizes timestamps", "[shell_filter]") {
+    std::string input;
+    for (int i = 0; i < 15; i++) {
+        input += "2025-01-01T12:00:" + std::to_string(10 + i) + " ERROR: timeout\n";
+    }
+    std::string result = deduplicate_log_lines(input);
+    // All lines should be grouped despite different timestamps
+    REQUIRE(result.find("[x15]") != std::string::npos);
+}
+
+TEST_CASE("deduplicate_log_lines: normalizes UUIDs", "[shell_filter]") {
+    std::string input;
+    for (int i = 0; i < 12; i++) {
+        input += "Request 550e8400-e29b-41d4-a716-44665544" +
+                 std::to_string(1000 + i) + " failed\n";
+    }
+    std::string result = deduplicate_log_lines(input);
+    REQUIRE(result.find("[x12]") != std::string::npos);
+}
+
+TEST_CASE("deduplicate_log_lines: short output unchanged", "[shell_filter]") {
+    std::string input = "line 1\nline 2\nline 3\n";
+    REQUIRE(deduplicate_log_lines(input) == input);
+}
+
+TEST_CASE("deduplicate_log_lines: preserves distinct lines", "[shell_filter]") {
+    std::string input;
+    for (int i = 0; i < 15; i++) {
+        input += "unique line " + std::to_string(i) + "\n";
+    }
+    // No deduplication should happen — all lines are different even normalized
+    std::string result = deduplicate_log_lines(input);
+    REQUIRE(result == input);
+}
+
+TEST_CASE("deduplicate_log_lines: empty input", "[shell_filter]") {
+    REQUIRE(deduplicate_log_lines("").empty());
+}
+
+// ═══ Tee rotation ═══════════════════════════════════════════════
+
+TEST_CASE("rotate_tee_files: removes oldest when over limit", "[shell_filter]") {
+    auto dir = make_temp_dir();
+    REQUIRE_FALSE(dir.empty());
+
+    // Create 5 files
+    for (int i = 0; i < 5; i++) {
+        std::string path = dir + "/test_" + std::to_string(i) + ".log";
+        std::ofstream f(path);
+        f << "content " << i;
+    }
+
+    // Rotate to keep only 3
+    rotate_tee_files(dir, 3);
+
+    int count = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        if (entry.path().extension() == ".log") count++;
+    }
+    REQUIRE(count == 3);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("rotate_tee_files: truncates oversized files", "[shell_filter]") {
+    auto dir = make_temp_dir();
+    REQUIRE_FALSE(dir.empty());
+
+    // Create a file larger than 100 bytes
+    std::string path = dir + "/big.log";
+    {
+        std::ofstream f(path);
+        for (int i = 0; i < 50; i++) f << "0123456789";  // 500 bytes
+    }
+
+    rotate_tee_files(dir, 20, 100);
+
+    // File should be truncated
+    auto size = std::filesystem::file_size(path);
+    REQUIRE(size < 200);  // 100 bytes of content + truncation marker
+
+    std::string content = read_file(path);
+    REQUIRE(content.find("[...truncated at 100 bytes]") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("rotate_tee_files: no-op on empty dir", "[shell_filter]") {
+    rotate_tee_files("/nonexistent/path");
+    // Should not throw
+}
+
+// ═══ Smart truncation ═══════════════════════════════════════════
+
+TEST_CASE("smart_truncate: small input unchanged", "[shell_filter]") {
+    std::string input = "line 1\nline 2\nline 3\n";
+    REQUIRE(smart_truncate(input, 10) == input);
+}
+
+TEST_CASE("smart_truncate: preserves structural lines", "[shell_filter]") {
+    std::string input;
+    input += "#include <iostream>\n";      // structural: include
+    for (int i = 0; i < 50; i++) {
+        input += "    x = x + " + std::to_string(i) + ";\n";
+    }
+    input += "class Foo {\n";              // structural: class
+    for (int i = 0; i < 50; i++) {
+        input += "    y = y + " + std::to_string(i) + ";\n";
+    }
+    input += "}\n";                        // structural: brace
+    input += "def main():\n";              // structural: function
+    for (int i = 0; i < 50; i++) {
+        input += "    z = z + " + std::to_string(i) + ";\n";
+    }
+
+    std::string result = smart_truncate(input, 30);
+
+    // Should preserve structural lines
+    REQUIRE(result.find("#include") != std::string::npos);
+    REQUIRE(result.find("class Foo") != std::string::npos);
+    REQUIRE(result.find("def main") != std::string::npos);
+    // Should have omission markers
+    REQUIRE(result.find("lines omitted") != std::string::npos);
+    // Should be shorter
+    auto result_lines = 1;
+    for (char c : result) if (c == '\n') result_lines++;
+    REQUIRE(result_lines <= 35);  // allow some slack for markers
+}
+
+TEST_CASE("smart_truncate: preserves error lines", "[shell_filter]") {
+    std::string input;
+    for (int i = 0; i < 100; i++) {
+        input += "normal line " + std::to_string(i) + "\n";
+    }
+    input += "src/foo.cpp:10: error: undefined reference\n";
+    for (int i = 0; i < 100; i++) {
+        input += "more normal " + std::to_string(i) + "\n";
+    }
+
+    std::string result = smart_truncate(input, 30);
+    REQUIRE(result.find("error: undefined reference") != std::string::npos);
+}

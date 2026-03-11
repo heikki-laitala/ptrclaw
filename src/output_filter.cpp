@@ -1,8 +1,12 @@
 #include "output_filter.hpp"
 #include "util.hpp"
+#include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <nlohmann/json.hpp>
+#include <regex>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -335,6 +339,47 @@ static std::string filter_build_log(const std::string& output) {
     return join_lines(kept);
 }
 
+// ── Short-circuit rules ─────────────────────────────────────────
+// If output matches a known success pattern (and no error indicator),
+// return a one-line summary instead of processing the full output.
+
+struct ShortCircuitRule {
+    const char* pattern;    // must be present in output
+    const char* unless;     // if present, don't short-circuit (comma-separated)
+    const char* message;    // replacement message
+};
+
+static const ShortCircuitRule build_short_circuits[] = {
+    {"Finished", "error,warning", "Build succeeded"},         // cargo build
+    {"BUILD SUCCESSFUL", "FAILED,warning", "Build succeeded"},  // gradle
+};
+
+static std::string try_short_circuit(const std::string& output,
+                                     const ShortCircuitRule* rules, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        const auto& rule = rules[i];
+        if (!rule.message) continue;
+        if (!contains(output, rule.pattern)) continue;
+        // Check all unless keywords (comma-separated)
+        if (rule.unless) {
+            std::string unless_str = rule.unless;
+            bool blocked = false;
+            size_t pos = 0;
+            while (pos < unless_str.size()) {
+                size_t comma = unless_str.find(',', pos);
+                std::string keyword = (comma != std::string::npos)
+                    ? unless_str.substr(pos, comma - pos)
+                    : unless_str.substr(pos);
+                if (contains(output, keyword)) { blocked = true; break; }
+                pos = (comma != std::string::npos) ? comma + 1 : unless_str.size();
+            }
+            if (blocked) continue;
+        }
+        return rule.message;
+    }
+    return "";
+}
+
 // ── Public API ──────────────────────────────────────────────────
 
 std::string filter_shell_output(const std::string& command,
@@ -345,9 +390,18 @@ std::string filter_shell_output(const std::string& command,
     // Strip ANSI first
     std::string cleaned = config.strip_ansi ? strip_ansi_codes(output) : output;
 
+    auto cmd_type = classify_command(command);
+
+    // Try short-circuit before full filtering
+    if (cmd_type == ShellCommandType::BuildLog) {
+        std::string sc = try_short_circuit(cleaned, build_short_circuits,
+                                           std::size(build_short_circuits));
+        if (!sc.empty()) return sc;
+    }
+
     // Apply command-specific filter
     std::string filtered;
-    switch (classify_command(command)) {
+    switch (cmd_type) {
         case ShellCommandType::GitDiff:    filtered = filter_git_diff(cleaned);    break;
         case ShellCommandType::GitStatus:  filtered = filter_git_status(cleaned);  break;
         case ShellCommandType::GitLog:     filtered = cleaned; break;
@@ -361,7 +415,10 @@ std::string filter_shell_output(const std::string& command,
         }
     }
 
-    // Apply generic limits as final pass
+    // Apply generic limits as final pass (smart truncation instead of naive cut)
+    if (config.max_lines > 0) {
+        filtered = smart_truncate(filtered, config.max_lines);
+    }
     OutputFilterConfig final_config = config;
     final_config.strip_ansi = false; // already stripped
     return filter_tool_output(filtered, final_config);
@@ -447,6 +504,202 @@ std::string tee_shell_output(const std::string& output,
         return path;
     }
     return "";
+}
+
+// ── Tee file rotation ───────────────────────────────────────────
+
+void rotate_tee_files(const std::string& tee_dir,
+                      uint32_t max_files, uint64_t max_file_size) {
+    namespace fs = std::filesystem;
+    if (tee_dir.empty() || !fs::exists(tee_dir)) return;
+
+    // Collect .log files sorted by modification time (oldest first)
+    std::vector<fs::directory_entry> logs;
+    try {
+        for (const auto& entry : fs::directory_iterator(tee_dir)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".log") {
+                logs.push_back(entry);
+            }
+        }
+    } catch (...) {
+        return;
+    }
+
+    std::sort(logs.begin(), logs.end(),
+              [](const fs::directory_entry& a, const fs::directory_entry& b) {
+                  return fs::last_write_time(a) < fs::last_write_time(b);
+              });
+
+    // Delete oldest files if over limit
+    while (logs.size() > max_files) {
+        try { fs::remove(logs.front().path()); } catch (...) {} // NOLINT(bugprone-empty-catch)
+        logs.erase(logs.begin());
+    }
+
+    // Truncate oversized files
+    for (const auto& entry : logs) {
+        try {
+            if (entry.file_size() > max_file_size) {
+                // Rewrite with truncation marker
+                std::ifstream in(entry.path(), std::ios::binary);
+                std::string head(max_file_size, '\0');
+                in.read(head.data(), static_cast<std::streamsize>(max_file_size));
+                head.resize(static_cast<size_t>(in.gcount()));
+                in.close();
+
+                std::ofstream out(entry.path(), std::ios::binary | std::ios::trunc);
+                out << head << "\n[...truncated at " << max_file_size << " bytes]";
+            }
+        } catch (...) {} // NOLINT(bugprone-empty-catch)
+    }
+}
+
+// ── Log deduplication ───────────────────────────────────────────
+
+// Normalize a log line by stripping timestamps, UUIDs, hex, and large numbers
+static std::string normalize_log_line(const std::string& line) {
+    // These are compiled once (static) to avoid repeated construction
+    static const std::regex timestamp_re(
+        R"(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}[.,]?\d*\s*)");
+    static const std::regex uuid_re(
+        R"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})");
+    static const std::regex hex_re(R"(0x[0-9a-fA-F]+)");
+    static const std::regex num_re(R"(\b\d{4,}\b)");
+    static const std::regex path_re(R"(/[\w./\-]+)");
+
+    std::string norm = line;
+    norm = std::regex_replace(norm, timestamp_re, "");
+    norm = std::regex_replace(norm, uuid_re, "<UUID>");
+    norm = std::regex_replace(norm, hex_re, "<HEX>");
+    norm = std::regex_replace(norm, num_re, "<N>");
+    norm = std::regex_replace(norm, path_re, "<PATH>");
+    return norm;
+}
+
+std::string deduplicate_log_lines(const std::string& output) {
+    if (output.empty()) return output;
+
+    auto lines = split_lines(output);
+    if (lines.size() < 10) return output;  // not worth deduplicating short output
+
+    // Group consecutive identical (normalized) lines
+    struct Group {
+        std::string original;  // first occurrence (un-normalized)
+        std::string normalized;
+        uint32_t count = 1;
+    };
+
+    std::vector<Group> groups;
+    for (const auto& line : lines) {
+        std::string norm = normalize_log_line(line);
+        if (!groups.empty() && groups.back().normalized == norm) {
+            groups.back().count++;
+        } else {
+            groups.push_back({line, norm, 1});
+        }
+    }
+
+    // If no deduplication happened, return original
+    if (groups.size() == lines.size()) return output;
+
+    std::vector<std::string> result;
+    result.reserve(groups.size());
+    for (const auto& g : groups) {
+        if (g.count > 1) {
+            result.push_back("[x" + std::to_string(g.count) + "] " + g.original);
+        } else {
+            result.push_back(g.original);
+        }
+    }
+
+    return join_lines(result);
+}
+
+// ── Smart truncation ────────────────────────────────────────────
+
+static bool is_structural_line(const std::string& line) {
+    std::string trimmed = line;
+    auto start = trimmed.find_first_not_of(" \t");
+    if (start != std::string::npos) trimmed = trimmed.substr(start);
+
+    // Function/method signatures
+    if (starts_with(trimmed, "def ") || starts_with(trimmed, "fn ") ||
+        starts_with(trimmed, "func ") || starts_with(trimmed, "function ") ||
+        starts_with(trimmed, "class ") || starts_with(trimmed, "struct ") ||
+        starts_with(trimmed, "impl ") || starts_with(trimmed, "interface ") ||
+        starts_with(trimmed, "enum ") || starts_with(trimmed, "trait ")) {
+        return true;
+    }
+
+    // Imports / includes
+    if (starts_with(trimmed, "import ") || starts_with(trimmed, "from ") ||
+        starts_with(trimmed, "#include") || starts_with(trimmed, "use ") ||
+        starts_with(trimmed, "require(") || starts_with(trimmed, "const ") ||
+        starts_with(trimmed, "pub ") || starts_with(trimmed, "export ")) {
+        return true;
+    }
+
+    // Scope boundaries
+    if (trimmed == "}" || trimmed == "};" || trimmed == "{") {
+        return true;
+    }
+
+    // Error/warning lines (always keep)
+    if (contains(trimmed, "error") || contains(trimmed, "Error") ||
+        contains(trimmed, "warning:") || contains(trimmed, "FAIL")) {
+        return true;
+    }
+
+    return false;
+}
+
+std::string smart_truncate(const std::string& output, uint32_t max_lines) {
+    auto lines = split_lines(output);
+    if (lines.size() <= max_lines) return output;
+
+    // Reserve slots: first 20% for head, last 20% for tail, middle for important lines
+    uint32_t head_count = max_lines / 5;
+    uint32_t tail_count = max_lines / 5;
+    uint32_t middle_budget = max_lines - head_count - tail_count - 1; // -1 for marker
+
+    std::vector<std::string> result;
+    result.reserve(max_lines + 2);
+
+    // Head section
+    for (uint32_t i = 0; i < head_count && i < lines.size(); i++) {
+        result.push_back(lines[i]);
+    }
+
+    // Middle: scan for structural lines
+    size_t middle_start = head_count;
+    size_t middle_end = lines.size() - tail_count;
+    uint32_t structural_kept = 0;
+    size_t last_kept_idx = head_count;
+
+    for (size_t i = middle_start; i < middle_end && structural_kept < middle_budget; i++) {
+        if (is_structural_line(lines[i])) {
+            if (i > last_kept_idx + 1) {
+                auto skipped = static_cast<uint32_t>(i - last_kept_idx - 1);
+                result.push_back("[..." + std::to_string(skipped) + " lines omitted]");
+            }
+            result.push_back(lines[i]);
+            structural_kept++;
+            last_kept_idx = i;
+        }
+    }
+
+    // Omission marker for remaining middle
+    if (middle_end > last_kept_idx + 1) {
+        auto skipped = static_cast<uint32_t>(middle_end - last_kept_idx - 1);
+        result.push_back("[..." + std::to_string(skipped) + " lines omitted]");
+    }
+
+    // Tail section
+    for (size_t i = middle_end; i < lines.size(); i++) {
+        result.push_back(lines[i]);
+    }
+
+    return join_lines(result);
 }
 
 } // namespace ptrclaw

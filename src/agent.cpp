@@ -254,8 +254,11 @@ std::string Agent::process(const std::string& user_message) {
                 std::string tee_path;
                 if (!command.empty()) {
                     tee_path = tee_shell_output(result.output);
+                    rotate_tee_files(expand_home("~/.ptrclaw/tee"));
                 }
 
+                // Deduplicate repetitive log lines before command-specific filter
+                result.output = deduplicate_log_lines(result.output);
                 result.output = filter_shell_output(command, result.output);
 
                 if (!tee_path.empty()) {
