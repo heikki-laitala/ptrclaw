@@ -421,9 +421,7 @@ void Agent::set_memory(std::unique_ptr<Memory> memory) {
 void Agent::wire_memory_tools() {
     if (!memory_) return;
     for (auto& tool : tools_) {
-        const auto& name = tool->tool_name();
-        if (name == "memory_store" || name == "memory_recall" ||
-            name == "memory_forget" || name == "memory_link") {
+        if (is_memory_tool(tool->tool_name())) {
             static_cast<MemoryAwareTool*>(tool.get())->set_memory(memory_.get());
         }
     }
