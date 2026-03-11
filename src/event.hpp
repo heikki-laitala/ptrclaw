@@ -82,6 +82,8 @@ struct ToolCallResultEvent : Event {
     std::string session_id;
     std::string tool_name;
     bool success = false;
+    uint32_t raw_tokens = 0;
+    uint32_t filtered_tokens = 0;
 
     ToolCallResultEvent() { type_tag = TAG; }
 };

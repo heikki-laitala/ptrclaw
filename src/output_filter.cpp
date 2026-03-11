@@ -1,6 +1,7 @@
 #include "output_filter.hpp"
 #include "util.hpp"
 #include <filesystem>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <vector>
 
@@ -353,13 +354,79 @@ std::string filter_shell_output(const std::string& command,
         case ShellCommandType::GitLog:     filtered = cleaned; break;
         case ShellCommandType::TestRunner: filtered = filter_test_output(cleaned); break;
         case ShellCommandType::BuildLog:   filtered = filter_build_log(cleaned);   break;
-        case ShellCommandType::Other:      filtered = cleaned; break;
+        case ShellCommandType::Other: {
+            // Try JSON schema extraction for API/curl responses
+            std::string schema = extract_json_schema(cleaned);
+            filtered = schema.empty() ? cleaned : schema;
+            break;
+        }
     }
 
     // Apply generic limits as final pass
     OutputFilterConfig final_config = config;
     final_config.strip_ansi = false; // already stripped
     return filter_tool_output(filtered, final_config);
+}
+
+// ── JSON schema extraction ───────────────────────────────────────
+
+static std::string json_type_name(const nlohmann::json& val) {
+    if (val.is_null())    return "null";
+    if (val.is_boolean()) return "bool";
+    if (val.is_number_integer()) return "int";
+    if (val.is_number())  return "number";
+    if (val.is_string())  return "string";
+    if (val.is_array())   return "array";
+    if (val.is_object())  return "object";
+    return "unknown";
+}
+
+static std::string schema_for_value(const nlohmann::json& val, int depth);
+
+static std::string schema_for_object(const nlohmann::json& obj, int depth) {
+    if (obj.empty()) return "{}";
+    std::string result = "{";
+    bool first = true;
+    for (auto it = obj.begin(); it != obj.end(); ++it) {
+        if (!first) result += ", ";
+        first = false;
+        result += it.key() + ": " + schema_for_value(it.value(), depth + 1);
+    }
+    result += "}";
+    return result;
+}
+
+static std::string schema_for_array(const nlohmann::json& arr, int depth) {
+    if (arr.empty()) return "[]";
+    // Use the first element as representative
+    return "[" + schema_for_value(arr[0], depth + 1) + "]";
+}
+
+static std::string schema_for_value(const nlohmann::json& val, int depth) {
+    if (depth > 4) return "..."; // prevent deep recursion
+    if (val.is_object()) return schema_for_object(val, depth);
+    if (val.is_array())  return schema_for_array(val, depth);
+    return json_type_name(val);
+}
+
+std::string extract_json_schema(const std::string& json_str) {
+    // Quick check: must start with { or [
+    auto start = json_str.find_first_not_of(" \t\n\r");
+    if (start == std::string::npos) return "";
+    if (json_str[start] != '{' && json_str[start] != '[') return "";
+
+    try {
+        auto j = nlohmann::json::parse(json_str);
+        std::string schema = schema_for_value(j, 0);
+
+        // Only use schema if it's meaningfully shorter
+        if (schema.size() < json_str.size() * 3 / 4) {
+            return schema;
+        }
+    } catch (...) { // NOLINT(bugprone-empty-catch)
+        // Not valid JSON
+    }
+    return "";
 }
 
 std::string tee_shell_output(const std::string& output,
