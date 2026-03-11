@@ -128,7 +128,10 @@ static std::string join_lines(const std::vector<std::string>& lines) {
 
 // ── Command classifier ──────────────────────────────────────────
 
-enum class ShellCommandType { GitDiff, GitStatus, GitLog, TestRunner, BuildLog, DirListing, Other };
+enum class ShellCommandType {
+    GitDiff, GitStatus, GitLog, TestRunner, BuildLog, DirListing,
+    Linter, SearchResult, HttpResponse, ContainerOps, PackageManager, Other
+};
 
 static bool starts_with(const std::string& s, const std::string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
@@ -165,10 +168,50 @@ static ShellCommandType classify_command(const std::string& command) {
         return ShellCommandType::BuildLog;
     }
 
+    // Linters (before build tools — some overlap with cargo clippy)
+    if (starts_with(cmd, "eslint") || contains(cmd, "npx eslint") ||
+        starts_with(cmd, "tsc") || contains(cmd, "npx tsc") ||
+        starts_with(cmd, "ruff ") || starts_with(cmd, "pylint") ||
+        starts_with(cmd, "flake8") || starts_with(cmd, "mypy") ||
+        starts_with(cmd, "golangci-lint") ||
+        starts_with(cmd, "biome ") || contains(cmd, "npx biome")) {
+        return ShellCommandType::Linter;
+    }
+
     // Directory listing tools
     if (starts_with(cmd, "tree") || starts_with(cmd, "find ") ||
         starts_with(cmd, "ls -") || starts_with(cmd, "fd ")) {
         return ShellCommandType::DirListing;
+    }
+
+    // Search/grep tools
+    if (starts_with(cmd, "grep ") || starts_with(cmd, "rg ") ||
+        starts_with(cmd, "ag ") || starts_with(cmd, "ack ") ||
+        starts_with(cmd, "git grep")) {
+        return ShellCommandType::SearchResult;
+    }
+
+    // HTTP clients
+    if (starts_with(cmd, "curl ") || starts_with(cmd, "wget ") ||
+        starts_with(cmd, "http ") || starts_with(cmd, "https ")) {
+        return ShellCommandType::HttpResponse;
+    }
+
+    // Container/orchestration
+    if (starts_with(cmd, "docker ") || starts_with(cmd, "podman ") ||
+        starts_with(cmd, "kubectl ") || starts_with(cmd, "k ")) {
+        return ShellCommandType::ContainerOps;
+    }
+
+    // Package managers
+    if ((starts_with(cmd, "npm ") && (contains(cmd, "list") || contains(cmd, "ls") || contains(cmd, "outdated"))) ||
+        (starts_with(cmd, "pnpm ") && (contains(cmd, "list") || contains(cmd, "ls") || contains(cmd, "outdated"))) ||
+        (starts_with(cmd, "yarn ") && (contains(cmd, "list") || contains(cmd, "why"))) ||
+        (starts_with(cmd, "pip ") && (contains(cmd, "list") || contains(cmd, "freeze"))) ||
+        starts_with(cmd, "cargo tree") ||
+        (starts_with(cmd, "gem ") && contains(cmd, "list")) ||
+        (starts_with(cmd, "brew ") && contains(cmd, "list"))) {
+        return ShellCommandType::PackageManager;
     }
 
     return ShellCommandType::Other;
@@ -345,6 +388,290 @@ static std::string filter_build_log(const std::string& output) {
     return join_lines(kept);
 }
 
+// ── Linter output filter ────────────────────────────────────────
+// Groups linter diagnostics by rule/message pattern. Keeps first occurrence
+// of each unique message, collapses duplicates with file list.
+
+static std::string filter_linter_output(const std::string& output) {
+    auto lines = split_lines(output);
+    if (lines.size() < 5) return output;
+
+    // Linter output is already diagnostic-heavy; apply grouping directly
+    std::string grouped = group_diagnostics(output);
+
+    // Additionally strip common linter noise
+    auto glines = split_lines(grouped);
+    std::vector<std::string> kept;
+    for (const auto& line : glines) {
+        // ESLint/biome: skip per-file summary lines with 0 issues
+        // Match "✓ 0 problems" style lines but not "5 problems (0 errors, 5 warnings)"
+        if (starts_with(line, "✓") && contains(line, "0 problems")) continue;
+        // ruff/pylint: skip "Found N errors" (redundant with individual lines)
+        // tsc: skip blank lines between errors
+        if (line.empty() && !kept.empty() && kept.back().empty()) continue;
+        kept.push_back(line);
+    }
+
+    // Keep summary line at end if present
+    return join_lines(kept);
+}
+
+// ── Search result filter ────────────────────────────────────────
+// Groups grep/rg/ag results by file, caps matches per file.
+
+static std::string filter_search_results(const std::string& output) {
+    auto lines = split_lines(output);
+    if (lines.size() < 10) return output;
+
+    // Group matches by file prefix (file:line:content or file-line-content)
+    std::unordered_map<std::string, std::vector<size_t>> file_matches;
+    std::vector<std::string> non_match_lines;
+    std::vector<std::string> file_order;
+    constexpr uint32_t max_matches_per_file = 5;
+
+    for (size_t i = 0; i < lines.size(); i++) {
+        const auto& line = lines[i];
+        // Detect file:line: pattern (grep -n style)
+        auto colon1 = line.find(':');
+        if (colon1 != std::string::npos && colon1 > 0 && colon1 < line.size() - 1) {
+            auto colon2 = line.find(':', colon1 + 1);
+            if (colon2 != std::string::npos) {
+                std::string file = line.substr(0, colon1);
+                // Verify it looks like a file path (has / or .)
+                if (file.find('/') != std::string::npos || file.find('.') != std::string::npos) {
+                    if (file_matches.find(file) == file_matches.end()) {
+                        file_order.push_back(file);
+                    }
+                    file_matches[file].push_back(i);
+                    continue;
+                }
+            }
+        }
+        // Lines without file prefix (headers, separators, etc.)
+        non_match_lines.push_back(line);
+    }
+
+    // If no file grouping detected, return original
+    if (file_matches.empty()) return output;
+
+    std::vector<std::string> result;
+    for (const auto& nl : non_match_lines) {
+        result.push_back(nl);
+    }
+
+    for (const auto& file : file_order) {
+        const auto& indices = file_matches[file];
+        uint32_t shown = 0;
+        for (size_t idx : indices) {
+            if (shown < max_matches_per_file) {
+                result.push_back(lines[idx]);
+                shown++;
+            }
+        }
+        if (indices.size() > max_matches_per_file) {
+            result.push_back("  [..." + std::to_string(indices.size() - max_matches_per_file) +
+                             " more matches in " + file + "]");
+        }
+    }
+
+    uint32_t total = 0;
+    for (const auto& [f, idxs] : file_matches) total += static_cast<uint32_t>(idxs.size());
+    result.push_back("[" + std::to_string(total) + " matches in " +
+                     std::to_string(file_matches.size()) + " files]");
+
+    return join_lines(result);
+}
+
+// ── HTTP response filter ────────────────────────────────────────
+// Strips verbose headers from curl/wget output, keeps status + body.
+
+static std::string filter_http_response(const std::string& output) {
+    auto lines = split_lines(output);
+    if (lines.empty()) return output;
+
+    std::vector<std::string> kept;
+    bool in_headers = false;
+    bool past_headers = false;
+    uint32_t header_count = 0;
+
+    for (const auto& line : lines) {
+        // curl -v: lines starting with < are response headers, > are request headers
+        if (starts_with(line, "> ") || starts_with(line, "* ") ||
+            line == ">" || line == "*") {
+            // Request headers and connection info — skip
+            continue;
+        }
+
+        if (starts_with(line, "< ") || line == "<") {
+            if (line == "<") {
+                // curl -v separator line between headers and body
+                in_headers = false;
+                past_headers = true;
+                if (header_count > 2) {
+                    kept.push_back("[" + std::to_string(header_count - 2) + " headers stripped]");
+                }
+                continue;
+            }
+            // Response header
+            std::string hdr = line.substr(2);
+            // Keep status line and content-type
+            if (starts_with(hdr, "HTTP/") ||
+                contains(hdr, "content-type") || contains(hdr, "Content-Type")) {
+                kept.push_back(hdr);
+            }
+            in_headers = true;
+            header_count++;
+            continue;
+        }
+
+        // Detect raw HTTP response headers (curl -i or wget -S)
+        if (!past_headers && (starts_with(line, "HTTP/") ||
+            (contains(line, ":") && !contains(line, "{") && line.size() < 200 &&
+             line.find(':') < 40))) {
+            if (starts_with(line, "HTTP/") ||
+                contains(line, "content-type") || contains(line, "Content-Type")) {
+                kept.push_back(line);
+            }
+            in_headers = true;
+            header_count++;
+            continue;
+        }
+
+        // Empty line after headers = body starts
+        if (in_headers && line.empty()) {
+            in_headers = false;
+            past_headers = true;
+            if (header_count > 2) {
+                kept.push_back("[" + std::to_string(header_count - 2) + " headers stripped]");
+            }
+            continue;
+        }
+
+        past_headers = true;
+        kept.push_back(line);
+    }
+
+    std::string result = join_lines(kept);
+
+    // Try JSON schema extraction on the body
+    std::string schema = extract_json_schema(result);
+    if (!schema.empty()) return schema;
+
+    return result;
+}
+
+// ── Container output filter ─────────────────────────────────────
+// Compacts docker/kubectl output: truncates wide table columns,
+// strips verbose YAML/JSON metadata.
+
+static std::string filter_container_output(const std::string& output) {
+    auto lines = split_lines(output);
+    if (lines.size() < 3) return output;
+
+    std::vector<std::string> kept;
+    bool in_yaml_metadata = false;
+    uint32_t metadata_skipped = 0;
+
+    for (const auto& line : lines) {
+        // kubectl: skip verbose metadata blocks in YAML output
+        if (line == "metadata:" || starts_with(line, "  metadata:")) {
+            in_yaml_metadata = true;
+            kept.push_back(line);
+            continue;
+        }
+        if (in_yaml_metadata) {
+            // Still in metadata if indented more than "metadata:" level
+            if (starts_with(line, "    ") || starts_with(line, "\t\t")) {
+                // Keep name/namespace, skip the rest
+                if (contains(line, "name:") || contains(line, "namespace:")) {
+                    kept.push_back(line);
+                } else {
+                    metadata_skipped++;
+                }
+                continue;
+            }
+            in_yaml_metadata = false;
+            if (metadata_skipped > 0) {
+                kept.push_back("    [" + std::to_string(metadata_skipped) + " metadata fields stripped]");
+                metadata_skipped = 0;
+            }
+        }
+
+        // docker ps/images: truncate wide COMMAND columns and IMAGE IDs
+        // Keep line but cap its length for table output
+        if (line.size() > 200) {
+            kept.push_back(line.substr(0, 200) + "...");
+        } else {
+            kept.push_back(line);
+        }
+    }
+
+    if (metadata_skipped > 0) {
+        kept.push_back("    [" + std::to_string(metadata_skipped) + " metadata fields stripped]");
+    }
+
+    return join_lines(kept);
+}
+
+// ── Package manager filter ──────────────────────────────────────
+// Collapses dependency trees, strips progress bars.
+
+static std::string filter_package_output(const std::string& output) {
+    auto lines = split_lines(output);
+    if (lines.size() < 10) return output;
+
+    std::vector<std::string> kept;
+    uint32_t deep_deps = 0;
+    int max_depth = 2; // Keep top 2 levels of dep tree
+
+    for (const auto& line : lines) {
+        // Determine tree depth by counting "│   " or "    " prefix groups.
+        // Tree output uses 4-char columns per level: "│   ", "├── ", "└── ", "    "
+        // Each level contributes ~4 visible columns of prefix.
+        int depth = 0;
+        size_t pos = 0;
+        while (pos < line.size()) {
+            auto ch = static_cast<unsigned char>(line[pos]);
+            if (ch == ' ') { pos++; continue; }
+            // ASCII tree chars: |, +, -, `, backslash
+            if (ch == '|' || ch == '+' || ch == '-' || ch == '`' || ch == '\\') {
+                pos++; continue;
+            }
+            // UTF-8 box-drawing (U+2500..U+257F encoded as 0xE2 0x94/0x95 xx)
+            if (ch == 0xE2 && pos + 2 < line.size()) {
+                auto next = static_cast<unsigned char>(line[pos + 1]);
+                if (next == 0x94 || next == 0x95) {
+                    pos += 3; continue; // skip box-drawing char
+                }
+            }
+            break; // reached actual content
+        }
+        // Depth = how many 4-char column groups precede the content
+        depth = static_cast<int>(pos / 4);
+
+        // npm/pnpm indentation: pure spaces, 2 per level
+        if (pos == 0) {
+            size_t leading_spaces = line.find_first_not_of(' ');
+            if (leading_spaces != std::string::npos && leading_spaces > 0) {
+                depth = static_cast<int>(leading_spaces / 2);
+            }
+        }
+
+        if (depth > max_depth) {
+            deep_deps++;
+            continue;
+        }
+
+        kept.push_back(line);
+    }
+
+    if (deep_deps > 0) {
+        kept.push_back("[" + std::to_string(deep_deps) + " transitive dependencies hidden]");
+    }
+
+    return join_lines(kept);
+}
+
 // ── Short-circuit rules ─────────────────────────────────────────
 // If output matches a known success pattern (and no error indicator),
 // return a one-line summary instead of processing the full output.
@@ -393,7 +720,12 @@ std::string filter_shell_output(const std::string& command,
             filtered = filter_build_log(cleaned);
             filtered = group_diagnostics(filtered);
             break;
-        case ShellCommandType::DirListing: filtered = filter_noise_dirs(cleaned);  break;
+        case ShellCommandType::DirListing:    filtered = filter_noise_dirs(cleaned);      break;
+        case ShellCommandType::Linter:        filtered = filter_linter_output(cleaned);   break;
+        case ShellCommandType::SearchResult:  filtered = filter_search_results(cleaned);  break;
+        case ShellCommandType::HttpResponse:  filtered = filter_http_response(cleaned);   break;
+        case ShellCommandType::ContainerOps:  filtered = filter_container_output(cleaned); break;
+        case ShellCommandType::PackageManager: filtered = filter_package_output(cleaned);  break;
         case ShellCommandType::Other: {
             // Try JSON schema extraction for API/curl responses
             std::string schema = extract_json_schema(cleaned);

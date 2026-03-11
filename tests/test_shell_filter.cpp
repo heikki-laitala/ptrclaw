@@ -642,3 +642,287 @@ TEST_CASE("filter_noise_dirs: strips .DS_Store", "[shell_filter]") {
     REQUIRE(result.find("main.cpp") != std::string::npos);
     REQUIRE(result.find(".DS_Store") == std::string::npos);
 }
+
+// ═══ Linter output filtering ════════════════════════════════════
+
+TEST_CASE("filter_shell_output: eslint groups repeated rules", "[shell_filter]") {
+    std::string input =
+        "/src/a.js:10:5: warning: Unexpected var, use let or const instead no-var\n"
+        "/src/b.js:20:3: warning: Unexpected var, use let or const instead no-var\n"
+        "/src/c.js:30:1: warning: Unexpected var, use let or const instead no-var\n"
+        "/src/d.js:40:7: warning: Unexpected var, use let or const instead no-var\n"
+        "/src/e.js:50:2: warning: Unexpected var, use let or const instead no-var\n"
+        "\n"
+        "5 problems (0 errors, 5 warnings)\n";
+
+    std::string result = filter_shell_output("eslint src/", input);
+    // First occurrence kept, others grouped
+    REQUIRE(result.find("Unexpected var") != std::string::npos);
+    REQUIRE(result.find("4 more") != std::string::npos);
+    // "0 problems" lines stripped
+    REQUIRE(result.find("5 problems") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: tsc errors grouped", "[shell_filter]") {
+    std::string input =
+        "src/a.ts:1:1: error: Property 'x' does not exist on type 'Y'\n"
+        "src/b.ts:2:1: error: Property 'x' does not exist on type 'Y'\n"
+        "src/c.ts:3:1: error: Property 'x' does not exist on type 'Y'\n"
+        "src/d.ts:4:1: error: Property 'x' does not exist on type 'Y'\n"
+        "src/e.ts:5:1: error: Property 'x' does not exist on type 'Y'\n"
+        "Found 5 errors.\n";
+
+    std::string result = filter_shell_output("tsc --noEmit", input);
+    REQUIRE(result.find("4 more") != std::string::npos);
+    REQUIRE(result.find("Found 5 errors") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: ruff classified as linter", "[shell_filter]") {
+    std::string input =
+        "src/a.py:10:1: F401 os imported but unused\n"
+        "src/b.py:20:1: F401 os imported but unused\n"
+        "src/c.py:30:1: F401 os imported but unused\n"
+        "Found 3 errors.\n";
+
+    std::string result = filter_shell_output("ruff check .", input);
+    REQUIRE(result.find("F401") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: small linter output unchanged", "[shell_filter]") {
+    std::string input =
+        "src/a.py:10:1: F401 os imported but unused\n"
+        "Found 1 error.\n";
+
+    std::string result = filter_shell_output("ruff check .", input);
+    REQUIRE(result.find("F401") != std::string::npos);
+    REQUIRE(result.find("Found 1 error") != std::string::npos);
+}
+
+// ═══ Search result filtering ════════════════════════════════════
+
+TEST_CASE("filter_shell_output: grep groups by file", "[shell_filter]") {
+    std::string input;
+    for (int i = 0; i < 20; i++) {
+        input += "src/big_file.cpp:" + std::to_string(i + 1) + ":    match " + std::to_string(i) + "\n";
+    }
+    input += "src/small_file.cpp:5:    match here\n";
+
+    std::string result = filter_shell_output("grep -rn match src/", input);
+    // Should cap matches per file
+    REQUIRE(result.find("more matches in src/big_file.cpp") != std::string::npos);
+    // Small file fully shown
+    REQUIRE(result.find("src/small_file.cpp:5") != std::string::npos);
+    // Summary at end
+    REQUIRE(result.find("21 matches in 2 files") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: rg classified as search", "[shell_filter]") {
+    std::string input;
+    for (int i = 0; i < 8; i++) {
+        input += "src/a.cpp:" + std::to_string(i * 10 + 1) + ":    foo match " + std::to_string(i) + "\n";
+    }
+    input += "src/b.cpp:5:    foo qux\n";
+    input += "src/c.cpp:10:    foo bar\n";
+    input += "src/d.cpp:15:    foo baz\n";
+
+    std::string result = filter_shell_output("rg foo src/", input);
+    REQUIRE(result.find("11 matches in 4 files") != std::string::npos);
+    // Should cap matches for src/a.cpp
+    REQUIRE(result.find("more matches in src/a.cpp") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: small search unchanged", "[shell_filter]") {
+    std::string input =
+        "src/a.cpp:10:    foo\n"
+        "src/b.cpp:20:    foo\n";
+
+    std::string result = filter_shell_output("grep -rn foo", input);
+    REQUIRE(result.find("src/a.cpp:10") != std::string::npos);
+    REQUIRE(result.find("src/b.cpp:20") != std::string::npos);
+}
+
+// ═══ HTTP response filtering ════════════════════════════════════
+
+TEST_CASE("filter_shell_output: curl -v strips headers", "[shell_filter]") {
+    std::string input =
+        "* Trying 93.184.216.34...\n"
+        "* Connected to example.com\n"
+        "> GET / HTTP/1.1\n"
+        "> Host: example.com\n"
+        "> Accept: */*\n"
+        ">\n"
+        "< HTTP/1.1 200 OK\n"
+        "< Content-Type: text/html; charset=UTF-8\n"
+        "< Content-Length: 1256\n"
+        "< Date: Mon, 10 Mar 2025 12:00:00 GMT\n"
+        "< Server: nginx\n"
+        "< X-Custom: value\n"
+        "< X-Another: value2\n"
+        "<\n"
+        "<html><body>Hello World</body></html>\n";
+
+    std::string result = filter_shell_output("curl -v https://example.com", input);
+    // Request headers stripped
+    REQUIRE(result.find("> GET") == std::string::npos);
+    REQUIRE(result.find("* Trying") == std::string::npos);
+    // Status and content-type kept
+    REQUIRE(result.find("HTTP/1.1 200 OK") != std::string::npos);
+    REQUIRE(result.find("Content-Type") != std::string::npos);
+    // Other response headers stripped
+    REQUIRE(result.find("X-Custom") == std::string::npos);
+    // Body kept
+    REQUIRE(result.find("Hello World") != std::string::npos);
+    // Header count shown
+    REQUIRE(result.find("headers stripped") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: curl JSON response gets schema", "[shell_filter]") {
+    std::string input =
+        R"({"data":[{"id":1,"name":"Alice","email":"alice@example.com","bio":"Software engineer specializing in distributed systems"},{"id":2,"name":"Bob","email":"bob@example.com","bio":"Product manager with expertise in growth"}],"total":2,"page":1})";
+
+    std::string result = filter_shell_output("curl -s https://api.example.com/users", input);
+    // Should extract schema
+    REQUIRE(result.find("string") != std::string::npos);
+    REQUIRE(result.size() < input.size());
+}
+
+TEST_CASE("filter_shell_output: curl -i strips raw headers", "[shell_filter]") {
+    std::string input =
+        "HTTP/1.1 200 OK\n"
+        "Content-Type: application/json\n"
+        "X-Request-Id: abc123\n"
+        "X-RateLimit-Remaining: 99\n"
+        "Server: cloudflare\n"
+        "\n"
+        R"({"status":"ok","message":"This is a somewhat long response body that has enough content to be worth keeping in the output"})";
+
+    std::string result = filter_shell_output("curl -i https://api.example.com", input);
+    REQUIRE(result.find("HTTP/1.1 200 OK") != std::string::npos);
+    REQUIRE(result.find("Content-Type") != std::string::npos);
+    REQUIRE(result.find("X-Request-Id") == std::string::npos);
+    REQUIRE(result.find("status") != std::string::npos);
+}
+
+// ═══ Container output filtering ═════════════════════════════════
+
+TEST_CASE("filter_shell_output: kubectl strips metadata", "[shell_filter]") {
+    std::string input =
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "metadata:\n"
+        "    name: my-pod\n"
+        "    namespace: default\n"
+        "    creationTimestamp: \"2025-01-01T00:00:00Z\"\n"
+        "    labels:\n"
+        "        app: web\n"
+        "        tier: frontend\n"
+        "    annotations:\n"
+        "        kubectl.kubernetes.io/last-applied: very-long-json\n"
+        "    resourceVersion: \"12345\"\n"
+        "    uid: 550e8400-e29b-41d4-a716-446655440000\n"
+        "spec:\n"
+        "    containers:\n"
+        "        - name: web\n";
+
+    std::string result = filter_shell_output("kubectl get pod my-pod -o yaml", input);
+    // name and namespace kept
+    REQUIRE(result.find("name: my-pod") != std::string::npos);
+    REQUIRE(result.find("namespace: default") != std::string::npos);
+    // Verbose metadata stripped
+    REQUIRE(result.find("uid:") == std::string::npos);
+    REQUIRE(result.find("resourceVersion") == std::string::npos);
+    REQUIRE(result.find("metadata fields stripped") != std::string::npos);
+    // Non-metadata preserved
+    REQUIRE(result.find("spec:") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: docker ps truncates long lines", "[shell_filter]") {
+    std::string header = "CONTAINER ID   IMAGE   COMMAND   CREATED   STATUS   PORTS   NAMES\n";
+    std::string long_line = "abc123 ";
+    for (int i = 0; i < 50; i++) long_line += "very-long-command-string ";
+    long_line += "\n";
+    std::string normal = "def456   nginx   \"nginx\"   5m ago   Up   80/tcp   web\n";
+
+    std::string result = filter_shell_output("docker ps", header + long_line + normal);
+    REQUIRE(result.find("CONTAINER ID") != std::string::npos);
+    REQUIRE(result.find("def456") != std::string::npos);
+    // Long line truncated
+    REQUIRE(result.find("...") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: small docker output unchanged", "[shell_filter]") {
+    std::string input =
+        "CONTAINER ID   IMAGE\n"
+        "abc123   nginx\n";
+
+    std::string result = filter_shell_output("docker ps", input);
+    REQUIRE(result.find("abc123") != std::string::npos);
+}
+
+// ═══ Package manager filtering ══════════════════════════════════
+
+TEST_CASE("filter_shell_output: npm list hides deep deps", "[shell_filter]") {
+    std::string input;
+    input += "my-project@1.0.0\n";
+    input += "├── express@4.18.0\n";
+    input += "│   ├── accepts@1.3.8\n";
+    input += "│   │   ├── mime-types@2.1.35\n";
+    input += "│   │   │   └── mime-db@1.52.0\n";
+    input += "│   │   └── negotiator@0.6.3\n";
+    input += "│   ├── body-parser@1.20.2\n";
+    input += "│   │   ├── bytes@3.1.2\n";
+    input += "│   │   └── depd@2.0.0\n";
+    input += "├── lodash@4.17.21\n";
+    input += "└── typescript@5.0.0\n";
+
+    std::string result = filter_shell_output("npm list", input);
+    // Top-level deps kept
+    REQUIRE(result.find("express@4.18.0") != std::string::npos);
+    REQUIRE(result.find("lodash@4.17.21") != std::string::npos);
+    // Deep transitive deps hidden
+    REQUIRE(result.find("transitive dependencies hidden") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: cargo tree hides deep deps", "[shell_filter]") {
+    std::string input;
+    input += "my-crate v0.1.0\n";
+    input += "├── serde v1.0\n";
+    input += "│   ├── serde_derive v1.0\n";
+    input += "│   │   ├── proc-macro2 v1.0\n";
+    input += "│   │   │   └── unicode-ident v1.0\n";
+    input += "│   │   ├── quote v1.0\n";
+    input += "│   │   │   └── proc-macro2 v1.0\n";
+    input += "│   │   └── syn v2.0\n";
+    input += "│   │       └── proc-macro2 v1.0\n";
+    input += "├── tokio v1.0\n";
+    input += "└── anyhow v1.0\n";
+
+    std::string result = filter_shell_output("cargo tree", input);
+    REQUIRE(result.find("serde v1.0") != std::string::npos);
+    REQUIRE(result.find("tokio v1.0") != std::string::npos);
+    REQUIRE(result.find("transitive dependencies hidden") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: pip list small unchanged", "[shell_filter]") {
+    std::string input =
+        "Package    Version\n"
+        "---------- -------\n"
+        "pip        23.0\n"
+        "setuptools 67.0\n";
+
+    std::string result = filter_shell_output("pip list", input);
+    REQUIRE(result.find("pip") != std::string::npos);
+    REQUIRE(result.find("setuptools") != std::string::npos);
+}
+
+TEST_CASE("filter_shell_output: pip freeze classified as package", "[shell_filter]") {
+    std::string input;
+    for (int i = 0; i < 15; i++) {
+        input += "package-" + std::to_string(i) + "==1.0.0\n";
+    }
+
+    std::string result = filter_shell_output("pip freeze", input);
+    // All lines are top-level (no indentation), so all kept
+    REQUIRE(result.find("package-0==1.0.0") != std::string::npos);
+    REQUIRE(result.find("package-14==1.0.0") != std::string::npos);
+}
