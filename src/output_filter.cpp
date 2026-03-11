@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <nlohmann/json.hpp>
 #include <sstream>
+#include <unordered_set>
 #include <vector>
 
 namespace ptrclaw {
@@ -151,8 +152,9 @@ static ShellCommandType classify_command(const std::string& command) {
         return ShellCommandType::TestRunner;
     }
 
-    // Build tools
-    if (starts_with(cmd, "make") || starts_with(cmd, "cmake --build") ||
+    // Build tools (make without test/check suffixes — those are caught above)
+    if ((starts_with(cmd, "make") && !contains(cmd, "test") && !contains(cmd, "check")) ||
+        starts_with(cmd, "cmake --build") ||
         starts_with(cmd, "cargo build") || starts_with(cmd, "cargo clippy") ||
         starts_with(cmd, "npm run build") || starts_with(cmd, "go build") ||
         starts_with(cmd, "ninja") || starts_with(cmd, "meson compile")) {
@@ -318,16 +320,13 @@ static std::string filter_build_log(const std::string& output) {
         }
     }
 
-    // Always include last few lines (often summary)
+    // Always include last few lines (often summary).
+    // Use a set to avoid O(n²) duplicate checking.
     if (lines.size() > 3) {
+        std::unordered_set<std::string> kept_set(kept.begin(), kept.end());
         size_t tail_start = lines.size() - 3;
         for (size_t i = tail_start; i < lines.size(); i++) {
-            // Avoid duplicating lines already kept
-            bool already_kept = false;
-            for (const auto& k : kept) {
-                if (k == lines[i]) { already_kept = true; break; }
-            }
-            if (!already_kept && !lines[i].empty()) {
+            if (!lines[i].empty() && kept_set.find(lines[i]) == kept_set.end()) {
                 kept.push_back(lines[i]);
             }
         }
