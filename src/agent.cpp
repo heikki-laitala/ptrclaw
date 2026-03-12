@@ -647,11 +647,12 @@ void Agent::compact_history() {
 
 void Agent::load_skills(const std::string& dir) {
     std::string skills_dir = dir.empty() ? default_skills_dir() : dir;
-    available_skills_ = ptrclaw::load_skills(skills_dir);
-    if (!available_skills_.empty()) {
-        std::cerr << "[skills] Loaded " << available_skills_.size()
+    auto fresh = ptrclaw::load_skills(skills_dir);
+    if (fresh.size() != available_skills_.size()) {
+        std::cerr << "[skills] Loaded " << fresh.size()
                   << " skills from " << skills_dir << "\n";
     }
+    available_skills_ = std::move(fresh);
 }
 
 bool Agent::activate_skill(const std::string& name) {

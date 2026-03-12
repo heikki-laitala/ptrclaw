@@ -113,6 +113,7 @@ std::string cmd_provider(const std::string& args_str, Agent& agent,
 }
 
 std::string cmd_skill(const std::string& args, Agent& agent) {
+    agent.load_skills(); // re-scan directory for new/changed skills
     auto trimmed = trim(args);
     const auto& skills = agent.available_skills();
 
