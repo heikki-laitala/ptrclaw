@@ -134,8 +134,9 @@ std::string cmd_skill(const std::string& args, Agent& agent) {
         return result;
     }
 
-    // /skill off — deactivate
-    if (trimmed == "off" || trimmed == "none") {
+    // /skill off [name] — deactivate
+    if (trimmed == "off" || trimmed == "none" ||
+        trimmed.rfind("off ", 0) == 0 || trimmed.rfind("none ", 0) == 0) {
         agent.deactivate_skill();
         return "Skill deactivated";
     }
