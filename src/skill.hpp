@@ -1,12 +1,9 @@
 #pragma once
-#include "tool.hpp"
 #include <string>
 #include <vector>
 #include <optional>
 
 namespace ptrclaw {
-
-class Agent; // forward declaration
 
 struct SkillDef {
     std::string name;
@@ -27,15 +24,5 @@ std::vector<SkillDef> load_skills(const std::string& dir);
 
 // Default skills directory: ~/.ptrclaw/skills/
 std::string default_skills_dir();
-
-// Base class for tools that need an Agent* pointer.
-// Agent wires this up after construction.
-class AgentAwareTool : public Tool {
-public:
-    void set_agent(Agent* agent) { agent_ = agent; }
-
-protected:
-    Agent* agent_ = nullptr;
-};
 
 } // namespace ptrclaw

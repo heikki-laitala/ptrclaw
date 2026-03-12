@@ -39,4 +39,16 @@ inline bool is_memory_tool(const std::string& name) {
 // Create all built-in tools
 std::vector<std::unique_ptr<Tool>> create_builtin_tools();
 
+class Agent; // forward declaration
+
+// Base class for tools that need an Agent* pointer.
+// Agent wires this up after construction.
+class AgentAwareTool : public Tool {
+public:
+    void set_agent(Agent* agent) { agent_ = agent; }
+
+protected:
+    Agent* agent_ = nullptr;
+};
+
 } // namespace ptrclaw

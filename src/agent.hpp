@@ -73,6 +73,7 @@ private:
     void compact_history();
     void inject_system_prompt();
     void invalidate_system_prompt();
+    const SkillDef* find_skill(const std::string& name) const;
     void wire_memory_tools();
     void wire_skill_tools();
     void run_synthesis();
