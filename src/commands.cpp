@@ -112,4 +112,38 @@ std::string cmd_provider(const std::string& args_str, Agent& agent,
     return "Switched to " + prov_name + " | Model: " + agent.model();
 }
 
+std::string cmd_skill(const std::string& args, Agent& agent) {
+    auto trimmed = trim(args);
+    const auto& skills = agent.available_skills();
+
+    // /skill (no args) — list available skills
+    if (trimmed.empty()) {
+        if (skills.empty()) {
+            return "No skills available. Add .md files to ~/.ptrclaw/skills/";
+        }
+        std::string result = "Skills:\n";
+        for (const auto& s : skills) {
+            bool active = (s.name == agent.active_skill_name());
+            result += "  " + s.name;
+            if (!s.description.empty()) result += " \xe2\x80\x94 " + s.description;
+            if (active) result += " [active]";
+            result += "\n";
+        }
+        result += "\nActivate: /skill <name>\nDeactivate: /skill off";
+        return result;
+    }
+
+    // /skill off — deactivate
+    if (trimmed == "off" || trimmed == "none") {
+        agent.deactivate_skill();
+        return "Skill deactivated";
+    }
+
+    // /skill <name> — activate
+    if (agent.activate_skill(trimmed)) {
+        return "Skill '" + trimmed + "' activated";
+    }
+    return "Unknown skill: " + trimmed;
+}
+
 } // namespace ptrclaw
