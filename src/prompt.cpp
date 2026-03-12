@@ -7,7 +7,7 @@
 
 namespace ptrclaw {
 
-static bool tool_allowed(const std::string& name,
+bool tool_allowed(const std::string& name,
                          bool memory_active,
                          const std::vector<std::string>& allowed_tools) {
     if (!memory_active && is_memory_tool(name)) return false;
