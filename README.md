@@ -4,7 +4,7 @@ An AI assistant you can actually deploy anywhere. Single binary with dependencie
 
 Built in C++17 because infrastructure should be small, fast, and boring to operate.
 
-**~863 KB stripped binary (macOS arm64), ~2.7 MB (Linux x86_64, mbedTLS + sqlite3 statically linked). 5 LLM providers. 10 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph and vector search. Compile-time feature flags to strip what you don't need.**
+**~863 KB stripped binary (macOS arm64), ~2.9 MB (Linux x86_64, mbedTLS + sqlite3 statically linked). 5 LLM providers. 10 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph and vector search. Compile-time feature flags to strip what you don't need.**
 
 ## Why PtrClaw?
 
@@ -460,9 +460,9 @@ ninja -C builddir
 
 | Configuration | macOS arm64 | Linux x86_64 |
 | ------------- | ----------- | ------------ |
-| Default (`make build`) | ~1.1 MB | ~1.2 MB |
-| Static (`make build-static`, stripped) | ~863 KB | ~2.7 MB |
-| Minimal (`make build-minimal`, stripped) | ~781 KB | ~900 KB |
+| Default (`make build`) | ~1.1 MB | ~1.3 MB |
+| Static (`make build-static`, stripped) | ~863 KB | ~2.9 MB |
+| Minimal (`make build-minimal`, stripped) | ~781 KB | ~960 KB |
 
 Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux static binaries are larger because they bundle TLS (mbedTLS) and sqlite3. Linux default builds can also be slightly larger than macOS depending on toolchain and linked components. LTO is enabled by default. Distribution builds are stripped and size-optimized.
 
