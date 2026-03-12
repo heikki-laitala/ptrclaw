@@ -398,7 +398,7 @@ Provide specific line references and suggested fixes.
 - `/skill off` — deactivate the current skill
 - The agent can also activate skills mid-conversation via the `skill_activate` tool
 
-Skills are detected dynamically — add or edit `.md` files and they'll be picked up on the next `/skill` command without restarting.
+Skills are detected dynamically — add or edit `.md` files and they'll be picked up on the next `/skill` command without restarting. Skills can be organized in subdirectories (e.g. `~/.ptrclaw/skills/email/protonmail.md`).
 
 ## Development
 
