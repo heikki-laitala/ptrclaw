@@ -195,6 +195,15 @@ void SessionManager::subscribe_events() {
                 return;
             }
 
+            // Handle /skill command
+            if (ev.message.content == "/skill" ||
+                ev.message.content.rfind("/skill ", 0) == 0) {
+                std::string args = (ev.message.content.size() > 7)
+                    ? ev.message.content.substr(7) : "";
+                send_reply(cmd_skill(args, agent));
+                return;
+            }
+
             // Handle /help command
             if (ev.message.content == "/help") {
                 std::string help = "Commands:\n"
@@ -204,6 +213,7 @@ void SessionManager::subscribe_events() {
                     "  /models          List configured providers\n"
                     "  /provider X [M]  Switch to provider X, optional model M\n"
                     "  /memory          Show memory status\n"
+                    "  /skill [name]    List or activate skills\n"
                     "  /auth            Show auth status for all providers\n"
                     "  /auth <prov> <key>  Set API key\n"
                     "  /auth openai start  Begin OAuth flow\n"

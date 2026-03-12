@@ -7,6 +7,7 @@
 #include "dispatcher.hpp"
 #include "output_filter.hpp"
 #include "prompt.hpp"
+#include "skill.hpp"
 #include "util.hpp"
 #include <iostream>
 #include <sstream>
@@ -44,6 +45,10 @@ Agent::Agent(std::unique_ptr<Provider> provider,
         memory_->apply_config(config_.memory);
     }
     wire_memory_tools();
+    wire_skill_tools();
+
+    // Load skills from default directory
+    load_skills();
 
     // Create response cache if enabled
     if (memory_ && config_.memory.response_cache) {
@@ -63,6 +68,31 @@ void Agent::inject_system_prompt() {
                            binary_path_, session_id_};
         prompt = build_system_prompt(tools_, include_tool_desc, has_active_memory(),
                                      memory_.get(), runtime);
+
+        // Inject available skills list
+        if (!available_skills_.empty()) {
+            prompt += "\n## Skills\n"
+                      "Available skills (activate with /skill <name>):\n";
+            for (const auto& skill : available_skills_) {
+                prompt += "- " + skill.name;
+                if (!skill.description.empty()) {
+                    prompt += ": " + skill.description;
+                }
+                prompt += "\n";
+            }
+            prompt += "Use the skill_activate tool to activate a skill mid-conversation.\n\n";
+        }
+
+        // Inject active skill prompt
+        if (!active_skill_name_.empty()) {
+            for (const auto& skill : available_skills_) {
+                if (skill.name == active_skill_name_) {
+                    prompt += "\n## Active Skill: " + skill.name + "\n"
+                              + skill.prompt + "\n\n";
+                    break;
+                }
+            }
+        }
     }
     history_.insert(history_.begin(), ChatMessage{Role::System, prompt, {}, {}});
     system_prompt_injected_ = true;
@@ -94,14 +124,34 @@ std::string Agent::process(const std::string& user_message) {
     history_.push_back(ChatMessage{Role::User, enriched_message, {}, {}});
 
     // Build tool specs (skip during hatching — no tools needed for interview)
-    // Contextual selection: omit memory tools when memory backend is inactive
+    // Contextual selection: omit memory tools when memory backend is inactive,
+    // and filter to skill-allowed tools when a skill is active.
     std::vector<ToolSpec> tool_specs;
     if (!hatching_ && provider_->supports_native_tools()) {
         bool memory_active = has_active_memory();
+        // Resolve active skill's tool whitelist (empty = all tools)
+        std::vector<std::string> skill_tools;
+        if (!active_skill_name_.empty()) {
+            for (const auto& skill : available_skills_) {
+                if (skill.name == active_skill_name_) {
+                    skill_tools = skill.tools;
+                    break;
+                }
+            }
+        }
         tool_specs.reserve(tools_.size());
         for (const auto& tool : tools_) {
             if (!memory_active && is_memory_tool(tool->tool_name())) {
                 continue;
+            }
+            // Filter by skill tool whitelist
+            if (!skill_tools.empty()) {
+                bool allowed = false;
+                for (const auto& t : skill_tools) {
+                    if (t == tool->tool_name()) { allowed = true; break; }
+                }
+                // Always allow skill_activate/skill_deactivate
+                if (!allowed && tool->tool_name() != "skill_activate") continue;
             }
             tool_specs.push_back(tool->spec());
         }
@@ -433,6 +483,14 @@ void Agent::wire_memory_tools() {
     }
 }
 
+void Agent::wire_skill_tools() {
+    for (auto& tool : tools_) {
+        if (tool->tool_name() == "skill_activate") {
+            static_cast<AgentAwareTool*>(tool.get())->set_agent(this);
+        }
+    }
+}
+
 void Agent::set_response_cache(std::unique_ptr<ResponseCache> cache) {
     response_cache_ = std::move(cache);
 }
@@ -584,6 +642,33 @@ void Agent::compact_history() {
     // Run memory hygiene when compaction triggers
     if (memory_ && config_.memory.hygiene_max_age > 0) {
         memory_->hygiene_purge(config_.memory.hygiene_max_age);
+    }
+}
+
+void Agent::load_skills(const std::string& dir) {
+    std::string skills_dir = dir.empty() ? default_skills_dir() : dir;
+    available_skills_ = ptrclaw::load_skills(skills_dir);
+    if (!available_skills_.empty()) {
+        std::cerr << "[skills] Loaded " << available_skills_.size()
+                  << " skills from " << skills_dir << "\n";
+    }
+}
+
+bool Agent::activate_skill(const std::string& name) {
+    for (const auto& skill : available_skills_) {
+        if (skill.name == name) {
+            active_skill_name_ = name;
+            invalidate_system_prompt();
+            return true;
+        }
+    }
+    return false;
+}
+
+void Agent::deactivate_skill() {
+    if (!active_skill_name_.empty()) {
+        active_skill_name_.clear();
+        invalidate_system_prompt();
     }
 }
 

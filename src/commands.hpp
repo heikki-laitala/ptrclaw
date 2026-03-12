@@ -15,6 +15,7 @@ std::string cmd_models(const Agent& agent, const Config& config);
 std::string cmd_memory(const Agent& agent);
 std::string cmd_soul(const Agent& agent, bool dev);
 std::string cmd_hatch(Agent& agent);
+std::string cmd_skill(const std::string& args, Agent& agent);
 
 // These mutate agent and/or config state.
 std::string cmd_model(const std::string& new_model, Agent& agent,

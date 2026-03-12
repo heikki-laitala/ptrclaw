@@ -460,6 +460,9 @@ int main(int argc, char* argv[]) try {
                         }
                     }
                 }
+            } else if (line == "/skill" || line.substr(0, 7) == "/skill ") {
+                std::string args = (line.size() > 7) ? line.substr(7) : "";
+                std::cout << ptrclaw::cmd_skill(args, agent) << "\n";
             } else if (line == "/hatch") {
                 std::cout << ptrclaw::cmd_hatch(agent) << "\n";
 
@@ -598,6 +601,7 @@ int main(int argc, char* argv[]) try {
                           << "  /models          List configured providers\n"
                           << "  /provider X [M]  Switch to provider X, optional model M\n"
                           << "  /clear           Clear conversation history\n"
+                          << "  /skill [name]    List or activate skills\n"
                           << "  /memory          Show memory status\n"
                           << "  /memory export   Export memories as JSON\n"
                           << "  /memory import P Import memories from JSON file\n"

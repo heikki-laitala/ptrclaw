@@ -2,6 +2,7 @@
 #include "memory.hpp"
 #include "memory/response_cache.hpp"
 #include "provider.hpp"
+#include "skill.hpp"
 #include "tool.hpp"
 #include "config.hpp"
 #include <string>
@@ -55,6 +56,13 @@ public:
     // Embedder for vector search (non-owning, caller retains ownership)
     void set_embedder(Embedder* embedder);
 
+    // Skills
+    void load_skills(const std::string& dir = "");
+    const std::vector<SkillDef>& available_skills() const { return available_skills_; }
+    bool activate_skill(const std::string& name);
+    void deactivate_skill();
+    const std::string& active_skill_name() const { return active_skill_name_; }
+
     // Soul hatching
     bool is_hatched() const;
     void start_hatch();
@@ -66,6 +74,7 @@ private:
     void inject_system_prompt();
     void invalidate_system_prompt();
     void wire_memory_tools();
+    void wire_skill_tools();
     void run_synthesis();
     void maybe_synthesize();
 
@@ -84,6 +93,8 @@ private:
     Embedder* embedder_ = nullptr;
     uint32_t turns_since_synthesis_ = 0;
     bool hatching_ = false;
+    std::vector<SkillDef> available_skills_;
+    std::string active_skill_name_;
     std::optional<uint32_t> last_prompt_tokens_;
 };
 

@@ -93,7 +93,7 @@ core_sources = files(
   'src/dispatcher.cpp', 'src/event_bus.cpp', 'src/oauth.cpp',
   'src/onboard.cpp', 'src/output_filter.cpp', 'src/plugin.cpp',
   'src/prompt.cpp', 'src/provider.cpp',
-  'src/session.cpp', 'src/stream_relay.cpp', 'src/tool.cpp', 'src/util.cpp',
+  'src/session.cpp', 'src/skill.cpp', 'src/stream_relay.cpp', 'src/tool.cpp', 'src/util.cpp',
 ) + http_impl_source
 
 # ── Optional sources (gated by feature flags) ──────────────────
@@ -130,7 +130,7 @@ if opt_tools
   optional_sources += files(
     'src/tools/file_edit.cpp', 'src/tools/file_read.cpp',
     'src/tools/file_write.cpp', 'src/tools/shell.cpp',
-    'src/tools/cron.cpp',
+    'src/tools/skill_activate.cpp', 'src/tools/cron.cpp',
   )
 endif
 
@@ -192,6 +192,7 @@ core_test_sources = files(
   'tests/test_oauth.cpp',
   'tests/test_onboard.cpp',
   'tests/test_output_filter.cpp',
+  'tests/test_skill.cpp',
 )
 
 optional_test_sources = []
