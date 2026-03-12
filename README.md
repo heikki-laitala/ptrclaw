@@ -4,7 +4,7 @@ An AI assistant you can actually deploy anywhere. Single binary with dependencie
 
 Built in C++17 because infrastructure should be small, fast, and boring to operate.
 
-**~913 KB stripped binary (macOS arm64), ~2.7 MB (Linux x86_64, mbedTLS + sqlite3 statically linked). 5 LLM providers. 10 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph and vector search. Compile-time feature flags to strip what you don't need.**
+**~863 KB stripped binary (macOS arm64), ~2.7 MB (Linux x86_64, mbedTLS + sqlite3 statically linked). 5 LLM providers. 10 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph and vector search. Compile-time feature flags to strip what you don't need.**
 
 ## Why PtrClaw?
 
@@ -14,7 +14,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Swap providers freely** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Switch with a config change, no code modifications
 - **Real tool use** — file I/O, shell execution (with stdin piping), cron scheduling, and a persistent knowledge graph memory system. Providers with native function calling use it directly; others fall back to XML-based parsing
 - **Extend without forking** — providers, channels, tools, and memory backends self-register via a plugin system. Add a new one by implementing an interface and dropping in a `.cpp` file
-- **Build only what you need** — 13 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~814 KB)
+- **Build only what you need** — 13 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~781 KB)
 
 ## Features
 
@@ -460,9 +460,9 @@ ninja -C builddir
 
 | Configuration | macOS arm64 | Linux x86_64 |
 | ------------- | ----------- | ------------ |
-| Default (`make build`) | ~1.2 MB | ~1.3 MB |
-| Static (`make build-static`, stripped) | ~913 KB | ~2.7 MB |
-| Minimal (`make build-minimal`, stripped) | ~814 KB | ~950 KB |
+| Default (`make build`) | ~1.1 MB | ~1.2 MB |
+| Static (`make build-static`, stripped) | ~863 KB | ~2.7 MB |
+| Minimal (`make build-minimal`, stripped) | ~781 KB | ~900 KB |
 
 Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux static binaries are larger because they bundle TLS (mbedTLS) and sqlite3. Linux default builds can also be slightly larger than macOS depending on toolchain and linked components. LTO is enabled by default. Distribution builds are stripped and size-optimized.
 
