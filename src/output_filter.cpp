@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
-#include <regex>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -1260,24 +1259,127 @@ void rotate_tee_files(const std::string& tee_dir,
 
 // ── Log deduplication ───────────────────────────────────────────
 
-// Normalize a log line by stripping timestamps, UUIDs, hex, and large numbers
-static std::string normalize_log_line(const std::string& line) {
-    // These are compiled once (static) to avoid repeated construction
-    static const std::regex timestamp_re(
-        R"(\d{4}[-/]\d{2}[-/]\d{2}[T ]\d{2}:\d{2}:\d{2}[.,]?\d*\s*)");
-    static const std::regex uuid_re(
-        R"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})");
-    static const std::regex hex_re(R"(0x[0-9a-fA-F]+)");
-    static const std::regex num_re(R"(\b\d{4,}\b)");
-    static const std::regex path_re(R"(/[\w./\-]+)");
+// Hand-rolled character classifiers (avoid <regex> which adds ~300 KB)
+static bool is_hex(char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+static bool is_digit(char c) { return c >= '0' && c <= '9'; }
+static bool is_word(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
+static bool is_path_char(char c) {
+    return is_word(c) || c == '/' || c == '.' || c == '-';
+}
 
-    std::string norm = line;
-    norm = std::regex_replace(norm, timestamp_re, "");
-    norm = std::regex_replace(norm, uuid_re, "<UUID>");
-    norm = std::regex_replace(norm, hex_re, "<HEX>");
-    norm = std::regex_replace(norm, num_re, "<N>");
-    norm = std::regex_replace(norm, path_re, "<PATH>");
-    return norm;
+// Match exactly N hex chars at pos, return true if matched
+static bool match_hex_n(const std::string& s, size_t pos, size_t n) {
+    if (pos + n > s.size()) return false;
+    for (size_t i = 0; i < n; i++) {
+        if (!is_hex(s[pos + i])) return false;
+    }
+    return true;
+}
+
+// Try to match a timestamp at pos: YYYY[-/]MM[-/]DD[T ]HH:MM:SS[.,]digits
+// Returns length consumed, or 0 if no match.
+static size_t match_timestamp(const std::string& s, size_t pos) {
+    // Need at least "YYYY-MM-DDTHH:MM:SS" = 19 chars
+    if (pos + 19 > s.size()) return 0;
+    size_t i = pos;
+    // YYYY
+    for (int k = 0; k < 4; k++) { if (!is_digit(s[i])) return 0; i++; }
+    if (s[i] != '-' && s[i] != '/') return 0; i++;
+    // MM
+    for (int k = 0; k < 2; k++) { if (!is_digit(s[i])) return 0; i++; }
+    if (s[i] != '-' && s[i] != '/') return 0; i++;
+    // DD
+    for (int k = 0; k < 2; k++) { if (!is_digit(s[i])) return 0; i++; }
+    if (s[i] != 'T' && s[i] != ' ') return 0; i++;
+    // HH:MM:SS
+    for (int k = 0; k < 2; k++) { if (!is_digit(s[i])) return 0; i++; }
+    if (s[i] != ':') return 0; i++;
+    for (int k = 0; k < 2; k++) { if (!is_digit(s[i])) return 0; i++; }
+    if (s[i] != ':') return 0; i++;
+    for (int k = 0; k < 2; k++) { if (!is_digit(s[i])) return 0; i++; }
+    // Optional fractional: [.,]digits
+    if (i < s.size() && (s[i] == '.' || s[i] == ',')) {
+        i++;
+        while (i < s.size() && is_digit(s[i])) i++;
+    }
+    // Consume trailing whitespace
+    while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) i++;
+    return i - pos;
+}
+
+// Try to match UUID at pos: 8-4-4-4-12 hex
+static size_t match_uuid(const std::string& s, size_t pos) {
+    // 8-4-4-4-12 = 36 chars
+    if (pos + 36 > s.size()) return 0;
+    size_t i = pos;
+    if (!match_hex_n(s, i, 8)) return 0; i += 8;
+    if (s[i] != '-') return 0; i++;
+    if (!match_hex_n(s, i, 4)) return 0; i += 4;
+    if (s[i] != '-') return 0; i++;
+    if (!match_hex_n(s, i, 4)) return 0; i += 4;
+    if (s[i] != '-') return 0; i++;
+    if (!match_hex_n(s, i, 4)) return 0; i += 4;
+    if (s[i] != '-') return 0; i++;
+    if (!match_hex_n(s, i, 12)) return 0; i += 12;
+    return 36;
+}
+
+// Normalize a log line by stripping timestamps, UUIDs, hex, and large numbers.
+// Uses hand-written matchers instead of std::regex to avoid binary bloat.
+static std::string normalize_log_line(const std::string& line) {
+    std::string out;
+    out.reserve(line.size());
+    size_t i = 0;
+
+    while (i < line.size()) {
+        // 1. Timestamps: YYYY-MM-DDTHH:MM:SS...
+        if (is_digit(line[i])) {
+            size_t ts_len = match_timestamp(line, i);
+            if (ts_len > 0) { i += ts_len; continue; }
+
+            // 2. UUID: 8-4-4-4-12 hex (check before generic hex/number)
+            size_t uuid_len = match_uuid(line, i);
+            if (uuid_len > 0) { out += "<UUID>"; i += uuid_len; continue; }
+        }
+
+        // 3. Hex literals: 0x[0-9a-fA-F]+
+        if (line[i] == '0' && i + 2 < line.size() && line[i + 1] == 'x' && is_hex(line[i + 2])) {
+            out += "<HEX>";
+            i += 2;
+            while (i < line.size() && is_hex(line[i])) i++;
+            continue;
+        }
+
+        // 4. Large numbers: 4+ digits at word boundary
+        if (is_digit(line[i]) && (i == 0 || !is_word(line[i - 1]))) {
+            size_t start = i;
+            while (i < line.size() && is_digit(line[i])) i++;
+            bool at_boundary = (i >= line.size() || !is_word(line[i]));
+            if (at_boundary && (i - start) >= 4) {
+                out += "<N>";
+            } else {
+                out.append(line, start, i - start);
+            }
+            continue;
+        }
+
+        // 5. Absolute paths: /word-path-chars+
+        if (line[i] == '/' && i + 1 < line.size() && is_path_char(line[i + 1])) {
+            out += "<PATH>";
+            i++;
+            while (i < line.size() && is_path_char(line[i])) i++;
+            continue;
+        }
+
+        out += line[i];
+        i++;
+    }
+    return out;
 }
 
 std::string deduplicate_log_lines(const std::string& output) {
