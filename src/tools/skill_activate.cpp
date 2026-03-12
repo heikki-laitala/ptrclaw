@@ -10,6 +10,8 @@ public:
     ToolResult execute(const std::string& args_json) override {
         if (!agent_) return {false, "Agent not available"};
 
+        agent_->load_skills(); // re-scan directory for new/changed skills
+
         nlohmann::json args;
         try {
             args = nlohmann::json::parse(args_json);
