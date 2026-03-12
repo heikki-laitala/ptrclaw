@@ -127,7 +127,7 @@ std::string cmd_skill(const std::string& args, Agent& agent) {
             bool active = (s.name == agent.active_skill_name());
             result += "  " + s.name;
             if (!s.description.empty()) result += " \xe2\x80\x94 " + s.description;
-            if (active) result += " [active]";
+            result += active ? " [active]" : " [off]";
             result += "\n";
         }
         result += "\nActivate: /skill <name>\nDeactivate: /skill off";
