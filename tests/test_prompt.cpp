@@ -152,3 +152,58 @@ TEST_CASE("build_system_prompt: no scheduling hint without binary path", "[promp
     auto result = build_system_prompt(tools, false, false, nullptr, runtime);
     REQUIRE(result.find("## Scheduled Tasks") == std::string::npos);
 }
+
+// ── Mock tool with custom name for skill whitelist tests ────────
+
+class NamedMockTool : public Tool {
+public:
+    explicit NamedMockTool(std::string name) : name_(std::move(name)) {}
+    ToolResult execute(const std::string&) override { return {true, ""}; }
+    std::string tool_name() const override { return name_; }
+    std::string description() const override { return "Mock " + name_; }
+    std::string parameters_json() const override { return R"({"type":"object"})"; }
+private:
+    std::string name_;
+};
+
+TEST_CASE("build_system_prompt: skill tool whitelist filters non-native tools", "[prompt]") {
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<NamedMockTool>("file_read"));
+    tools.push_back(std::make_unique<NamedMockTool>("shell"));
+    tools.push_back(std::make_unique<NamedMockTool>("file_write"));
+
+    // Non-native provider (include_tool_descriptions=true) with whitelist
+    std::vector<std::string> allowed = {"file_read", "shell"};
+    auto result = build_system_prompt(tools, true, false, nullptr, {}, allowed);
+
+    REQUIRE(result.find("file_read") != std::string::npos);
+    REQUIRE(result.find("shell") != std::string::npos);
+    REQUIRE(result.find("file_write") == std::string::npos);
+}
+
+TEST_CASE("build_system_prompt: skill tool whitelist filters native tool summary", "[prompt]") {
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<NamedMockTool>("file_read"));
+    tools.push_back(std::make_unique<NamedMockTool>("shell"));
+    tools.push_back(std::make_unique<NamedMockTool>("file_write"));
+
+    // Native provider (include_tool_descriptions=false) with whitelist
+    std::vector<std::string> allowed = {"shell"};
+    auto result = build_system_prompt(tools, false, false, nullptr, {}, allowed);
+
+    REQUIRE(result.find("shell") != std::string::npos);
+    REQUIRE(result.find("file_read") == std::string::npos);
+    REQUIRE(result.find("file_write") == std::string::npos);
+}
+
+TEST_CASE("build_system_prompt: empty whitelist shows all tools", "[prompt]") {
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<NamedMockTool>("file_read"));
+    tools.push_back(std::make_unique<NamedMockTool>("shell"));
+
+    std::vector<std::string> allowed; // empty = all tools
+    auto result = build_system_prompt(tools, true, false, nullptr, {}, allowed);
+
+    REQUIRE(result.find("file_read") != std::string::npos);
+    REQUIRE(result.find("shell") != std::string::npos);
+}

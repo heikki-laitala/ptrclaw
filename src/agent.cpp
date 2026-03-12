@@ -66,8 +66,12 @@ void Agent::inject_system_prompt() {
         bool include_tool_desc = !provider_->supports_native_tools();
         RuntimeInfo runtime{model_, provider_->provider_name(), channel_,
                            binary_path_, session_id_};
+        // Pass active skill's tool whitelist so both native and non-native
+        // providers consistently restrict visible tools.
+        const auto* active = find_skill(active_skill_name_);
+        const auto& skill_tools = active ? active->tools : std::vector<std::string>{};
         prompt = build_system_prompt(tools_, include_tool_desc, has_active_memory(),
-                                     memory_.get(), runtime);
+                                     memory_.get(), runtime, skill_tools);
 
         // Inject available skills list
         if (!available_skills_.empty()) {

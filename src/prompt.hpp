@@ -20,11 +20,13 @@ struct RuntimeInfo {
 // Build the system prompt, including tool descriptions for XML-based providers.
 // When has_memory is true, includes instructions about memory tools and context format.
 // When memory is non-null, injects soul identity block if soul entries exist.
+// When allowed_tools is non-empty, only tools in the set are included.
 std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
                                 bool include_tool_descriptions,
                                 bool has_memory = false,
                                 Memory* memory = nullptr,
-                                const RuntimeInfo& runtime = {});
+                                const RuntimeInfo& runtime = {},
+                                const std::vector<std::string>& allowed_tools = {});
 
 // Build the hatching bootstrap system prompt for soul creation.
 std::string build_hatch_prompt();
