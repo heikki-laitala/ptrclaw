@@ -94,7 +94,7 @@ std::vector<SkillDef> load_skills(const std::string& dir) {
         return skills;
     }
 
-    for (const auto& entry : fs::directory_iterator(dir)) {
+    for (const auto& entry : fs::recursive_directory_iterator(dir)) {
         if (!entry.is_regular_file()) continue;
         if (entry.path().extension() != ".md") continue;
 
