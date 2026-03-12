@@ -345,6 +345,12 @@ std::string Agent::process(const std::string& user_message) {
         if (!provider_->supports_native_tools() && !xml_results.empty()) {
             history_.push_back(ChatMessage{Role::User, xml_results, {}, {}});
         }
+
+        // A tool (e.g. skill_activate) may have invalidated the system prompt.
+        // Re-inject before the next provider call so instructions are present.
+        if (!system_prompt_injected_) {
+            inject_system_prompt();
+        }
     }
 
     if (final_content.empty()) {

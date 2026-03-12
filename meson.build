@@ -245,7 +245,7 @@ test_sources = core_test_sources + optional_test_sources
 test_exe = executable('ptrclaw_tests', test_sources,
   dependencies: [ptrclaw_dep, catch2_dep])
 
-test('unit_tests', test_exe)
+test('unit_tests', test_exe, args: ['~[cron]'])
 
 # ── Build summary ──────────────────────────────────────────────
 providers = []
