@@ -114,3 +114,18 @@ TEST_CASE("load_skills: empty directory returns empty", "[skill]") {
     REQUIRE(skills.empty());
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("load_skills: finds skills in subdirectories", "[skill]") {
+    auto dir = make_temp_dir();
+    std::filesystem::create_directories(dir + "/email");
+    write_file(dir + "/review.md", "---\nname: review\n---\nReview code.");
+    write_file(dir + "/email/protonmail.md", "---\nname: protonmail\ndescription: Email\n---\nEmail skill.");
+
+    auto skills = load_skills(dir);
+    REQUIRE(skills.size() == 2);
+    // Sorted by name
+    REQUIRE(skills[0].name == "protonmail");
+    REQUIRE(skills[1].name == "review");
+
+    std::filesystem::remove_all(dir);
+}
