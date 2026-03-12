@@ -1,6 +1,5 @@
 #include "../agent.hpp"
 #include "../plugin.hpp"
-#include "../skill.hpp"
 #include <nlohmann/json.hpp>
 
 namespace ptrclaw {

@@ -84,14 +84,9 @@ void Agent::inject_system_prompt() {
         }
 
         // Inject active skill prompt
-        if (!active_skill_name_.empty()) {
-            for (const auto& skill : available_skills_) {
-                if (skill.name == active_skill_name_) {
-                    prompt += "\n## Active Skill: " + skill.name + "\n"
-                              + skill.prompt + "\n\n";
-                    break;
-                }
-            }
+        if (auto* active = find_skill(active_skill_name_)) {
+            prompt += "\n## Active Skill: " + active->name + "\n"
+                      + active->prompt + "\n\n";
         }
     }
     history_.insert(history_.begin(), ChatMessage{Role::System, prompt, {}, {}});
@@ -130,15 +125,8 @@ std::string Agent::process(const std::string& user_message) {
     if (!hatching_ && provider_->supports_native_tools()) {
         bool memory_active = has_active_memory();
         // Resolve active skill's tool whitelist (empty = all tools)
-        std::vector<std::string> skill_tools;
-        if (!active_skill_name_.empty()) {
-            for (const auto& skill : available_skills_) {
-                if (skill.name == active_skill_name_) {
-                    skill_tools = skill.tools;
-                    break;
-                }
-            }
-        }
+        const auto* active = find_skill(active_skill_name_);
+        const auto& skill_tools = active ? active->tools : std::vector<std::string>{};
         tool_specs.reserve(tools_.size());
         for (const auto& tool : tools_) {
             if (!memory_active && is_memory_tool(tool->tool_name())) {
@@ -645,6 +633,13 @@ void Agent::compact_history() {
     }
 }
 
+const SkillDef* Agent::find_skill(const std::string& name) const {
+    for (const auto& skill : available_skills_) {
+        if (skill.name == name) return &skill;
+    }
+    return nullptr;
+}
+
 void Agent::load_skills(const std::string& dir) {
     std::string skills_dir = dir.empty() ? default_skills_dir() : dir;
     auto fresh = ptrclaw::load_skills(skills_dir);
@@ -656,14 +651,10 @@ void Agent::load_skills(const std::string& dir) {
 }
 
 bool Agent::activate_skill(const std::string& name) {
-    for (const auto& skill : available_skills_) {
-        if (skill.name == name) {
-            active_skill_name_ = name;
-            invalidate_system_prompt();
-            return true;
-        }
-    }
-    return false;
+    if (!find_skill(name)) return false;
+    active_skill_name_ = name;
+    invalidate_system_prompt();
+    return true;
 }
 
 void Agent::deactivate_skill() {
