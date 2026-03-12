@@ -20,7 +20,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 
 - **LLM streaming** — real-time token streaming with progressive message editing in channels
 - **Event-driven architecture** — publish/subscribe event bus decouples agent, channels, and streaming
-- **Interactive REPL** with slash commands (`/status`, `/model`, `/models`, `/provider`, `/clear`, `/memory`, `/auth`, `/onboard`, `/hatch`, `/help`, `/quit`; `/soul` available in `--dev` mode)
+- **Interactive REPL** with slash commands (`/status`, `/model`, `/models`, `/provider`, `/skill`, `/clear`, `/memory`, `/auth`, `/onboard`, `/hatch`, `/help`, `/quit`; `/soul` available in `--dev` mode)
 - **Single-message mode** — pipe a question in and get an answer back
 - **Automatic history compaction** when token usage approaches the context limit
 - **Persistent memory** — knowledge graph with bidirectional links, hybrid search (text + vector + recency decay), knowledge decay with idle fade, three-space semantics (core/knowledge/conversation), graph-aware context enrichment, automatic conversation synthesis
