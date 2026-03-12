@@ -66,8 +66,7 @@ void Agent::inject_system_prompt() {
         bool include_tool_desc = !provider_->supports_native_tools();
         RuntimeInfo runtime{model_, provider_->provider_name(), channel_,
                            binary_path_, session_id_};
-        // Pass active skill's tool whitelist so both native and non-native
-        // providers consistently restrict visible tools.
+        // Resolve active skill once for both tool whitelist and prompt injection.
         const auto* active = find_skill(active_skill_name_);
         const auto& skill_tools = active ? active->tools : std::vector<std::string>{};
         prompt = build_system_prompt(tools_, include_tool_desc, has_active_memory(),
@@ -88,7 +87,7 @@ void Agent::inject_system_prompt() {
         }
 
         // Inject active skill prompt
-        if (auto* active = find_skill(active_skill_name_)) {
+        if (active) {
             prompt += "\n## Active Skill: " + active->name + "\n"
                       + active->prompt + "\n\n";
         }
@@ -128,23 +127,11 @@ std::string Agent::process(const std::string& user_message) {
     std::vector<ToolSpec> tool_specs;
     if (!hatching_ && provider_->supports_native_tools()) {
         bool memory_active = has_active_memory();
-        // Resolve active skill's tool whitelist (empty = all tools)
         const auto* active = find_skill(active_skill_name_);
         const auto& skill_tools = active ? active->tools : std::vector<std::string>{};
         tool_specs.reserve(tools_.size());
         for (const auto& tool : tools_) {
-            if (!memory_active && is_memory_tool(tool->tool_name())) {
-                continue;
-            }
-            // Filter by skill tool whitelist
-            if (!skill_tools.empty()) {
-                bool allowed = false;
-                for (const auto& t : skill_tools) {
-                    if (t == tool->tool_name()) { allowed = true; break; }
-                }
-                // Always allow skill_activate/skill_deactivate
-                if (!allowed && tool->tool_name() != "skill_activate") continue;
-            }
+            if (!tool_allowed(tool->tool_name(), memory_active, skill_tools)) continue;
             tool_specs.push_back(tool->spec());
         }
     }
