@@ -365,6 +365,41 @@ PtrClaw has a persistent memory system with two backends: **JSON file** (zero de
 
 For full details on scoring, the knowledge graph, and memory tools, see [`docs/memory.md`](docs/memory.md).
 
+### Skills
+
+Skills are reusable behavior modes defined as `.md` files in `~/.ptrclaw/skills/`. Each skill injects a specialized prompt alongside the system prompt when activated, optionally restricting which tools are available.
+
+**Skill file format:**
+
+```markdown
+---
+name: code_review
+description: Review code for bugs and security issues
+tools: [file_read, shell]
+---
+
+You are reviewing code. Focus on:
+1. Security vulnerabilities
+2. Logic errors
+3. Performance issues
+Provide specific line references and suggested fixes.
+```
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `name` | Yes | Unique identifier for the skill |
+| `description` | No | One-line summary shown in `/skill` list |
+| `tools` | No | Tool whitelist — empty means all tools available |
+
+**Usage:**
+
+- `/skill` — list available skills
+- `/skill <name>` — activate a skill
+- `/skill off` — deactivate the current skill
+- The agent can also activate skills mid-conversation via the `skill_activate` tool
+
+Skills are detected dynamically — add or edit `.md` files and they'll be picked up on the next `/skill` command without restarting.
+
 ## Development
 
 ```sh
@@ -450,6 +485,7 @@ src/
   onboard.hpp/cpp       First-run setup wizard (provider, channel, personality)
   provider.hpp/cpp      Provider interface, types, listing, and runtime switching
   tool.hpp/cpp          Tool interface, ToolSpec, ToolResult
+  skill.hpp/cpp         Skill loader — .md frontmatter parser, directory scanner
   channel.hpp/cpp       Channel interface, ChannelMessage
   config.hpp/cpp        Config loading (~/.ptrclaw/config.json + env vars)
   plugin.hpp/cpp        Self-registration plugin registry (providers, channels, tools)
@@ -493,6 +529,7 @@ src/
     memory_recall.cpp   Search memories with graph traversal
     memory_forget.cpp   Delete memory entries
     memory_link.cpp     Create/remove bidirectional links between entries
+    skill_activate.cpp  Activate/deactivate skills mid-conversation
 tests/                  Catch2 unit tests
 docs/
   memory.md             Memory system architecture, scoring, knowledge decay, config reference
