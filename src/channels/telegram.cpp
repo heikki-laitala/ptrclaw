@@ -57,6 +57,7 @@ bool TelegramChannel::set_my_commands() {
         {{"command", "model"},   {"description", "Switch model"}},
         {{"command", "models"},  {"description", "List configured providers"}},
         {{"command", "memory"},  {"description", "Show memory status"}},
+        {{"command", "skill"},   {"description", "List or activate skills"}},
         {{"command", "auth"},    {"description", "Manage provider credentials"}},
         {{"command", "hatch"},   {"description", "Create or recreate assistant identity"}},
         {{"command", "help"},    {"description", "Show available commands"}},
