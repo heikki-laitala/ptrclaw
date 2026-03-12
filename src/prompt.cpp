@@ -7,11 +7,27 @@
 
 namespace ptrclaw {
 
+static bool tool_allowed(const std::string& name,
+                         bool memory_active,
+                         const std::vector<std::string>& allowed_tools) {
+    if (!memory_active && is_memory_tool(name)) return false;
+    if (!allowed_tools.empty()) {
+        // skill_activate is always allowed so the agent can switch skills
+        if (name == "skill_activate") return true;
+        for (const auto& t : allowed_tools) {
+            if (t == name) return true;
+        }
+        return false;
+    }
+    return true;
+}
+
 std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
                                 bool include_tool_descriptions,
                                 bool has_memory,
                                 Memory* memory,
-                                const RuntimeInfo& runtime) {
+                                const RuntimeInfo& runtime,
+                                const std::vector<std::string>& allowed_tools) {
     std::ostringstream ss;
 
     ss << "You are PtrClaw, an autonomous AI assistant.\n\n";
@@ -23,7 +39,8 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
     }
 
     // ── Tooling ──
-    // Contextual selection: omit memory tools when memory is inactive
+    // Contextual selection: omit memory tools when memory is inactive,
+    // and filter to skill-allowed tools when a skill is active.
     bool memory_active = has_memory && memory && memory->backend_name() != "none";
     if (!tools.empty()) {
         if (include_tool_descriptions) {
@@ -31,7 +48,7 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
             ss << "## Tooling\n";
             ss << "Available tools:\n";
             for (const auto& tool : tools) {
-                if (!memory_active && is_memory_tool(tool->tool_name())) continue;
+                if (!tool_allowed(tool->tool_name(), memory_active, allowed_tools)) continue;
                 ss << "- " << tool->tool_name() << ": " << tool->description() << "\n";
                 ss << "  Parameters: " << tool->parameters_json() << "\n";
             }
@@ -42,7 +59,7 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
             ss << "## Tooling\n";
             ss << "You have tools to interact with the system:\n";
             for (const auto& tool : tools) {
-                if (!memory_active && is_memory_tool(tool->tool_name())) continue;
+                if (!tool_allowed(tool->tool_name(), memory_active, allowed_tools)) continue;
                 ss << "- " << tool->tool_name() << ": " << tool->description() << "\n";
             }
             ss << "\nUse tools proactively to accomplish tasks. "
