@@ -119,7 +119,7 @@ jobs:
             else
               CLANG_TIDY_EXTRA=""
             fi
-            clang-tidy -p builddir $CLANG_TIDY_EXTRA $CHANGED 2>&1 | grep -v 'warnings generated'
+            clang-tidy -p builddir -warnings-as-errors='*' $CLANG_TIDY_EXTRA $CHANGED 2>&1 | grep -v 'warnings generated'
           else
             echo "No changed src/tests files to lint"
           fi

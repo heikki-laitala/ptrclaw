@@ -79,7 +79,7 @@ coverage-summary:
 	gcovr --root . $(COVDIR) --filter src/
 
 lint: build
-	run-clang-tidy -quiet -p $(BUILDDIR) $(CLANG_TIDY_EXTRA) '^(?!.*subprojects).*(src|tests)/' 2>&1 | grep -v 'warnings generated'
+	run-clang-tidy -quiet -p $(BUILDDIR) -warnings-as-errors='*' $(CLANG_TIDY_EXTRA) '^(?!.*subprojects).*(src|tests)/' 2>&1 | grep -v 'warnings generated'
 
 clear-memory:
 	rm -f ~/.ptrclaw/memory.json ~/.ptrclaw/memory.db ~/.ptrclaw/memory.db-shm ~/.ptrclaw/memory.db-wal

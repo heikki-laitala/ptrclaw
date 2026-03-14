@@ -227,9 +227,9 @@ TEST_CASE("Config::load: creates default config when missing", "[config]") {
     // Channels section present with empty defaults
     REQUIRE(j.contains("channels"));
     REQUIRE(j["channels"].contains("telegram"));
-    REQUIRE(j["channels"]["telegram"]["bot_token"] == "");
+    REQUIRE(j["channels"]["telegram"]["bot_token"].get<std::string>().empty());
     REQUIRE(j["channels"].contains("whatsapp"));
-    REQUIRE(j["channels"]["whatsapp"]["access_token"] == "");
+    REQUIRE(j["channels"]["whatsapp"]["access_token"].get<std::string>().empty());
 }
 
 TEST_CASE("Config::load: migrates existing config with missing keys", "[config]") {

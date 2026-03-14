@@ -540,7 +540,7 @@ TEST_CASE("JsonMemory: idle fade penalizes Knowledge entries nearing deadline", 
     // "fresh" was accessed recently (last_accessed = very large / near-now).
     // "stale" was accessed long ago (last_accessed = now - 25 days, with 30-day max).
     // 25 days is past the halfway fade point (15 days), so stale should score lower.
-    uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+    auto now = static_cast<uint64_t>(std::time(nullptr));
     uint64_t stale_access = now - UINT64_C(25) * 86400;  // 25 days ago
     std::string json = R"([
         {"id":"1","key":"fresh-fact","content":"matching data","category":"knowledge","timestamp":1000000,"session_id":"","last_accessed":)" +
@@ -590,7 +590,7 @@ TEST_CASE("JsonMemory: idle fade does not affect Core entries", "[json_memory]")
     mem.set_knowledge_decay(1, 0.0);
 
     auto results = mem.recall("matching", 10, std::nullopt);
-    REQUIRE(results.size() >= 1);
+    REQUIRE(!results.empty());
 
     // Core entry should not be penalized; knowledge entry should be
     double core_score = 0.0;
