@@ -34,23 +34,25 @@ You are reviewing code. Focus on:
 
     auto skill = parse_skill_file(content, "/test/code_review.md");
     REQUIRE(skill.has_value());
-    REQUIRE(skill->name == "code_review");
-    REQUIRE(skill->description == "Review code for bugs and security issues");
-    REQUIRE(skill->tools.size() == 2);
-    REQUIRE(skill->tools[0] == "file_read");
-    REQUIRE(skill->tools[1] == "shell");
-    REQUIRE(skill->prompt.find("Security vulnerabilities") != std::string::npos);
-    REQUIRE(skill->path == "/test/code_review.md");
+    const SkillDef& s1 = skill.value_or(SkillDef{});
+    REQUIRE(s1.name == "code_review");
+    REQUIRE(s1.description == "Review code for bugs and security issues");
+    REQUIRE(s1.tools.size() == 2);
+    REQUIRE(s1.tools[0] == "file_read");
+    REQUIRE(s1.tools[1] == "shell");
+    REQUIRE(s1.prompt.find("Security vulnerabilities") != std::string::npos);
+    REQUIRE(s1.path == "/test/code_review.md");
 }
 
 TEST_CASE("parse_skill_file: name only (minimal)", "[skill]") {
     std::string content = "---\nname: simple\n---\nDo something.";
     auto skill = parse_skill_file(content);
     REQUIRE(skill.has_value());
-    REQUIRE(skill->name == "simple");
-    REQUIRE(skill->description.empty());
-    REQUIRE(skill->tools.empty());
-    REQUIRE(skill->prompt == "Do something.");
+    const SkillDef& s2 = skill.value_or(SkillDef{});
+    REQUIRE(s2.name == "simple");
+    REQUIRE(s2.description.empty());
+    REQUIRE(s2.tools.empty());
+    REQUIRE(s2.prompt == "Do something.");
 }
 
 TEST_CASE("parse_skill_file: missing name returns nullopt", "[skill]") {
@@ -66,23 +68,25 @@ TEST_CASE("parse_skill_file: empty tools list", "[skill]") {
     std::string content = "---\nname: test\ntools: []\n---\nbody";
     auto skill = parse_skill_file(content);
     REQUIRE(skill.has_value());
-    REQUIRE(skill->tools.empty());
+    REQUIRE(skill.value_or(SkillDef{}).tools.empty());
 }
 
 TEST_CASE("parse_skill_file: handles CRLF line endings", "[skill]") {
     std::string content = "---\r\nname: crlf_test\r\ndescription: test\r\n---\r\nBody text";
     auto skill = parse_skill_file(content);
     REQUIRE(skill.has_value());
-    REQUIRE(skill->name == "crlf_test");
-    REQUIRE(skill->prompt == "Body text");
+    const SkillDef& s3 = skill.value_or(SkillDef{});
+    REQUIRE(s3.name == "crlf_test");
+    REQUIRE(s3.prompt == "Body text");
 }
 
 TEST_CASE("parse_skill_file: empty body", "[skill]") {
     std::string content = "---\nname: no_body\n---\n";
     auto skill = parse_skill_file(content);
     REQUIRE(skill.has_value());
-    REQUIRE(skill->name == "no_body");
-    REQUIRE(skill->prompt.empty());
+    const SkillDef& s4 = skill.value_or(SkillDef{});
+    REQUIRE(s4.name == "no_body");
+    REQUIRE(s4.prompt.empty());
 }
 
 // ── load_skills tests ───────────────────────────────────────────
