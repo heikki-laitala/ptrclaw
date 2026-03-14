@@ -139,6 +139,8 @@ std::string cmd_skill(const std::string& args, Agent& agent) {
                     }
                     result += ", skill_activate";
                 }
+            } else {
+                result += " [off]";
             }
             result += "\n";
         }

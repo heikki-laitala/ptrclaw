@@ -546,7 +546,7 @@ TEST_CASE("SqliteMemory: idle fade does not affect Core entries", "[sqlite_memor
         mem.set_knowledge_decay(1, 0.0);
 
         auto results = mem.recall("matching", 10, std::nullopt);
-        REQUIRE(results.size() >= 1);
+        REQUIRE(!results.empty());
 
         double core_score = 0.0;
         double knowledge_score = 0.0;

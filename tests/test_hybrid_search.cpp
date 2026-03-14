@@ -211,7 +211,7 @@ TEST_CASE("JsonMemory: recency decay boosts recent entries", "[recency][json_mem
         auto j = nlohmann::json::parse(in);
         in.close();
 
-        uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+        auto now = static_cast<uint64_t>(std::time(nullptr));
         // Old entry: 30 days ago
         j[0]["timestamp"] = now - UINT64_C(30) * 86400;
         // New entry: 1 minute ago
@@ -247,7 +247,7 @@ TEST_CASE("JsonMemory: recency decay disabled when half_life is 0", "[recency][j
         auto j = nlohmann::json::parse(in);
         in.close();
 
-        uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+        auto now = static_cast<uint64_t>(std::time(nullptr));
         j[0]["timestamp"] = now - UINT64_C(30) * 86400;
         j[1]["timestamp"] = now - 60;
 
@@ -342,7 +342,7 @@ TEST_CASE("SqliteMemory: recency decay boosts recent entries", "[recency][sqlite
         // Manually update timestamps via SQL
         sqlite3* db = nullptr;
         sqlite3_open(path.c_str(), &db);
-        uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+        auto now = static_cast<uint64_t>(std::time(nullptr));
         std::string sql1 = "UPDATE memories SET timestamp = " +
                            std::to_string(now - UINT64_C(30) * 86400) + " WHERE key = 'old-python';";
         std::string sql2 = "UPDATE memories SET timestamp = " +

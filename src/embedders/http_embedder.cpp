@@ -19,7 +19,7 @@ Embedding HttpEmbedder::embed(const std::string& text) {
         {"Content-Type", "application/json"}
     };
     if (!config_.api_key.empty()) {
-        headers.push_back({"Authorization", "Bearer " + config_.api_key});
+        headers.emplace_back("Authorization", "Bearer " + config_.api_key);
     }
 
     auto response = http_.post(

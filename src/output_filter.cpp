@@ -516,6 +516,7 @@ static std::string filter_search_results(const std::string& output) {
     if (file_matches.empty()) return output;
 
     std::vector<std::string> result;
+    result.reserve(non_match_lines.size() + file_order.size());
     for (const auto& nl : non_match_lines) {
         result.push_back(nl);
     }
@@ -1223,7 +1224,7 @@ void rotate_tee_files(const std::string& tee_dir,
         for (const auto& entry : logs) {
             try {
                 if (entry.file_size() > max_file_size) { any_oversized = true; break; }
-            } catch (...) {}
+            } catch (...) { /* file_size() may throw on broken symlinks */ }
         }
         if (!any_oversized) return;
     }
@@ -1325,7 +1326,7 @@ static size_t match_uuid(const std::string& s, size_t pos) {
     if (s[i] != '-') return 0; i++;
     if (!match_hex_n(s, i, 4)) return 0; i += 4;
     if (s[i] != '-') return 0; i++;
-    if (!match_hex_n(s, i, 12)) return 0; i += 12;
+    if (!match_hex_n(s, i, 12)) return 0;
     return 36;
 }
 
