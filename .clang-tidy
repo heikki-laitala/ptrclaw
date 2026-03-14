@@ -15,6 +15,7 @@ Checks: >
   performance-*,
   -performance-enum-size,
   -bugprone-easily-swappable-parameters,
+  -bugprone-throwing-static-initialization,
   -clang-analyzer-optin.core.EnumCastOutOfRange,
   readability-container-size-empty,
   readability-duplicate-include,
