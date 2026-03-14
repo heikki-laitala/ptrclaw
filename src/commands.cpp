@@ -122,15 +122,27 @@ std::string cmd_skill(const std::string& args, Agent& agent) {
         if (skills.empty()) {
             return "No skills available. Add .md files to ~/.ptrclaw/skills/";
         }
+        const std::string& active_name = agent.active_skill_name();
         std::string result = "Skills:\n";
         for (const auto& s : skills) {
-            bool active = (s.name == agent.active_skill_name());
-            result += "  " + s.name;
+            bool active = (s.name == active_name);
+            result += active ? "* " : "  ";
+            result += s.name;
             if (!s.description.empty()) result += " \xe2\x80\x94 " + s.description;
-            result += active ? " [active]" : " [off]";
+            if (active) {
+                result += " [active]";
+                if (!s.tools.empty()) {
+                    result += "\n    tools: ";
+                    for (size_t i = 0; i < s.tools.size(); ++i) {
+                        if (i > 0) result += ", ";
+                        result += s.tools[i];
+                    }
+                    result += ", skill_activate";
+                }
+            }
             result += "\n";
         }
-        result += "\nActivate: /skill <name>\nDeactivate: /skill off";
+        result += "\nActivate: /skill <name>  |  Deactivate: /skill off";
         return result;
     }
 

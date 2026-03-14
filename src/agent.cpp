@@ -267,7 +267,37 @@ std::string Agent::process(const std::string& user_message) {
                 event_bus_->publish(ev);
             }
 
-            ToolResult result = dispatch_tool(call, tools_);
+            // If a skill whitelist is active and the LLM calls a blocked tool
+            // (possible for non-native providers via XML hallucination, or
+            // defensively for native providers), return a clear error pointing
+            // the agent toward skill_activate or /skill off.
+            const auto* active_skill_ptr = find_skill(active_skill_name_);
+            const auto& skill_wl = active_skill_ptr
+                ? active_skill_ptr->tools : std::vector<std::string>{};
+            ToolResult result;
+            if (!skill_wl.empty() && call.name != "skill_activate") {
+                bool in_wl = false;
+                for (const auto& t : skill_wl) {
+                    if (t == call.name) { in_wl = true; break; }
+                }
+                if (!in_wl) {
+                    std::string msg = "Tool '" + call.name
+                        + "' is not available with the active skill '"
+                        + active_skill_name_ + "'. Allowed: ";
+                    for (size_t wi = 0; wi < skill_wl.size(); ++wi) {
+                        if (wi > 0) msg += ", ";
+                        msg += skill_wl[wi];
+                    }
+                    msg += ", skill_activate."
+                           " Use /skill off or skill_activate(name=\"off\")"
+                           " to deactivate.";
+                    result = {false, msg};
+                } else {
+                    result = dispatch_tool(call, tools_);
+                }
+            } else {
+                result = dispatch_tool(call, tools_);
+            }
 
             // Filter tool output to reduce token consumption
             uint32_t raw_tokens = estimate_tokens(result.output);

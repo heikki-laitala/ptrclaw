@@ -207,3 +207,36 @@ TEST_CASE("build_system_prompt: empty whitelist shows all tools", "[prompt]") {
     REQUIRE(result.find("file_read") != std::string::npos);
     REQUIRE(result.find("shell") != std::string::npos);
 }
+
+// ── tool_allowed unit tests ─────────────────────────────────────
+
+TEST_CASE("tool_allowed: no whitelist allows all tools", "[prompt]") {
+    REQUIRE(tool_allowed("file_read", true, {}));
+    REQUIRE(tool_allowed("shell", true, {}));
+    REQUIRE(tool_allowed("skill_activate", true, {}));
+}
+
+TEST_CASE("tool_allowed: whitelist allows listed tools", "[prompt]") {
+    std::vector<std::string> allowed = {"file_read", "shell"};
+    REQUIRE(tool_allowed("file_read", true, allowed));
+    REQUIRE(tool_allowed("shell", true, allowed));
+}
+
+TEST_CASE("tool_allowed: whitelist blocks unlisted tools", "[prompt]") {
+    std::vector<std::string> allowed = {"file_read"};
+    REQUIRE_FALSE(tool_allowed("shell", true, allowed));
+    REQUIRE_FALSE(tool_allowed("file_write", true, allowed));
+}
+
+TEST_CASE("tool_allowed: skill_activate always allowed with whitelist", "[prompt]") {
+    std::vector<std::string> allowed = {"file_read"};
+    REQUIRE(tool_allowed("skill_activate", true, allowed));
+}
+
+TEST_CASE("tool_allowed: memory tools blocked when memory inactive", "[prompt]") {
+    // memory_recall is a memory tool; blocked when memory is not active
+    REQUIRE_FALSE(tool_allowed("memory_recall", false, {}));
+    REQUIRE_FALSE(tool_allowed("memory_store", false, {}));
+    // non-memory tools still allowed
+    REQUIRE(tool_allowed("shell", false, {}));
+}
