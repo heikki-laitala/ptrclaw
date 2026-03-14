@@ -498,7 +498,7 @@ TEST_CASE("SqliteMemory: idle fade penalizes Knowledge entries nearing deadline"
     // Backdate stale-fact's last_accessed to 25 days ago (past the halfway fade point of 15 days)
     {
         auto now = static_cast<int64_t>(std::time(nullptr));
-        auto stale_ts = now - 25 * 86400;
+        auto stale_ts = now - INT64_C(25) * 86400;
         std::string sql = "UPDATE memories SET last_accessed = " +
                           std::to_string(stale_ts) + " WHERE key = 'stale-fact';";
         sqlite3* db = nullptr;

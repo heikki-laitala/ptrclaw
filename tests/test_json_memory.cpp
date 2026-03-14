@@ -541,7 +541,7 @@ TEST_CASE("JsonMemory: idle fade penalizes Knowledge entries nearing deadline", 
     // "stale" was accessed long ago (last_accessed = now - 25 days, with 30-day max).
     // 25 days is past the halfway fade point (15 days), so stale should score lower.
     uint64_t now = static_cast<uint64_t>(std::time(nullptr));
-    uint64_t stale_access = now - 25 * 86400;  // 25 days ago
+    uint64_t stale_access = now - UINT64_C(25) * 86400;  // 25 days ago
     std::string json = R"([
         {"id":"1","key":"fresh-fact","content":"matching data","category":"knowledge","timestamp":1000000,"session_id":"","last_accessed":)" +
         std::to_string(now) + R"(},
