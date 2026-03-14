@@ -112,7 +112,9 @@ jobs:
 
       - name: Lint (changed files on PR)
         if: github.event_name == 'pull_request'
+        shell: bash
         run: |
+          set -eo pipefail
           git fetch origin main --depth=1
           CHANGED=$(git diff --name-only --diff-filter=d origin/main...HEAD -- '*.cpp' '*.hpp' | grep -E '^(src|tests)/' | tr '\n' ' ')
           if [ -n "$CHANGED" ]; then
