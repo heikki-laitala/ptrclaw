@@ -90,9 +90,10 @@ struct JsonHybridFixture {
         mem.set_embedder(&embedder, 0.4, 0.6);
     }
 
-    ~JsonHybridFixture() {
-        std::filesystem::remove(path);
-        std::filesystem::remove(path + ".tmp");
+    ~JsonHybridFixture() noexcept {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        std::filesystem::remove(path + ".tmp", ec);
     }
 };
 
@@ -284,10 +285,11 @@ struct SqliteHybridFixture {
         mem.set_embedder(&embedder, 0.4, 0.6);
     }
 
-    ~SqliteHybridFixture() {
-        std::filesystem::remove(path);
-        std::filesystem::remove(path + "-wal");
-        std::filesystem::remove(path + "-shm");
+    ~SqliteHybridFixture() noexcept {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        std::filesystem::remove(path + "-wal", ec);
+        std::filesystem::remove(path + "-shm", ec);
     }
 };
 

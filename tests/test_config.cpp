@@ -91,9 +91,10 @@ struct ConfigTestGuard {
         unsetenv("OLLAMA_BASE_URL");
     }
 
-    ~ConfigTestGuard() {
+    ~ConfigTestGuard() noexcept {
         setenv("HOME", old_home.c_str(), 1);
-        std::filesystem::remove_all(dir);
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
     }
 
     ConfigTestGuard(const ConfigTestGuard&) = delete;

@@ -15,10 +15,11 @@ struct SqliteFixture {
     std::string path = sqlite_test_path();
     SqliteMemory mem{path};
 
-    ~SqliteFixture() {
-        std::filesystem::remove(path);
-        std::filesystem::remove(path + "-wal");
-        std::filesystem::remove(path + "-shm");
+    ~SqliteFixture() noexcept {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        std::filesystem::remove(path + "-wal", ec);
+        std::filesystem::remove(path + "-shm", ec);
     }
 };
 

@@ -18,9 +18,10 @@ struct JsonMemoryFixture {
     std::string path = test_path();
     JsonMemory mem{path};
 
-    ~JsonMemoryFixture() {
-        std::filesystem::remove(path);
-        std::filesystem::remove(path + ".tmp");
+    ~JsonMemoryFixture() noexcept {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        std::filesystem::remove(path + ".tmp", ec);
     }
 };
 
