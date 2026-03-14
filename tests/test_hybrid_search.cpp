@@ -83,6 +83,7 @@ static std::string json_test_path() {
 
 struct JsonHybridFixture {
     std::string path = json_test_path();
+    std::string tmp_path = path + ".tmp";
     SemanticMockEmbedder embedder;
     JsonMemory mem{path};
 
@@ -93,7 +94,7 @@ struct JsonHybridFixture {
     ~JsonHybridFixture() noexcept {
         std::error_code ec;
         std::filesystem::remove(path, ec);
-        std::filesystem::remove(path + ".tmp", ec);
+        std::filesystem::remove(tmp_path, ec);
     }
 };
 
@@ -278,6 +279,8 @@ static std::string sqlite_hybrid_path() {
 
 struct SqliteHybridFixture {
     std::string path = sqlite_hybrid_path();
+    std::string wal_path = path + "-wal";
+    std::string shm_path = path + "-shm";
     SemanticMockEmbedder embedder;
     SqliteMemory mem{path};
 
@@ -288,8 +291,8 @@ struct SqliteHybridFixture {
     ~SqliteHybridFixture() noexcept {
         std::error_code ec;
         std::filesystem::remove(path, ec);
-        std::filesystem::remove(path + "-wal", ec);
-        std::filesystem::remove(path + "-shm", ec);
+        std::filesystem::remove(wal_path, ec);
+        std::filesystem::remove(shm_path, ec);
     }
 };
 

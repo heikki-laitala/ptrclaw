@@ -16,12 +16,13 @@ static std::string test_path() {
 
 struct JsonMemoryFixture {
     std::string path = test_path();
+    std::string tmp_path = path + ".tmp";
     JsonMemory mem{path};
 
     ~JsonMemoryFixture() noexcept {
         std::error_code ec;
         std::filesystem::remove(path, ec);
-        std::filesystem::remove(path + ".tmp", ec);
+        std::filesystem::remove(tmp_path, ec);
     }
 };
 
