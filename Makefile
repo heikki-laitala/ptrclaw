@@ -29,8 +29,9 @@ MINDIR := builddir-minimal
 COVDIR := builddir-cov
 PIPEDIR := builddir-pipe
 EMBDIR := builddir-emb
+SDKDIR := builddir-sdk
 
-.PHONY: deps setup build build-emb build-minimal build-static run test coverage coverage-summary lint clean clear-memory memory-clean
+.PHONY: deps setup build build-emb build-minimal build-static build-sdk run test coverage coverage-summary lint clean clear-memory memory-clean
 
 deps:
 ifeq ($(shell uname),Darwin)
@@ -50,6 +51,10 @@ build: setup
 build-emb:
 	@if [ ! -d $(EMBDIR) ]; then meson setup $(EMBDIR) $(NATIVE_ARGS) -Dcatch2:tests=false -Dwith_embeddings=true; fi
 	meson compile -C $(EMBDIR)
+
+build-sdk:
+	@if [ ! -d $(SDKDIR) ]; then meson setup $(SDKDIR) $(NATIVE_ARGS) -Dcatch2:tests=false -Dwith_embed=true; fi
+	meson compile -C $(SDKDIR) ptrclaw_shared
 
 build-minimal:
 	@if [ ! -d $(MINDIR) ]; then meson setup $(MINDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
@@ -89,4 +94,4 @@ clear-memory:
 memory-clean: clear-memory
 
 clean:
-	rm -rf $(BUILDDIR) $(STATICDIR) $(MINDIR) $(COVDIR) $(PIPEDIR) $(EMBDIR)
+	rm -rf $(BUILDDIR) $(STATICDIR) $(MINDIR) $(COVDIR) $(PIPEDIR) $(EMBDIR) $(SDKDIR)

@@ -39,3 +39,7 @@ option('with_mbedtls', type: 'boolean', value: false,
 # Pipe channel (JSONL stdin/stdout for scripted use)
 option('with_pipe', type: 'boolean', value: false,
        description: 'Build pipe channel (JSONL stdin/stdout for benchmarks and scripting)')
+
+# Embeddable host-app SDK
+option('with_embed', type: 'boolean', value: false,
+       description: 'Build libptrclaw_shared and install ptrclaw.h for host-app embedding (Flutter, mobile, desktop)')

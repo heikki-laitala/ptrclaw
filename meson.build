@@ -61,7 +61,9 @@ opt_memory_tools  = get_option('with_memory_tools') and opt_memory
 
 opt_embeddings = get_option('with_embeddings') and opt_memory
 
-opt_pipe = get_option('with_pipe')
+opt_pipe  = get_option('with_pipe')
+opt_embed = get_option('with_embed')
+
 if opt_pipe
   add_project_arguments('-DPTRCLAW_HAS_PIPE', language: 'cpp')
 endif
@@ -69,6 +71,11 @@ endif
 if opt_embeddings
   add_project_arguments('-DPTRCLAW_HAS_EMBEDDINGS', language: 'cpp')
 endif
+
+# Expose project version to C/C++ sources (used by the embed API).
+add_project_arguments(
+  '-DPTRCLAW_VERSION_STRING="' + meson.project_version() + '"',
+  language: 'cpp')
 
 # sse.cpp is shared by anthropic and openai streaming
 opt_sse = opt_anthropic or opt_openai
@@ -160,19 +167,34 @@ if opt_embeddings
     'src/embedders/http_embedder.cpp',
   )
 endif
-lib_sources = core_sources + optional_sources
+# Embed engine source: always compiled so that test_embed.cpp can link it
+# without requiring with_embed=true.  When not needed, LTO/gc-sections
+# removes the unused extern-C symbols from the final ptrclaw binary.
+embed_sources = files('src/embed/engine.cpp')
+
+lib_sources = core_sources + optional_sources + embed_sources
 
 ptrclaw_lib = static_library('ptrclaw_lib', lib_sources,
-  include_directories: inc,
+  include_directories: [inc, include_directories('include')],
   dependencies: lib_deps)
 
 ptrclaw_dep = declare_dependency(
   link_whole: ptrclaw_lib,
-  include_directories: inc)
+  include_directories: [inc, include_directories('include')])
 
 executable('ptrclaw', 'src/main.cpp',
   dependencies: [ptrclaw_dep],
   install: true)
+
+# ── Embeddable shared library (opt-in) ─────────────────────────
+if opt_embed
+  shared_library('ptrclaw_shared', lib_sources,
+    include_directories: [inc, include_directories('include')],
+    dependencies: lib_deps,
+    install: true)
+
+  install_headers('include/ptrclaw/ptrclaw.h', subdir: 'ptrclaw')
+endif
 
 # ── Unit tests ─────────────────────────────────────────────────
 catch2_proj = subproject('catch2')
@@ -194,6 +216,7 @@ core_test_sources = files(
   'tests/test_output_filter.cpp',
   'tests/test_skill.cpp',
   'tests/test_commands.cpp',
+  'tests/test_embed.cpp',
 )
 
 optional_test_sources = []
@@ -299,5 +322,6 @@ summary({
   'Tools':     opt_tools ? 'file_read, file_write, file_edit, shell, cron' : 'none',
   'Memory':    memory_features.length() > 0 ? ', '.join(memory_features) : 'none',
   'Memory tools': opt_memory_tools ? 'memory_store, memory_recall, memory_forget, memory_link' : 'none',
+  'Embed SDK': opt_embed ? 'libptrclaw_shared + ptrclaw.h' : 'off',
   'TLS backend': tls_backend,
 }, section: 'Features')
