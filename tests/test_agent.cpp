@@ -4,6 +4,7 @@
 #include "memory/json_memory.hpp"
 #include <stdexcept>
 #include <filesystem>
+#include <fstream>
 #include <unistd.h>
 
 using namespace ptrclaw;
@@ -731,4 +732,113 @@ TEST_CASE("Agent: tool output is filtered (ANSI stripped)", "[agent]") {
             REQUIRE(msg.content.find("\033[") == std::string::npos);
         }
     }
+}
+
+// ── Skill whitelist — blocked tool feedback ──────────────────────
+
+// A second named mock tool used only in skill whitelist tests.
+class BlockedMockTool : public Tool {
+public:
+    ToolResult execute(const std::string&) override { return {true, "blocked output"}; }
+    std::string tool_name() const override { return "blocked_tool"; }
+    std::string description() const override { return "A tool that will be blocked"; }
+    std::string parameters_json() const override { return R"({"type":"object"})"; }
+};
+
+TEST_CASE("Agent: blocked tool call returns skill context error", "[agent]") {
+    namespace fs = std::filesystem;
+
+    // Set up a temporary skill directory with one skill that whitelists mock_tool only.
+    auto tmpdir = fs::temp_directory_path() /
+                  ("ptrclaw_agent_skill_" + std::to_string(std::rand()));
+    fs::create_directories(tmpdir);
+    {
+        std::ofstream f(tmpdir / "restricted.md");
+        f << "---\nname: restricted\ntools: [mock_tool]\n---\nRestricted skill.\n";
+    }
+
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->native_tools = true;
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<MockTool>());       // "mock_tool"  (allowed)
+    tools.push_back(std::make_unique<BlockedMockTool>()); // "blocked_tool" (blocked)
+
+    Config cfg;
+    cfg.agent.max_tool_iterations = 5;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    agent.load_skills(tmpdir.string());
+    REQUIRE(agent.activate_skill("restricted"));
+
+    // First response: LLM calls the blocked tool
+    ChatResponse r1;
+    r1.tool_calls = {ToolCall{"call1", "blocked_tool", "{}"}};
+    // Second response: final answer
+    ChatResponse r2;
+    r2.content = "done";
+    mock->responses = {r1, r2};
+
+    agent.process("do something");
+
+    // The second provider call's messages should contain the blocked-tool error
+    // as an "Error: ..." tool result message.
+    bool found_blocked_error = false;
+    for (const auto& msg : mock->last_messages) {
+        if (msg.role == Role::Tool &&
+            msg.content.find("blocked_tool") != std::string::npos &&
+            msg.content.find("restricted") != std::string::npos &&
+            msg.content.find("mock_tool") != std::string::npos) {
+            found_blocked_error = true;
+        }
+    }
+    REQUIRE(found_blocked_error);
+
+    fs::remove_all(tmpdir);
+}
+
+TEST_CASE("Agent: allowed tool succeeds with skill whitelist active", "[agent]") {
+    namespace fs = std::filesystem;
+
+    auto tmpdir = fs::temp_directory_path() /
+                  ("ptrclaw_agent_skill2_" + std::to_string(std::rand()));
+    fs::create_directories(tmpdir);
+    {
+        std::ofstream f(tmpdir / "focused.md");
+        f << "---\nname: focused\ntools: [mock_tool]\n---\nFocused skill.\n";
+    }
+
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->native_tools = true;
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<MockTool>()); // "mock_tool" — whitelisted
+
+    Config cfg;
+    cfg.agent.max_tool_iterations = 5;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    agent.load_skills(tmpdir.string());
+    REQUIRE(agent.activate_skill("focused"));
+
+    ChatResponse r1;
+    r1.tool_calls = {ToolCall{"call1", "mock_tool", "{}"}};
+    ChatResponse r2;
+    r2.content = "done";
+    mock->responses = {r1, r2};
+
+    agent.process("use allowed tool");
+
+    // Tool result should be the actual mock output, not a blocked error
+    bool found_success = false;
+    for (const auto& msg : mock->last_messages) {
+        if (msg.role == Role::Tool && msg.content == "mock output") {
+            found_success = true;
+        }
+    }
+    REQUIRE(found_success);
+
+    fs::remove_all(tmpdir);
 }
