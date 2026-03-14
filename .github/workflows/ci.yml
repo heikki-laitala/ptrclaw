@@ -96,7 +96,9 @@ jobs:
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
-        run: brew install meson llvm sqlite3
+        run: |
+          brew install meson llvm sqlite3
+          echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
 
       - name: Cache build
         uses: actions/cache@v4
