@@ -2,6 +2,7 @@
 #include "tool_util.hpp"
 #include "../plugin.hpp"
 #include <array>
+#include <fcntl.h>
 #include <sstream>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -127,16 +128,41 @@ ToolResult CronTool::remove_entry(const std::string& label) {
 }
 
 std::string CronTool::read_crontab() {
-    // NOLINTNEXTLINE(cert-env33-c)
-    FILE* pipe = popen("crontab -l 2>/dev/null", "r");
-    if (!pipe) return "";
+    int pipefd[2];
+    if (pipe(pipefd) != 0) return "";
 
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return "";
+    }
+
+    if (pid == 0) {
+        // Child: write stdout to pipe, exec crontab -l
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        // Suppress stderr (crontab -l prints to stderr when empty)
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) { dup2(devnull, STDERR_FILENO); close(devnull); }
+        close(pipefd[1]);
+        execlp("crontab", "crontab", "-l", nullptr);
+        _exit(127);
+    }
+
+    // Parent: read output from pipe
+    close(pipefd[1]);
     std::string output;
     std::array<char, 4096> buffer;
-    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
-        output += buffer.data();
+    ssize_t n = 0;
+    while ((n = read(pipefd[0], buffer.data(), buffer.size())) > 0) {
+        output.append(buffer.data(), static_cast<size_t>(n));
     }
-    pclose(pipe);
+    close(pipefd[0]);
+
+    int status = 0;
+    waitpid(pid, &status, 0);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) return "";
     return output;
 }
 
