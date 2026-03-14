@@ -1224,7 +1224,7 @@ void rotate_tee_files(const std::string& tee_dir,
         for (const auto& entry : logs) {
             try {
                 if (entry.file_size() > max_file_size) { any_oversized = true; break; }
-            } catch (...) { /* file_size() may throw on broken symlinks */ }
+            } catch (...) { any_oversized = true; break; }
         }
         if (!any_oversized) return;
     }
