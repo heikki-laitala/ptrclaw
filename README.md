@@ -519,7 +519,7 @@ ninja -C builddir
 | ------------- | ----------- | ------------ |
 | Default (`make build`) | ~1.1 MB | ~1.3 MB |
 | Static (`make build-static`, stripped) | ~879 KB | ~1.2 MB |
-| Minimal (`make build-minimal`, stripped) | ~764 KB | ~960 KB |
+| Minimal (`make build-minimal`, stripped) | ~764 KB | ~1.1 MB |
 | SDK shared lib (`make build-sdk`, stripped) | ~884 KB | ~397 KB |
 
 Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). LTO is enabled by default. Distribution builds are stripped and size-optimized with dead-code elimination (`--gc-sections`, `--icf=all`).
