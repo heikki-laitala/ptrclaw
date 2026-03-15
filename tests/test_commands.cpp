@@ -2,31 +2,13 @@
 #include "agent.hpp"
 #include "commands.hpp"
 #include "memory/json_memory.hpp"
-#include <filesystem>
-#include <fstream>
+#include "test_helpers.hpp"
 #include <unistd.h>
 
 using namespace ptrclaw;
 
-// ── Mock provider for command tests ──────────────────────────────
-
-class CmdMockProvider : public Provider {
-public:
-    ChatResponse chat(const std::vector<ChatMessage>&,
-                      const std::vector<ToolSpec>&,
-                      const std::string&, double) override {
-        return ChatResponse{"reply", {}};
-    }
-    std::string chat_simple(const std::string&, const std::string&,
-                            const std::string&, double) override {
-        return "simple";
-    }
-    bool supports_native_tools() const override { return true; }
-    std::string provider_name() const override { return "mock"; }
-};
-
 static Agent make_cmd_agent() {
-    auto provider = std::make_unique<CmdMockProvider>();
+    auto provider = std::make_unique<StubProvider>();
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
@@ -34,48 +16,12 @@ static Agent make_cmd_agent() {
     return Agent(std::move(provider), std::move(tools), cfg);
 }
 
-// RAII guard that redirects HOME to a temp dir with optional skills
-struct HomeGuard {
-    std::string old_home;
-    std::filesystem::path tmpdir;
-    std::filesystem::path skills_dir;
-
-    explicit HomeGuard(bool create_skills_dir = true)
-        : tmpdir(std::filesystem::temp_directory_path() /
-                 ("ptrclaw_cmd_home_" + std::to_string(getpid()) + "_" +
-                  std::to_string(std::rand())))
-    {
-        old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
-        std::filesystem::create_directories(tmpdir);
-        skills_dir = tmpdir / ".ptrclaw" / "skills";
-        if (create_skills_dir) {
-            std::filesystem::create_directories(skills_dir);
-        }
-        setenv("HOME", tmpdir.c_str(), 1);
-    }
-
-    void add_skill(const std::string& filename, const std::string& content) {
-        std::filesystem::create_directories(skills_dir);
-        std::ofstream f(skills_dir / filename);
-        f << content;
-    }
-
-    ~HomeGuard() noexcept {
-        setenv("HOME", old_home.c_str(), 1);
-        std::error_code ec;
-        std::filesystem::remove_all(tmpdir, ec);
-    }
-
-    HomeGuard(const HomeGuard&) = delete;
-    HomeGuard& operator=(const HomeGuard&) = delete;
-};
-
 // ── cmd_status ───────────────────────────────────────────────────
 
 TEST_CASE("cmd_status: returns provider and model info", "[commands]") {
     auto agent = make_cmd_agent();
     auto result = cmd_status(agent);
-    REQUIRE(result.find("Provider: mock") != std::string::npos);
+    REQUIRE(result.find("Provider: stub") != std::string::npos);
     REQUIRE(result.find("Model:") != std::string::npos);
     REQUIRE(result.find("History:") != std::string::npos);
     REQUIRE(result.find("Estimated tokens:") != std::string::npos);
@@ -147,7 +93,7 @@ TEST_CASE("cmd_skill: activate shows active tag and tools", "[commands]") {
     home.add_skill("debug.md",
         "---\nname: debug\ntools: [shell, file_read]\n---\nDebug.\n");
     auto agent = make_cmd_agent();
-    agent.load_skills(); // load from redirected HOME
+    agent.load_skills();
     REQUIRE(agent.activate_skill("debug"));
 
     auto result = cmd_skill("", agent);
