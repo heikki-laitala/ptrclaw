@@ -31,7 +31,7 @@ PIPEDIR := builddir-pipe
 EMBDIR := builddir-emb
 SDKDIR := builddir-sdk
 
-.PHONY: deps setup build build-emb build-minimal build-static build-sdk run test coverage coverage-summary lint clean clear-memory memory-clean
+.PHONY: deps setup build build-emb build-minimal build-static build-sdk build-pipe run test coverage coverage-summary lint clean clear-memory memory-clean
 
 deps:
 ifeq ($(shell uname),Darwin)
@@ -72,6 +72,10 @@ build-sdk:
 	@for f in $(SDKDIR)/libptrclaw_shared.dylib $(SDKDIR)/libptrclaw_shared.so; do \
 		[ -f "$$f" ] && $(call STRIP_CMD,$$f) 2>/dev/null || true; \
 	done
+
+build-pipe:
+	@if [ ! -d $(PIPEDIR) ]; then meson setup $(PIPEDIR) $(NATIVE_ARGS) -Dcatch2:tests=false -Dwith_pipe=true; fi
+	meson compile -C $(PIPEDIR)
 
 run: build
 	./$(BUILDDIR)/ptrclaw
