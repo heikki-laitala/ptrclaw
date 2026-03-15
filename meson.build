@@ -301,6 +301,9 @@ endif
 if opt_whatsapp
   channels += 'whatsapp'
 endif
+if opt_embed
+  channels += 'embed'
+endif
 
 memory_features = []
 if opt_memory
@@ -320,10 +323,18 @@ else
   tls_backend = 'libcurl (system)'
 endif
 
+if opt_tools
+  tools_summary = 'file_read, file_write, file_edit, shell, cron'
+elif opt_embed
+  tools_summary = 'host-bridged (via ptrclaw_register_tool)'
+else
+  tools_summary = 'none'
+endif
+
 summary({
   'Providers': providers.length() > 0 ? ', '.join(providers) : 'none',
   'Channels':  channels.length() > 0  ? ', '.join(channels)  : 'none',
-  'Tools':     opt_tools ? 'file_read, file_write, file_edit, shell, cron' : 'none',
+  'Tools':     tools_summary,
   'Memory':    memory_features.length() > 0 ? ', '.join(memory_features) : 'none',
   'Memory tools': opt_memory_tools ? 'memory_store, memory_recall, memory_forget, memory_link' : 'none',
   'Embed SDK': opt_embed ? 'libptrclaw_shared + ptrclaw.h' : 'off',
