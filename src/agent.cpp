@@ -23,7 +23,7 @@ struct EpisodeSummary {
     int tool_calls = 0;
     std::vector<std::string> tools_used; // unique tool names from discarded messages
 
-    std::string format() const {
+    std::string format(const std::string& archive_id = "") const {
         std::ostringstream out;
         out << "[Episode summary: " << (user_turns + assistant_turns) << " turns"
             << " (" << user_turns << " user, " << assistant_turns << " assistant)";
@@ -36,6 +36,9 @@ struct EpisodeSummary {
                 if (i > 0) out << ", ";
                 out << tools_used[i];
             }
+        }
+        if (!archive_id.empty()) {
+            out << ". Archive: " << archive_id;
         }
         out << ".]";
         return out.str();
@@ -661,12 +664,31 @@ void Agent::compact_history() {
         turns_since_synthesis_ = 0;
     }
 
-    // Keep system prompt (first message) + last 10 messages
-    // Build a structured episode summary for the discarded middle portion
+    // Keep system prompt (first message) + last 10 messages.
+    // Compute keep_from first (with tool-orphan walkback) so the archived range
+    // is exactly [start, keep_from) — the messages truly being discarded.
     size_t start = (history_[0].role == Role::System) ? 1 : 0;
-    size_t end = history_.size() - 10;
+    size_t keep_from = history_.size() - 10;
+    // Walk back if we'd start on a Tool message — include the preceding assistant+tool group
+    while (keep_from > 0 && history_[keep_from].role == Role::Tool) {
+        keep_from--;
+    }
 
-    EpisodeSummary ep = build_episode_summary(history_, start, end);
+    EpisodeSummary ep = build_episode_summary(history_, start, keep_from);
+
+    // Archive the dropped slice before it is discarded (PER-388).
+    // Episodes are kept in episode_archives_ — separate from knowledge/concept memory.
+    EpisodeRecord record;
+    record.id = "episode:" + std::to_string(episode_counter_++);
+    record.timestamp = epoch_seconds();
+    record.user_turns = ep.user_turns;
+    record.assistant_turns = ep.assistant_turns;
+    record.tool_calls = ep.tool_calls;
+    record.tools_used = ep.tools_used;
+    record.messages = std::vector<ChatMessage>(
+        history_.begin() + static_cast<ptrdiff_t>(start),
+        history_.begin() + static_cast<ptrdiff_t>(keep_from));
+    episode_archives_.push_back(std::move(record));
 
     // Build compacted history
     std::vector<ChatMessage> compacted;
@@ -677,26 +699,29 @@ void Agent::compact_history() {
         compacted.push_back(std::move(history_[0]));
     }
 
-    // Add structured episode summary
-    compacted.push_back(ChatMessage{Role::User, ep.format(), {}, {}});
+    // Add structured episode summary with archive reference
+    compacted.push_back(ChatMessage{Role::User, ep.format(episode_archives_.back().id), {}, {}});
 
-    // Keep last 10 messages, but adjust cut point to avoid orphaning tool responses
-    size_t keep_from = history_.size() - 10;
-    // Walk back if we'd start on a Tool message — include the preceding assistant+tool group
-    while (keep_from > 0 && history_[keep_from].role == Role::Tool) {
-        keep_from--;
-    }
     for (size_t i = keep_from; i < history_.size(); i++) {
         compacted.push_back(std::move(history_[i]));
     }
 
     history_ = std::move(compacted);
-    std::cerr << "[compact] History compacted to " << history_.size() << " messages\n";
+    std::cerr << "[compact] History compacted to " << history_.size() << " messages"
+              << " (" << episode_archives_.back().id << " archived, "
+              << episode_archives_.back().messages.size() << " msgs)\n";
 
     // Run memory hygiene when compaction triggers
     if (memory_ && config_.memory.hygiene_max_age > 0) {
         memory_->hygiene_purge(config_.memory.hygiene_max_age);
     }
+}
+
+const EpisodeRecord* Agent::episode_by_id(const std::string& id) const {
+    for (const auto& ep : episode_archives_) {
+        if (ep.id == id) return &ep;
+    }
+    return nullptr;
 }
 
 const SkillDef* Agent::find_skill(const std::string& name) const {

@@ -655,6 +655,225 @@ TEST_CASE("Agent: episode summary includes tool names from discarded messages", 
     REQUIRE(found_summary);
 }
 
+// ── Episode archive (PER-388) ────────────────────────────────────
+
+TEST_CASE("Agent: episode archive is empty before any compaction", "[agent][episode]") {
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    REQUIRE(agent.episodes().empty());
+    (void)mock; // suppress unused warning
+}
+
+TEST_CASE("Agent: compact_history archives discarded messages", "[agent][episode]") {
+    // After the first compaction, episodes() must contain exactly one entry
+    // holding the messages that were dropped from active history.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 10;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    // 7 calls -> 15 messages -> compaction fires
+    for (int i = 0; i < 7; i++) {
+        agent.process("message " + std::to_string(i));
+    }
+
+    // Compaction may fire more than once as history stays > max after compaction;
+    // at minimum one episode must have been archived.
+    REQUIRE(!agent.episodes().empty());
+    const auto& ep = agent.episodes()[0];
+    REQUIRE(ep.id == "episode:0");
+    REQUIRE(ep.timestamp > 0);
+    // Archived messages must not be empty (the discarded slice)
+    REQUIRE(!ep.messages.empty());
+    (void)mock;
+}
+
+TEST_CASE("Agent: episode archive contains original message content", "[agent][episode]") {
+    // The archived slice must preserve the actual user messages that were sent
+    // before compaction — verifying the messages are copies, not just counts.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 10;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    // Use distinct messages so we can check archival content
+    for (int i = 0; i < 7; i++) {
+        agent.process("unique_msg_" + std::to_string(i));
+    }
+
+    REQUIRE(!agent.episodes().empty());
+    const auto& ep = agent.episodes()[0];
+
+    // At least one archived message should carry one of the early user strings
+    bool found = false;
+    for (const auto& msg : ep.messages) {
+        if (msg.role == Role::User &&
+            msg.content.find("unique_msg_") != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+    REQUIRE(found);
+    (void)mock;
+}
+
+TEST_CASE("Agent: episode_by_id returns correct archived record", "[agent][episode]") {
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 10;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    for (int i = 0; i < 7; i++) {
+        agent.process("msg" + std::to_string(i));
+    }
+
+    REQUIRE(!agent.episodes().empty());
+    const std::string ep_id = agent.episodes()[0].id;
+
+    const EpisodeRecord* found = agent.episode_by_id(ep_id);
+    REQUIRE(found != nullptr);
+    REQUIRE(found->id == ep_id);
+
+    // Lookup of an unknown id returns null
+    REQUIRE(agent.episode_by_id("episode:99") == nullptr);
+    (void)mock;
+}
+
+TEST_CASE("Agent: episode archives accumulate across multiple compactions", "[agent][episode]") {
+    // Each compaction event must append a new EpisodeRecord with a distinct ID.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 10;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    // First compaction fires once the message count exceeds the threshold + guard
+    for (int i = 0; i < 7; i++) {
+        agent.process("round1_" + std::to_string(i));
+    }
+    size_t after_first_batch = agent.episodes().size();
+    REQUIRE(after_first_batch >= 1);
+
+    // More messages must add further episodes
+    for (int i = 0; i < 7; i++) {
+        agent.process("round2_" + std::to_string(i));
+    }
+    REQUIRE(agent.episodes().size() > after_first_batch);
+
+    // IDs must be distinct and monotonically assigned
+    REQUIRE(agent.episodes()[0].id == "episode:0");
+    REQUIRE(agent.episodes()[1].id == "episode:1");
+    (void)mock;
+}
+
+TEST_CASE("Agent: episode summary includes archive id reference", "[agent][episode]") {
+    // The episode summary inserted into the compacted history must contain
+    // the stable archive reference so the LLM can cite it if needed.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 10;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    for (int i = 0; i < 7; i++) {
+        agent.process("msg" + std::to_string(i));
+    }
+
+    // Trigger one more process so provider sees the post-compaction history
+    agent.process("after");
+
+    // The archive id may be any episode number (compaction may fire multiple times);
+    // verify that at least one user message carries an "Archive: episode:" reference.
+    bool found_archive_ref = false;
+    for (const auto& msg : mock->last_messages) {
+        if (msg.role == Role::User &&
+            msg.content.find("Archive: episode:") != std::string::npos) {
+            found_archive_ref = true;
+            break;
+        }
+    }
+    REQUIRE(found_archive_ref);
+}
+
+TEST_CASE("Agent: episode archive metadata matches compacted turn counts", "[agent][episode]") {
+    // The EpisodeRecord metadata (user_turns, assistant_turns) must agree
+    // with the actual roles of the archived message slice.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 10;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    for (int i = 0; i < 7; i++) {
+        agent.process("msg" + std::to_string(i));
+    }
+
+    REQUIRE(!agent.episodes().empty());
+    const auto& ep = agent.episodes()[0];
+
+    // Count roles in the archived messages to cross-check metadata
+    int counted_user = 0, counted_asst = 0;
+    for (const auto& msg : ep.messages) {
+        if (msg.role == Role::User)      counted_user++;
+        if (msg.role == Role::Assistant) counted_asst++;
+    }
+    REQUIRE(counted_user == ep.user_turns);
+    REQUIRE(counted_asst == ep.assistant_turns);
+    (void)mock;
+}
+
+TEST_CASE("Agent: clear_history preserves episode archives", "[agent][episode]") {
+    // Episode archives must survive clear_history() — they are recoverable
+    // references, not discarded with the active conversation window.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 10;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    for (int i = 0; i < 7; i++) {
+        agent.process("msg" + std::to_string(i));
+    }
+    REQUIRE(!agent.episodes().empty());
+
+    agent.clear_history();
+
+    // Archives must still be present after clear
+    REQUIRE(!agent.episodes().empty());
+    REQUIRE(agent.episode_by_id("episode:0") != nullptr);
+    (void)mock;
+}
+
 TEST_CASE("Agent: clear then re-process re-injects system prompt", "[agent]") {
     auto [setup, mock] = make_agent();
     auto& agent = setup.agent;
