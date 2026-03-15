@@ -744,6 +744,25 @@ void Agent::run_synthesis() {
                     }
                 }
             }
+
+            // Replacement / contradiction handling (PER-394):
+            // When synthesis signals that a new concept supersedes a different existing
+            // concept, migrate the old entry's graph links to the new entry and remove
+            // the outdated entry so contradictions don't accumulate in the store.
+            if (note.contains("replaces") && note["replaces"].is_string()) {
+                std::string old_key = note["replaces"].get<std::string>();
+                if (!old_key.empty() && old_key != key) {
+                    auto old_entry = memory_->get(old_key);
+                    if (old_entry) {
+                        for (const auto& linked_key : old_entry->links) {
+                            if (linked_key != key) {
+                                memory_->link(key, linked_key);
+                            }
+                        }
+                        memory_->forget(old_key);
+                    }
+                }
+            }
         }
     } catch (...) { // NOLINT(bugprone-empty-catch)
         // Synthesis failure is non-critical — silently continue

@@ -1307,6 +1307,168 @@ TEST_CASE("Agent: synthesis stores core-category entries as concepts (no session
     (void)mock;
 }
 
+// ── Synthesis: concept deduplication and contradiction (PER-394) ─
+
+TEST_CASE("Agent: synthesis prompt includes deduplication guidance", "[agent][synthesis][per394]") {
+    // The synthesis prompt must instruct the LLM to reuse existing keys for updates
+    // and to use the "replaces" field when superseding a different existing concept.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+    mock->simple_response = "[]"; // valid but empty
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_dedup_prompt_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    agent.process("I prefer C++ over Rust");
+
+    REQUIRE(mock->last_simple_message.find("Deduplication") != std::string::npos);
+    REQUIRE(mock->last_simple_message.find("replaces") != std::string::npos);
+
+    std::filesystem::remove(mem_path);
+}
+
+TEST_CASE("Agent: synthesis replaces field removes old concept and stores new one", "[agent][synthesis][per394]") {
+    // When synthesis returns a note with "replaces": "old-key", the agent must
+    // store the new concept and delete the outdated entry.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+    mock->simple_response = R"([{"key":"pref:cpp","content":"User prefers C++ over Rust","category":"knowledge","type":"concept","links":[],"replaces":"pref:rust"}])";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_replaces_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    // Pre-seed the old concept that will be replaced
+    memory->store("pref:rust", "User prefers Rust", MemoryCategory::Knowledge, "");
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    agent.process("Actually I switched to C++");
+
+    // New concept must exist
+    auto new_entry = agent.memory()->get("pref:cpp");
+    REQUIRE(new_entry.has_value());
+    REQUIRE(new_entry.value_or(MemoryEntry{}).content == "User prefers C++ over Rust");
+
+    // Old concept must be gone
+    auto old_entry = agent.memory()->get("pref:rust");
+    REQUIRE_FALSE(old_entry.has_value());
+
+    std::filesystem::remove(mem_path);
+    (void)mock;
+}
+
+TEST_CASE("Agent: synthesis replaces field migrates links to new concept", "[agent][synthesis][per394]") {
+    // When an old concept has graph links, those links must be migrated to the
+    // new concept so the knowledge graph stays connected after the replacement.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+    mock->simple_response = R"([{"key":"pref:cpp","content":"User prefers C++","category":"knowledge","type":"concept","links":[],"replaces":"pref:rust"}])";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_replaces_links_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    // Pre-seed old concept linked to another entry
+    memory->store("pref:rust", "User prefers Rust", MemoryCategory::Knowledge, "");
+    memory->store("decision:use-cargo", "Uses Cargo for builds", MemoryCategory::Knowledge, "");
+    memory->link("pref:rust", "decision:use-cargo");
+
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    agent.process("Switched from Rust to C++");
+
+    // Old entry gone
+    REQUIRE_FALSE(agent.memory()->get("pref:rust").has_value());
+
+    // New entry exists and has inherited the link
+    auto new_entry = agent.memory()->get("pref:cpp");
+    REQUIRE(new_entry.has_value());
+    auto neighbors = agent.memory()->neighbors("pref:cpp", 10);
+    bool has_linked = false;
+    for (const auto& n : neighbors) {
+        if (n.key == "decision:use-cargo") { has_linked = true; break; }
+    }
+    REQUIRE(has_linked);
+
+    std::filesystem::remove(mem_path);
+    (void)mock;
+}
+
+TEST_CASE("Agent: synthesis replaces pointing to same key is a no-op", "[agent][synthesis][per394]") {
+    // "replaces" == key (self-reference) must not cause a deletion or other harm.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+    mock->simple_response = R"([{"key":"pref:cpp","content":"User prefers C++","category":"knowledge","type":"concept","links":[],"replaces":"pref:cpp"}])";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_replaces_self_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    agent.process("I like C++");
+
+    // Entry must still be stored (self-replace is a no-op)
+    auto entry = agent.memory()->get("pref:cpp");
+    REQUIRE(entry.has_value());
+
+    std::filesystem::remove(mem_path);
+    (void)mock;
+}
+
+TEST_CASE("Agent: synthesis replaces pointing to nonexistent key is silently ignored", "[agent][synthesis][per394]") {
+    // "replaces" referencing a key that doesn't exist must not crash.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+    mock->simple_response = R"([{"key":"pref:cpp","content":"User prefers C++","category":"knowledge","type":"concept","links":[],"replaces":"pref:ghost"}])";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_replaces_ghost_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    // Should not throw; new entry should still be stored
+    REQUIRE_NOTHROW(agent.process("I like C++"));
+    REQUIRE(agent.memory()->get("pref:cpp").has_value());
+
+    std::filesystem::remove(mem_path);
+    (void)mock;
+}
+
 // ── Contextual tool selection ───────────────────────────────────
 
 TEST_CASE("Agent: memory tools excluded from specs when memory inactive", "[agent]") {

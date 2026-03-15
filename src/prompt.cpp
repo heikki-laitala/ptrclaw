@@ -173,8 +173,14 @@ std::string build_synthesis_prompt(const std::vector<ChatMessage>& history,
        << "- Extract communication patterns as \"personality:\" prefixed core entries (type: concept).\n"
        << "  These capture how the user likes to communicate. At most one per synthesis.\n"
        << "- Extract situational style preferences as \"style:\" prefixed knowledge entries (type: concept).\n"
-       << "  These capture context-specific tone preferences. At most one per synthesis.\n\n"
-       << "Output a JSON array: [{\"key\":\"...\",\"content\":\"...\",\"category\":\"...\",\"type\":\"...\",\"links\":[\"...\"]}]\n"
+       << "  These capture context-specific tone preferences. At most one per synthesis.\n"
+       << "- Deduplication: if new info updates or refines an existing concept, REUSE that exact key.\n"
+       << "  The entry will be updated in-place. Do not create a new key for the same concept.\n"
+       << "- Replacement: if a new concept supersedes or contradicts a DIFFERENT existing concept,\n"
+       << "  add \"replaces\": \"<old-key>\" to remove the outdated entry. Use only when the old entry\n"
+       << "  is no longer accurate — not for minor updates (those just reuse the same key).\n\n"
+       << "Output a JSON array: [{\"key\":\"...\",\"content\":\"...\",\"category\":\"...\",\"type\":\"...\",\"links\":[\"...\"],\"replaces\":\"...\"}]\n"
+       << "The \"replaces\" field is optional. Include it only when a different existing entry should be removed.\n"
        << "Output ONLY the JSON array, no other text.\n\n";
 
     if (!existing_entries.empty()) {
