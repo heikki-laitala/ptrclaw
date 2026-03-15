@@ -20,9 +20,7 @@ option('with_whatsapp', type: 'boolean', value: false,
 option('with_tools', type: 'boolean', value: true,
        description: 'Build all tool implementations (file_read, file_write, file_edit, shell)')
 
-# Memory features
-option('with_memory', type: 'boolean', value: true,
-       description: 'Build memory system (json + none backends)')
+# Memory features (core memory is always included — Agent requires it)
 option('with_sqlite_memory', type: 'boolean', value: true,
        description: 'Build SQLite memory backend (requires sqlite3)')
 option('with_memory_tools', type: 'boolean', value: true,
@@ -30,7 +28,7 @@ option('with_memory_tools', type: 'boolean', value: true,
 
 # Embedding / vector search
 option('with_embeddings', type: 'boolean', value: true,
-       description: 'Enable embedding/vector search for memory (requires with_memory)')
+       description: 'Enable embedding/vector search for memory')
 
 # TLS backend
 option('with_mbedtls', type: 'boolean', value: false,

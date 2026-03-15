@@ -79,12 +79,11 @@ opt_telegram   = get_option('with_telegram')
 opt_whatsapp   = get_option('with_whatsapp')
 opt_tools      = get_option('with_tools')
 
-# Memory features
-opt_memory        = get_option('with_memory')
+# Memory features (core memory is always included — Agent requires it)
 opt_sqlite_memory = get_option('with_sqlite_memory')
-opt_memory_tools  = get_option('with_memory_tools') and opt_memory
+opt_memory_tools  = get_option('with_memory_tools')
 
-opt_embeddings = get_option('with_embeddings') and opt_memory
+opt_embeddings = get_option('with_embeddings')
 
 opt_pipe  = get_option('with_pipe')
 opt_embed = get_option('with_embed')
@@ -166,15 +165,13 @@ if opt_tools
   )
 endif
 
-# Memory system
-if opt_memory
-  optional_sources += files(
-    'src/memory.cpp',
-    'src/memory/json_memory.cpp',
-    'src/memory/none_memory.cpp',
-    'src/memory/response_cache.cpp',
-  )
-endif
+# Memory system (always included — Agent requires it)
+optional_sources += files(
+  'src/memory.cpp',
+  'src/memory/json_memory.cpp',
+  'src/memory/none_memory.cpp',
+  'src/memory/response_cache.cpp',
+)
 if opt_sqlite_memory
   optional_sources += files('src/memory/sqlite_memory.cpp')
 endif
@@ -258,7 +255,7 @@ endif
 if opt_telegram
   optional_test_sources += files('tests/test_telegram.cpp')
 endif
-if opt_telegram and opt_memory
+if opt_telegram
   optional_test_sources += files('tests/test_integration_telegram_memory.cpp')
 endif
 if opt_whatsapp
@@ -271,14 +268,12 @@ endif
 if opt_anthropic and opt_openai and opt_ollama and opt_openrouter and opt_compatible
   optional_test_sources += files('tests/test_providers.cpp')
 endif
-if opt_memory
-  optional_test_sources += files(
-    'tests/test_memory.cpp',
-    'tests/test_json_memory.cpp',
-    'tests/test_response_cache.cpp',
-    'tests/test_hatch.cpp',
-  )
-endif
+optional_test_sources += files(
+  'tests/test_memory.cpp',
+  'tests/test_json_memory.cpp',
+  'tests/test_response_cache.cpp',
+  'tests/test_hatch.cpp',
+)
 if opt_sqlite_memory
   optional_test_sources += files('tests/test_sqlite_memory.cpp')
 endif
@@ -330,10 +325,7 @@ if opt_embed
   channels += 'embed'
 endif
 
-memory_features = []
-if opt_memory
-  memory_features += 'json, none'
-endif
+memory_features = ['json, none']
 if opt_sqlite_memory
   memory_features += 'sqlite'
 endif

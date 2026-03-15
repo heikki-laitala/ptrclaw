@@ -14,7 +14,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Swap providers freely** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Switch with a config change, no code modifications
 - **Real tool use** — file I/O, shell execution (with stdin piping), cron scheduling, and a persistent knowledge graph memory system. Providers with native function calling use it directly; others fall back to XML-based parsing
 - **Extend without forking** — providers, channels, tools, and memory backends self-register via a plugin system. Add a new one by implementing an interface and dropping in a `.cpp` file
-- **Build only what you need** — 13 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~781 KB)
+- **Build only what you need** — 12 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~781 KB)
 
 ## Features
 
@@ -486,7 +486,6 @@ Every provider, channel, and tool is a compile-time feature flag in `meson_optio
 | `with_whatsapp` | WhatsApp channel | `false` |
 | `with_pipe` | Pipe channel (JSONL stdin/stdout) | `false` |
 | `with_tools` | All built-in tools | `true` |
-| `with_memory` | Memory system (JsonMemory) | `true` |
 | `with_sqlite_memory` | SQLite+FTS5 memory backend | `true` |
 | `with_memory_tools` | Memory tools (store, recall, forget, link) | `true` |
 | `with_embeddings` | Embedding/vector search for memory | `true` |
