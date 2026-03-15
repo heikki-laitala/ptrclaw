@@ -58,8 +58,7 @@ struct PtrClawHandle_ {
     std::unique_ptr<ptrclaw::PlatformHttpClient> http;
     std::unique_ptr<ptrclaw::EventBus> bus;
     std::unique_ptr<ptrclaw::SessionManager> sessions;
-    ptrclaw::EmbedChannel* channel = nullptr;  // non-owning; owned by unique_ptr below
-    std::unique_ptr<ptrclaw::Channel> channel_owner;
+    std::unique_ptr<ptrclaw::EmbedChannel> channel;
     std::unique_ptr<ptrclaw::StreamRelay> relay;
     std::thread loop_thread;
     std::atomic<bool> shutdown{false};
@@ -143,9 +142,7 @@ extern "C" PtrClawHandle ptrclaw_create(const char* config_json) {
 
         h->http = std::make_unique<ptrclaw::PlatformHttpClient>();
 
-        // Create the embed channel
-        h->channel_owner = std::make_unique<ptrclaw::EmbedChannel>();
-        h->channel = static_cast<ptrclaw::EmbedChannel*>(h->channel_owner.get());
+        h->channel = std::make_unique<ptrclaw::EmbedChannel>();
 
         // Wire up EventBus + SessionManager + StreamRelay (same as run_channel)
         h->bus = std::make_unique<ptrclaw::EventBus>();
@@ -204,7 +201,6 @@ extern "C" const char* ptrclaw_last_error(PtrClawHandle handle) {
 extern "C" int ptrclaw_send(PtrClawHandle handle, const char* session_id,
                              const char* message) {
     if (!handle || !session_id || !message) return PTRCLAW_ERR_INVALID;
-    if (!handle->channel) return PTRCLAW_ERR_INVALID;
 
     try {
         std::string response = handle->channel->send_user_message(
@@ -235,7 +231,6 @@ extern "C" int ptrclaw_send_stream(PtrClawHandle handle,
                                     void* userdata) {
     if (!handle || !session_id || !message || !on_chunk)
         return PTRCLAW_ERR_INVALID;
-    if (!handle->channel) return PTRCLAW_ERR_INVALID;
 
     try {
         auto callback = [on_chunk, userdata](const char* chunk, int done) {
