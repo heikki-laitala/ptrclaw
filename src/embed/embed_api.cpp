@@ -52,13 +52,28 @@ private:
 } // namespace ptrclaw
 
 // ── Opaque handle ────────────────────────────────────────────────
+//
+// Destruction order matters: the background thread must stop before any
+// member it touches is destroyed.  Members are destroyed in reverse
+// declaration order, so we declare them from longest-lived to shortest:
+//
+//   config, http  — no back-references, destroyed last
+//   channel       — touched by the loop thread and relay
+//   bus           — touched by the loop thread and relay
+//   sessions      — borrows http & bus (references, not owners)
+//   relay         — borrows channel & bus (references, not owners)
+//   loop_thread   — must be joined before anything above is destroyed
+//
+// The destructor explicitly stops the thread and clears the bus first,
+// so even if a caller deletes the handle without calling ptrclaw_destroy,
+// we don't crash.
 
 struct PtrClawHandle_ {
     ptrclaw::Config config;
     std::unique_ptr<ptrclaw::PlatformHttpClient> http;
+    std::unique_ptr<ptrclaw::EmbedChannel> channel;
     std::unique_ptr<ptrclaw::EventBus> bus;
     std::unique_ptr<ptrclaw::SessionManager> sessions;
-    std::unique_ptr<ptrclaw::EmbedChannel> channel;
     std::unique_ptr<ptrclaw::StreamRelay> relay;
     std::thread loop_thread;
     std::atomic<bool> shutdown{false};
@@ -68,6 +83,30 @@ struct PtrClawHandle_ {
     std::unordered_map<std::string, std::string> last_responses;
 
     std::string last_error;
+
+    // Names of tools registered via ptrclaw_register_tool for this handle,
+    // so we can unregister them on destroy.
+    std::vector<std::string> bridged_tool_names;
+
+    ~PtrClawHandle_() {
+        // 1. Stop the background loop thread
+        shutdown.store(true);
+        if (loop_thread.joinable()) {
+            loop_thread.join();
+        }
+        // 2. Clear event bus subscriptions — the lambdas capture `this`,
+        //    so they must be removed before members they reference are destroyed.
+        if (bus) {
+            bus->clear();
+        }
+        // 3. Destroy sessions before bus/channel/http (releases Agents, Providers, Tools)
+        sessions.reset();
+        relay.reset();
+    }
+
+    PtrClawHandle_(const PtrClawHandle_&) = delete;
+    PtrClawHandle_& operator=(const PtrClawHandle_&) = delete;
+    PtrClawHandle_() = default;
 };
 
 // ── Background event loop (mirrors run_channel in main.cpp) ─────
@@ -96,6 +135,10 @@ extern "C" const char* ptrclaw_version(void) {
 
 // ── Host-bridged tool registration ───────────────────────────────
 
+// Track tool names registered for the current (not-yet-created) handle,
+// so ptrclaw_destroy can unregister them from the global PluginRegistry.
+static std::vector<std::string> g_pending_tool_names;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+
 extern "C" int ptrclaw_register_tool(const char* name,
                                       const char* description,
                                       const char* parameters_json,
@@ -112,6 +155,7 @@ extern "C" int ptrclaw_register_tool(const char* name,
             return std::make_unique<ptrclaw::BridgedTool>(n, d, p, callback, userdata);
         });
 
+    g_pending_tool_names.push_back(n);
     return PTRCLAW_OK;
 }
 
@@ -169,6 +213,10 @@ extern "C" PtrClawHandle ptrclaw_create(const char* config_json) {
                 h->last_responses[ev.session_id] = ev.content;
             });
 
+        // Adopt pending bridged tool names so destroy can unregister them
+        h->bridged_tool_names = std::move(g_pending_tool_names);
+        g_pending_tool_names.clear();
+
         // Start background loop
         h->loop_thread = std::thread(embed_loop, h);
 
@@ -183,10 +231,15 @@ extern "C" PtrClawHandle ptrclaw_create(const char* config_json) {
 
 extern "C" void ptrclaw_destroy(PtrClawHandle handle) {
     if (!handle) return;
-    handle->shutdown.store(true);
-    if (handle->loop_thread.joinable()) {
-        handle->loop_thread.join();
+
+    // Unregister bridged tools from the global registry so a subsequent
+    // ptrclaw_create() doesn't see stale callbacks.
+    auto& reg = ptrclaw::PluginRegistry::instance();
+    for (const auto& name : handle->bridged_tool_names) {
+        reg.unregister_tool(name);
     }
+
+    // The destructor handles: thread join, bus clear, member teardown.
     delete handle;
     ptrclaw::http_cleanup();
 }

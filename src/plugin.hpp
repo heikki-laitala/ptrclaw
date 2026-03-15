@@ -36,6 +36,7 @@ public:
     // Registration
     void register_provider(const std::string& name, ProviderFactory factory);
     void register_tool(const std::string& name, ToolFactory factory);
+    void unregister_tool(const std::string& name);
     void register_channel(const std::string& name, ChannelFactory factory);
     void register_memory(const std::string& name, MemoryFactory factory);
 

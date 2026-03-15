@@ -20,6 +20,11 @@ void PluginRegistry::register_tool(const std::string& name, ToolFactory factory)
     tools_[name] = std::move(factory);
 }
 
+void PluginRegistry::unregister_tool(const std::string& name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    tools_.erase(name);
+}
+
 void PluginRegistry::register_channel(const std::string& name, ChannelFactory factory) {
     std::lock_guard<std::mutex> lock(mutex_);
     channels_[name] = std::move(factory);
