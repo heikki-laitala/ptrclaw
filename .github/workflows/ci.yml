@@ -74,6 +74,69 @@ jobs:
           name: ptrclaw-${{ matrix.os == 'ubuntu-latest' && 'linux-x86_64' || 'macos-aarch64' }}
           path: builddir/ptrclaw
 
+  sdk-build:
+    name: SDK Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: g++ clang meson ninja-build libssl-dev libsqlite3-dev lld
+          version: 1.0
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install meson sqlite3
+
+      - name: Cache build
+        uses: actions/cache@v4
+        with:
+          path: builddir-emb
+          key: meson-sdk-${{ matrix.os }}-${{ hashFiles('meson.build', 'src/**/*.cpp', 'src/**/*.hpp') }}
+          restore-keys: meson-sdk-${{ matrix.os }}-
+
+      - name: Build SDK
+        run: make build-sdk
+
+      - name: Build & test with embed
+        run: |
+          if [ ! -d builddir-emb ]; then
+            if [ "$(uname)" = "Darwin" ]; then
+              meson setup builddir-emb --native-file meson-native-macos.ini -Dwith_embed=true -Dcatch2:tests=false
+            else
+              meson setup builddir-emb --native-file meson-native-linux.ini -Dwith_embed=true -Dcatch2:tests=false
+            fi
+          fi
+          meson compile -C builddir-emb
+          meson test -C builddir-emb
+
+      - name: Job summary
+        if: always()
+        run: |
+          echo "## ptrClaw SDK — ${{ matrix.os }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f builddir-sdk/libptrclaw_shared.dylib ]; then
+            SIZE=$(wc -c < builddir-sdk/libptrclaw_shared.dylib | tr -d ' ')
+            SIZE_HR=$(awk "BEGIN {printf \"%.1f MB\", $SIZE / 1048576}")
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Shared library | ${SIZE_HR} (${SIZE} bytes) |" >> $GITHUB_STEP_SUMMARY
+          elif [ -f builddir-sdk/libptrclaw_shared.so ]; then
+            SIZE=$(wc -c < builddir-sdk/libptrclaw_shared.so | tr -d ' ')
+            SIZE_HR=$(awk "BEGIN {printf \"%.1f MB\", $SIZE / 1048576}")
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Shared library | ${SIZE_HR} (${SIZE} bytes) |" >> $GITHUB_STEP_SUMMARY
+          fi
+
   lint:
     name: Lint (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
