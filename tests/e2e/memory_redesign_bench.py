@@ -15,17 +15,34 @@ the structural improvements in the memory redesign: structured episode
 summaries, recoverable archives, and concept vs observation classification.
 
 Usage:
-    # Run against a single binary:
-    python3 tests/e2e/memory_redesign_bench.py ./builddir/ptrclaw
+    # Build with pipe channel:
+    make build-pipe
+
+    # Run all scenarios:
+    uv run tests/e2e/memory_redesign_bench.py ./builddir-pipe/ptrclaw
+
+    # Run a single scenario:
+    uv run tests/e2e/memory_redesign_bench.py ./builddir-pipe/ptrclaw --scenario long_planning
+
+    # Run multiple specific scenarios:
+    uv run tests/e2e/memory_redesign_bench.py ./builddir-pipe/ptrclaw \
+        --scenario long_planning --scenario preference_refinement
 
     # Save results for later comparison:
-    python3 tests/e2e/memory_redesign_bench.py ./builddir/ptrclaw --output main.json
+    uv run tests/e2e/memory_redesign_bench.py ./builddir-pipe/ptrclaw --output main.json
 
-    # Compare two result files:
-    python3 tests/e2e/memory_redesign_bench.py ./builddir/ptrclaw --compare main.json
+    # Compare against a baseline:
+    uv run tests/e2e/memory_redesign_bench.py ./builddir-pipe/ptrclaw \
+        --output redesign.json --compare main.json
 
     # Use JSON memory backend instead of SQLite:
-    python3 tests/e2e/memory_redesign_bench.py ./builddir/ptrclaw --backend json
+    uv run tests/e2e/memory_redesign_bench.py ./builddir-pipe/ptrclaw --backend json
+
+Available scenarios:
+    long_planning              Long planning session — compaction quality
+    preference_refinement      Preference refinement — concept formation
+    revisit_after_compaction   Topic revisited after compaction — episode recovery
+    facts_vs_chronology        Facts vs chronology — concept/observation distinction
 
 Requires ANTHROPIC_API_KEY in the environment.
 """
