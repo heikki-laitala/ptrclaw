@@ -172,3 +172,84 @@ TEST_CASE("ptrclaw_register_tool: null callback result returns failure", "[embed
     auto result = tool->execute("{}");
     REQUIRE_FALSE(result.success);
 }
+
+// ── Lifecycle tests ─────────────────────────────────────────────
+
+static bool has_tool(const std::string& name) {
+    auto names = ptrclaw::PluginRegistry::instance().tool_names();
+    for (const auto& n : names) {
+        if (n == name) return true;
+    }
+    return false;
+}
+
+TEST_CASE("ptrclaw_destroy: nullptr is safe", "[embed]") {
+    ptrclaw_destroy(nullptr);  // must not crash
+}
+
+TEST_CASE("ptrclaw lifecycle: create and destroy cleans up", "[embed]") {
+    // Register a bridged tool before create
+    auto cb = [](const char*, const char*, void*) -> char* {
+        // NOLINTNEXTLINE(cppcoreguidelines-no-malloc)
+        char* r = static_cast<char*>(malloc(3));
+        r[0] = 'o'; r[1] = 'k'; r[2] = '\0';
+        return r;
+    };
+    REQUIRE(ptrclaw_register_tool("lifecycle_tool", "test", "{}", cb, nullptr)
+            == PTRCLAW_OK);
+    REQUIRE(has_tool("lifecycle_tool"));
+
+    // Create handle — succeeds even without API keys (provider created lazily)
+    PtrClawHandle h = ptrclaw_create(nullptr);
+    REQUIRE(h != nullptr);
+
+    // Tool should still be in registry (sessions use it)
+    REQUIRE(has_tool("lifecycle_tool"));
+
+    // Destroy — must join thread, clear bus, unregister tools
+    ptrclaw_destroy(h);
+
+    // Bridged tool should be gone from the registry
+    REQUIRE_FALSE(has_tool("lifecycle_tool"));
+}
+
+TEST_CASE("ptrclaw lifecycle: create/destroy/create cycle", "[embed]") {
+    auto cb = [](const char*, const char*, void*) -> char* {
+        // NOLINTNEXTLINE(cppcoreguidelines-no-malloc)
+        char* r = static_cast<char*>(malloc(3));
+        r[0] = 'o'; r[1] = 'k'; r[2] = '\0';
+        return r;
+    };
+
+    // First cycle
+    REQUIRE(ptrclaw_register_tool("cycle_tool", "test", "{}", cb, nullptr)
+            == PTRCLAW_OK);
+    PtrClawHandle h1 = ptrclaw_create(nullptr);
+    REQUIRE(h1 != nullptr);
+    REQUIRE(has_tool("cycle_tool"));
+    ptrclaw_destroy(h1);
+    REQUIRE_FALSE(has_tool("cycle_tool"));
+
+    // Second cycle — must work without stale state
+    REQUIRE(ptrclaw_register_tool("cycle_tool_v2", "test v2", "{}", cb, nullptr)
+            == PTRCLAW_OK);
+    PtrClawHandle h2 = ptrclaw_create(nullptr);
+    REQUIRE(h2 != nullptr);
+    REQUIRE(has_tool("cycle_tool_v2"));
+    REQUIRE_FALSE(has_tool("cycle_tool"));  // old tool still gone
+    ptrclaw_destroy(h2);
+    REQUIRE_FALSE(has_tool("cycle_tool_v2"));
+}
+
+TEST_CASE("ptrclaw lifecycle: EmbedChannel destroyed after thread stops", "[embed]") {
+    // Regression test: if the thread outlives the channel, we'd crash.
+    // This test verifies the destructor joins the thread first.
+    PtrClawHandle h = ptrclaw_create(nullptr);
+    REQUIRE(h != nullptr);
+
+    // Send a message to exercise the channel queue (won't get a response
+    // since no provider is configured, but it proves the thread is running)
+    // Just destroy immediately — the destructor must safely join.
+    ptrclaw_destroy(h);
+    // If we get here without crashing, the destruction order is correct.
+}
