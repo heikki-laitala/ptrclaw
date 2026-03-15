@@ -7,7 +7,11 @@
 #include <CommonCrypto/CommonDigest.h>
 #elif defined(PTRCLAW_USE_MBEDTLS)
 #include <mbedtls/version.h>
+#if MBEDTLS_VERSION_MAJOR >= 4
+#include <mbedtls/md.h>
+#else
 #include <mbedtls/sha256.h>
+#endif
 #else
 #include <openssl/sha.h>
 #endif
@@ -117,7 +121,11 @@ std::string make_code_challenge_s256(const std::string& verifier) {
     return base64url_encode(hash, CC_SHA256_DIGEST_LENGTH);
 #elif defined(PTRCLAW_USE_MBEDTLS)
     unsigned char hash[32];
-#if MBEDTLS_VERSION_MAJOR >= 3
+#if MBEDTLS_VERSION_MAJOR >= 4
+    mbedtls_md(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
+               reinterpret_cast<const unsigned char*>(verifier.data()),
+               verifier.size(), hash);
+#elif MBEDTLS_VERSION_MAJOR >= 3
     mbedtls_sha256(reinterpret_cast<const unsigned char*>(verifier.data()),
                    verifier.size(), hash, 0);
 #else
