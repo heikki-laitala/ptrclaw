@@ -212,7 +212,7 @@ SCENARIO_A_FOLLOWUPS = [
             "billing",
             "budget approval",
             "finance",
-            "$15,000",
+            r"\$15,000",
         ],
     },
     {
