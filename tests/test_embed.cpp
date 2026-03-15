@@ -7,7 +7,9 @@
 #include "session.hpp"
 #include "stream_relay.hpp"
 #include "http.hpp"
+#include "plugin.hpp"
 #include <atomic>
+#include <cstdlib>
 #include <thread>
 
 using namespace ptrclaw;
@@ -103,4 +105,78 @@ TEST_CASE("ptrclaw C API: null args return errors", "[embed]") {
     REQUIRE(ptrclaw_send(nullptr, "s", nullptr) == PTRCLAW_ERR_INVALID);
     REQUIRE(ptrclaw_send_stream(nullptr, "s", "m", nullptr, nullptr)
             == PTRCLAW_ERR_INVALID);
+}
+
+// ── Host-bridged tool tests ─────────────────────────────────────
+
+TEST_CASE("ptrclaw_register_tool: null args return errors", "[embed]") {
+    auto dummy = [](const char*, const char*, void*) -> char* { return nullptr; };
+    REQUIRE(ptrclaw_register_tool(nullptr, "d", "{}", dummy, nullptr)
+            == PTRCLAW_ERR_INVALID);
+    REQUIRE(ptrclaw_register_tool("t", nullptr, "{}", dummy, nullptr)
+            == PTRCLAW_ERR_INVALID);
+    REQUIRE(ptrclaw_register_tool("t", "d", nullptr, dummy, nullptr)
+            == PTRCLAW_ERR_INVALID);
+    REQUIRE(ptrclaw_register_tool("t", "d", "{}", nullptr, nullptr)
+            == PTRCLAW_ERR_INVALID);
+}
+
+TEST_CASE("ptrclaw_register_tool: registers successfully", "[embed]") {
+    // Save and restore registry state
+    auto& reg = ptrclaw::PluginRegistry::instance();
+
+    auto cb = [](const char* /*name*/, const char* args, void* ud) -> char* {
+        auto* prefix = static_cast<const char*>(ud);
+        std::string result = std::string(prefix) + ":" + args;
+        // NOLINTNEXTLINE(cppcoreguidelines-no-malloc)
+        char* out = static_cast<char*>(malloc(result.size() + 1));
+        std::copy(result.begin(), result.end(), out);
+        out[result.size()] = '\0';
+        return out;
+    };
+
+    const char* prefix = "test";
+    REQUIRE(ptrclaw_register_tool("host_tool", "A test tool",
+            R"({"type":"object","properties":{"arg":{"type":"string"}}})",
+            cb, const_cast<char*>(prefix)) == PTRCLAW_OK);
+
+    // Verify the tool appears in the registry
+    auto names = reg.tool_names();
+    bool found = false;
+    for (const auto& n : names) {
+        if (n == "host_tool") { found = true; break; }
+    }
+    REQUIRE(found);
+
+    // Verify tool execution works through the registry
+    auto tools = reg.create_all_tools();
+    ptrclaw::Tool* host_tool = nullptr;
+    for (auto& t : tools) {
+        if (t->tool_name() == "host_tool") { host_tool = t.get(); break; }
+    }
+    REQUIRE(host_tool != nullptr);
+    REQUIRE(host_tool->description() == "A test tool");
+
+    auto result = host_tool->execute(R"({"arg":"hello"})");
+    REQUIRE(result.success);
+    REQUIRE(result.output == R"(test:{"arg":"hello"})");
+}
+
+TEST_CASE("ptrclaw_register_tool: null callback result returns failure", "[embed]") {
+    auto null_cb = [](const char*, const char*, void*) -> char* {
+        return nullptr;
+    };
+
+    REQUIRE(ptrclaw_register_tool("null_tool", "Returns null", "{}",
+            null_cb, nullptr) == PTRCLAW_OK);
+
+    auto tools = ptrclaw::PluginRegistry::instance().create_all_tools();
+    ptrclaw::Tool* tool = nullptr;
+    for (auto& t : tools) {
+        if (t->tool_name() == "null_tool") { tool = t.get(); break; }
+    }
+    REQUIRE(tool != nullptr);
+
+    auto result = tool->execute("{}");
+    REQUIRE_FALSE(result.success);
 }
