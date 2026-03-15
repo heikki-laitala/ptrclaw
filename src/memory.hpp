@@ -92,6 +92,15 @@ public:
     // Apply all config-driven settings at once (recency decay, knowledge decay, etc.).
     // Backends override to extract the fields they care about.
     virtual void apply_config(const MemoryConfig& /*cfg*/) {}
+
+    // Persist episode archive across restarts.
+    // json_blob is a serialized JSON array of episode records (produced by Agent).
+    // Stored separately from concept/knowledge entries — not subject to recall or hygiene.
+    // No-op in base class; backends that support persistence override this.
+    virtual void save_episode_archive(const std::string& /*json_blob*/) {}
+
+    // Load previously persisted episode archive. Returns serialized JSON blob, or "" if none.
+    virtual std::string load_episode_archive() { return ""; }
 };
 
 // Base class for tools that need a Memory* pointer.

@@ -84,6 +84,93 @@ static EpisodeSummary build_episode_summary(
     return ep;
 }
 
+// ── Episode archive serialization ────────────────────────────────────────────
+
+static nlohmann::json chat_message_to_json(const ChatMessage& msg) {
+    nlohmann::json j;
+    j["role"] = role_to_string(msg.role);
+    j["content"] = msg.content;
+    if (msg.name.has_value()) {
+        j["name"] = *msg.name;
+    }
+    if (msg.tool_call_id.has_value()) {
+        j["tool_call_id"] = *msg.tool_call_id;
+    }
+    return j;
+}
+
+static ChatMessage chat_message_from_json(const nlohmann::json& j) {
+    ChatMessage msg;
+    const std::string role_str = j.value("role", "user");
+    if (role_str == "system")         msg.role = Role::System;
+    else if (role_str == "assistant") msg.role = Role::Assistant;
+    else if (role_str == "tool")      msg.role = Role::Tool;
+    else                              msg.role = Role::User;
+    msg.content = j.value("content", "");
+    if (j.contains("name") && j["name"].is_string()) {
+        msg.name = j["name"].get<std::string>();
+    }
+    if (j.contains("tool_call_id") && j["tool_call_id"].is_string()) {
+        msg.tool_call_id = j["tool_call_id"].get<std::string>();
+    }
+    return msg;
+}
+
+static std::string serialize_episodes(const std::vector<EpisodeRecord>& episodes) {
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& ep : episodes) {
+        nlohmann::json j;
+        j["id"] = ep.id;
+        j["timestamp"] = ep.timestamp;
+        j["user_turns"] = ep.user_turns;
+        j["assistant_turns"] = ep.assistant_turns;
+        j["tool_calls"] = ep.tool_calls;
+        j["tools_used"] = ep.tools_used;
+        nlohmann::json msgs = nlohmann::json::array();
+        for (const auto& msg : ep.messages) {
+            msgs.push_back(chat_message_to_json(msg));
+        }
+        j["messages"] = std::move(msgs);
+        arr.push_back(std::move(j));
+    }
+    return arr.dump();
+}
+
+static std::vector<EpisodeRecord> deserialize_episodes(const std::string& json_blob) {
+    std::vector<EpisodeRecord> out;
+    if (json_blob.empty()) return out;
+    try {
+        auto arr = nlohmann::json::parse(json_blob);
+        if (!arr.is_array()) return out;
+        out.reserve(arr.size());
+        for (const auto& j : arr) {
+            EpisodeRecord ep;
+            ep.id              = j.value("id", "");
+            ep.timestamp       = j.value("timestamp", uint64_t{0});
+            ep.user_turns      = j.value("user_turns", 0);
+            ep.assistant_turns = j.value("assistant_turns", 0);
+            ep.tool_calls      = j.value("tool_calls", 0);
+            if (j.contains("tools_used") && j["tools_used"].is_array()) {
+                for (const auto& t : j["tools_used"]) {
+                    if (t.is_string()) ep.tools_used.push_back(t.get<std::string>());
+                }
+            }
+            if (j.contains("messages") && j["messages"].is_array()) {
+                ep.messages.reserve(j["messages"].size());
+                for (const auto& m : j["messages"]) {
+                    ep.messages.push_back(chat_message_from_json(m));
+                }
+            }
+            if (!ep.id.empty()) {
+                out.push_back(std::move(ep));
+            }
+        }
+    } catch (...) {} // NOLINT(bugprone-empty-catch)
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Strip [Memory context]...[/Memory context] block prepended by memory_enrich()
 static std::string strip_memory_context(const std::string& text) {
     const std::string open_tag = "[Memory context]\n";
@@ -110,6 +197,7 @@ Agent::Agent(std::unique_ptr<Provider> provider,
     memory_ = create_memory(config_);
     if (memory_) {
         memory_->apply_config(config_.memory);
+        restore_episode_archive();
     }
 
     // Load skills from default directory
@@ -514,6 +602,7 @@ void Agent::set_memory(std::unique_ptr<Memory> memory) {
     memory_ = std::move(memory);
     if (memory_) {
         memory_->apply_config(config_.memory);
+        restore_episode_archive();
     }
     if (memory_ && embedder_) {
         memory_->set_embedder(embedder_,
@@ -712,6 +801,7 @@ void Agent::compact_history() {
         history_.begin() + static_cast<ptrdiff_t>(start),
         history_.begin() + static_cast<ptrdiff_t>(keep_from));
     episode_archives_.push_back(std::move(record));
+    persist_episode_archive();
 
     // Build compacted history
     std::vector<ChatMessage> compacted;
@@ -745,6 +835,36 @@ const EpisodeRecord* Agent::episode_by_id(const std::string& id) const {
         if (ep.id == id) return &ep;
     }
     return nullptr;
+}
+
+void Agent::persist_episode_archive() {
+    if (!memory_) return;
+    memory_->save_episode_archive(serialize_episodes(episode_archives_));
+}
+
+void Agent::restore_episode_archive() {
+    if (!memory_) return;
+    const std::string blob = memory_->load_episode_archive();
+    if (blob.empty()) return;
+    auto loaded = deserialize_episodes(blob);
+    if (loaded.empty()) return;
+    episode_archives_ = std::move(loaded);
+    // Reset counter then advance past highest episode number so new archives don't collide.
+    // Always reset (not just advance) so that replacing memory via set_memory() correctly
+    // reflects the new archive's numbering rather than the old counter.
+    episode_counter_ = 0;
+    for (const auto& ep : episode_archives_) {
+        // id format: "episode:N"
+        const std::string prefix = "episode:";
+        if (ep.id.size() > prefix.size() && ep.id.compare(0, prefix.size(), prefix) == 0) {
+            try {
+                uint32_t n = static_cast<uint32_t>(std::stoul(ep.id.substr(prefix.size())));
+                if (n + 1 > episode_counter_) {
+                    episode_counter_ = n + 1;
+                }
+            } catch (...) {} // NOLINT(bugprone-empty-catch)
+        }
+    }
 }
 
 const SkillDef* Agent::find_skill(const std::string& name) const {

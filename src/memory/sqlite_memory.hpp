@@ -42,6 +42,9 @@ public:
     bool unlink(const std::string& from_key, const std::string& to_key) override;
     std::vector<MemoryEntry> neighbors(const std::string& key, uint32_t limit) override;
 
+    void save_episode_archive(const std::string& json_blob) override;
+    std::string load_episode_archive() override;
+
 private:
     void init_schema();
     void populate_links(MemoryEntry& entry);

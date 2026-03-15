@@ -93,6 +93,8 @@ private:
     bool has_active_memory() const;
     void compact_history();
     void inject_system_prompt();
+    void persist_episode_archive();   // serialize + push to memory backend
+    void restore_episode_archive();   // pull from memory backend + deserialize
     void invalidate_system_prompt();
     const SkillDef* find_skill(const std::string& name) const;
     void run_synthesis();

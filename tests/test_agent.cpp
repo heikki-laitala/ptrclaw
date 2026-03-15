@@ -135,6 +135,7 @@ static MakeAgentResult make_agent() {
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
     cfg.agent.max_history_messages = 50;
+    cfg.memory.backend = "none"; // Isolate from real memory file
 
     return {TestAgentSetup(std::move(provider), std::move(tools), cfg), provider_ptr};
 }
@@ -489,6 +490,7 @@ TEST_CASE("Agent: compact_history triggers on large history", "[agent]") {
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
     cfg.agent.max_history_messages = 10; // Low threshold to trigger compaction
+    cfg.memory.backend = "none"; // Isolate from persistent memory state
     TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
     auto& agent = setup.agent;
 
@@ -529,6 +531,7 @@ TEST_CASE("Agent: compaction does not orphan tool response messages", "[agent]")
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
     cfg.agent.max_history_messages = 10; // Low threshold to trigger compaction
+    cfg.memory.backend = "none"; // Isolate from persistent memory state
 
     TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
     auto& agent = setup.agent;
@@ -589,6 +592,7 @@ TEST_CASE("Agent: compaction produces structured episode summary", "[agent][comp
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
     cfg.agent.max_history_messages = 10;
+    cfg.memory.backend = "none"; // Isolate from persistent memory state
     TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
     auto& agent = setup.agent;
 
@@ -637,7 +641,9 @@ TEST_CASE("Agent: episode summary includes tool names from discarded messages", 
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
     cfg.agent.max_history_messages = 10;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    cfg.memory.backend = "none"; // Isolate from persistent memory state
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     for (int i = 0; i < 8; i++) {
         agent.process("request " + std::to_string(i));
@@ -664,7 +670,9 @@ TEST_CASE("Agent: episode archive is empty before any compaction", "[agent][epis
 
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    cfg.memory.backend = "none"; // Isolate from persistent memory state
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     REQUIRE(agent.episodes().empty());
     (void)mock; // suppress unused warning
@@ -680,7 +688,9 @@ TEST_CASE("Agent: compact_history archives discarded messages", "[agent][episode
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
     cfg.agent.max_history_messages = 10;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    cfg.memory.backend = "none"; // Isolate from persistent memory state
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     // 7 calls -> 15 messages -> compaction fires
     for (int i = 0; i < 7; i++) {
@@ -708,7 +718,9 @@ TEST_CASE("Agent: episode archive contains original message content", "[agent][e
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
     cfg.agent.max_history_messages = 10;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    cfg.memory.backend = "none"; // Isolate from persistent memory state
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     // Use distinct messages so we can check archival content
     for (int i = 0; i < 7; i++) {
@@ -739,7 +751,9 @@ TEST_CASE("Agent: episode_by_id returns correct archived record", "[agent][episo
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
     cfg.agent.max_history_messages = 10;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    cfg.memory.backend = "none"; // Isolate from persistent memory state
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     for (int i = 0; i < 7; i++) {
         agent.process("msg" + std::to_string(i));
@@ -766,7 +780,9 @@ TEST_CASE("Agent: episode archives accumulate across multiple compactions", "[ag
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
     cfg.agent.max_history_messages = 10;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    cfg.memory.backend = "none"; // Isolate from persistent memory state
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     // First compaction fires once the message count exceeds the threshold + guard
     for (int i = 0; i < 7; i++) {
@@ -797,7 +813,9 @@ TEST_CASE("Agent: episode summary includes archive id reference", "[agent][episo
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
     cfg.agent.max_history_messages = 10;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    cfg.memory.backend = "none"; // Isolate from persistent memory state
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     for (int i = 0; i < 7; i++) {
         agent.process("msg" + std::to_string(i));
@@ -829,7 +847,9 @@ TEST_CASE("Agent: episode archive metadata matches compacted turn counts", "[age
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
     cfg.agent.max_history_messages = 10;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    cfg.memory.backend = "none"; // Isolate from persistent memory state
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     for (int i = 0; i < 7; i++) {
         agent.process("msg" + std::to_string(i));
@@ -859,7 +879,9 @@ TEST_CASE("Agent: clear_history preserves episode archives", "[agent][episode]")
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
     cfg.agent.max_history_messages = 10;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    cfg.memory.backend = "none"; // Isolate from persistent memory state
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     for (int i = 0; i < 7; i++) {
         agent.process("msg" + std::to_string(i));
@@ -1083,6 +1105,7 @@ TEST_CASE("Agent: compaction forces synthesis before discarding history", "[agen
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
     cfg.agent.max_history_messages = 10;
+    cfg.memory.backend = "none"; // Isolate from persistent memory state
     cfg.memory.backend = "json";
     cfg.memory.synthesis = true;
     cfg.memory.synthesis_interval = 100; // Won't fire periodically; forces at compaction
@@ -1145,7 +1168,8 @@ TEST_CASE("Agent: synthesis prompt distinguishes concept and observation types",
 
     std::string mem_path = "/tmp/ptrclaw_test_synth_prompt_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     agent.process("I love Rust");
@@ -1174,7 +1198,8 @@ TEST_CASE("Agent: synthesis stores concept-type entries without session_id", "[a
 
     std::string mem_path = "/tmp/ptrclaw_test_synth_concept_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
     agent.set_session_id("test-session-abc");
 
@@ -1204,7 +1229,8 @@ TEST_CASE("Agent: synthesis stores observation-type entries with session_id", "[
 
     std::string mem_path = "/tmp/ptrclaw_test_synth_obs_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
     agent.set_session_id("test-session-xyz");
 
@@ -1234,7 +1260,8 @@ TEST_CASE("Agent: synthesis without type field defaults to observation (backward
 
     std::string mem_path = "/tmp/ptrclaw_test_synth_compat_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
     agent.set_session_id("test-session-compat");
 
@@ -1264,7 +1291,8 @@ TEST_CASE("Agent: synthesis stores core-category entries as concepts (no session
 
     std::string mem_path = "/tmp/ptrclaw_test_synth_core_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
     agent.set_session_id("test-session-core");
 
@@ -1422,7 +1450,8 @@ TEST_CASE("Agent: past episodes appear in user message context after compaction"
 
     std::string mem_path = "/tmp/ptrclaw_test_ctx390_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     // Trigger compaction (7 calls → 15 messages → exceeds max 10 AND guard 12)
@@ -1464,7 +1493,8 @@ TEST_CASE("Agent: no episode context in user message before first compaction", "
 
     std::string mem_path = "/tmp/ptrclaw_test_ctx390_pre_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     agent.process("hello");
@@ -1478,4 +1508,125 @@ TEST_CASE("Agent: no episode context in user message before first compaction", "
 
     std::filesystem::remove(mem_path);
     (void)mock;
+}
+
+// ── Episode archive persistence (PER-393) ──────────────────────────────
+
+TEST_CASE("Agent: episodes persist to JsonMemory on compaction", "[agent][per393]") {
+    // After compaction, episode archive should be persisted to the memory backend.
+    // A second JsonMemory instance on the same file should return the blob.
+    auto provider = std::make_unique<MockProvider>();
+    provider->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 10;
+
+    std::string mem_path = "/tmp/ptrclaw_test_ep393_json_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
+    agent.set_memory(std::move(memory));
+
+    // Drive enough turns to trigger compaction (> max_history_messages)
+    for (int i = 0; i < 7; i++) {
+        agent.process("msg" + std::to_string(i));
+    }
+
+    REQUIRE(!agent.episodes().empty());
+
+    // The archive blob must be stored in the JSON file
+    JsonMemory reader(mem_path);
+    const std::string blob = reader.load_episode_archive();
+    REQUIRE_FALSE(blob.empty());
+
+    // Blob must reference the archived episode id
+    REQUIRE(blob.find("episode:0") != std::string::npos);
+
+    std::error_code ec;
+    std::filesystem::remove(mem_path, ec);
+    std::filesystem::remove(mem_path + ".tmp", ec);
+}
+
+TEST_CASE("Agent: set_memory restores episodes from backend", "[agent][per393]") {
+    // Simulate a restart: pre-populate the memory file with an episode archive,
+    // then attach it to a fresh agent via set_memory().
+    // The agent should restore episode_archives_ from the persisted blob.
+    const std::string blob = R"([{"id":"episode:2","timestamp":9999,"user_turns":3,"assistant_turns":3,"tool_calls":0,"tools_used":[],"messages":[{"role":"user","content":"prior context"}]}])";
+
+    std::string mem_path = "/tmp/ptrclaw_test_ep393_restore_" + std::to_string(getpid()) + ".json";
+    {
+        // Write the blob into the file directly via JsonMemory
+        JsonMemory seeder(mem_path);
+        seeder.save_episode_archive(blob);
+    }
+
+    auto provider = std::make_unique<MockProvider>();
+    provider->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    agent.set_memory(std::move(memory));
+
+    // Episodes should be restored from the persisted archive
+    REQUIRE(!agent.episodes().empty());
+    const auto* ep = agent.episode_by_id("episode:2");
+    REQUIRE(ep != nullptr);
+    REQUIRE(ep->user_turns == 3);
+    REQUIRE(ep->messages.size() == 1);
+    REQUIRE(ep->messages[0].content == "prior context");
+
+    std::error_code ec;
+    std::filesystem::remove(mem_path, ec);
+    std::filesystem::remove(mem_path + ".tmp", ec);
+}
+
+TEST_CASE("Agent: episode counter advances past restored episodes", "[agent][per393]") {
+    // If episode:5 is restored from disk, the next archival must produce episode:6.
+    const std::string blob = R"([{"id":"episode:5","timestamp":1,"user_turns":1,"assistant_turns":1,"tool_calls":0,"tools_used":[],"messages":[]}])";
+
+    std::string mem_path = "/tmp/ptrclaw_test_ep393_counter_" + std::to_string(getpid()) + ".json";
+    {
+        JsonMemory seeder(mem_path);
+        seeder.save_episode_archive(blob);
+    }
+
+    auto provider = std::make_unique<MockProvider>();
+    provider->next_response.content = "ok";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 10;
+
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    agent.set_memory(std::move(memory));
+
+    REQUIRE(!agent.episodes().empty());
+
+    // Drive enough turns to trigger a new compaction
+    for (int i = 0; i < 7; i++) {
+        agent.process("msg" + std::to_string(i));
+    }
+
+    // The new episode must have id "episode:6", not "episode:0"
+    bool found_six = false;
+    for (const auto& ep : agent.episodes()) {
+        if (ep.id == "episode:6") {
+            found_six = true;
+        }
+        // Must not reset to 0
+        REQUIRE(ep.id != "episode:0");
+    }
+    REQUIRE(found_six);
+
+    std::error_code ec;
+    std::filesystem::remove(mem_path, ec);
+    std::filesystem::remove(mem_path + ".tmp", ec);
 }
