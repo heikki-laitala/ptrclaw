@@ -194,7 +194,6 @@ core_test_sources = files(
   'tests/test_output_filter.cpp',
   'tests/test_skill.cpp',
   'tests/test_commands.cpp',
-  'tests/test_skill_activate.cpp',
 )
 
 optional_test_sources = []
@@ -204,7 +203,8 @@ if opt_sse
 endif
 if opt_tools
   optional_test_sources += files('tests/test_tools.cpp', 'tests/test_cron.cpp',
-                                 'tests/test_shell_filter.cpp')
+                                 'tests/test_shell_filter.cpp',
+                                 'tests/test_skill_activate.cpp')
 endif
 if opt_telegram
   optional_test_sources += files('tests/test_telegram.cpp')
