@@ -1404,3 +1404,78 @@ TEST_CASE("Agent: tool output is filtered (ANSI stripped)", "[agent]") {
 
 // Skill whitelist tests removed — skill tool whitelisting was removed.
 // Skills now only inject prompts; all tools are always available.
+
+// ── Context assembly (PER-390) ─────────────────────────────────
+
+TEST_CASE("Agent: past episodes appear in user message context after compaction", "[agent][per390]") {
+    // After compaction, the next process() call should include a "Past episodes:" line
+    // inside the [Memory context] block — giving the model a layered view of history.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 10;
+    cfg.memory.backend = "json";
+    cfg.memory.recall_limit = 5;
+
+    std::string mem_path = "/tmp/ptrclaw_test_ctx390_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    // Trigger compaction (7 calls → 15 messages → exceeds max 10 AND guard 12)
+    for (int i = 0; i < 7; i++) {
+        agent.process("message " + std::to_string(i));
+    }
+    REQUIRE(!agent.episodes().empty());
+
+    // Next call — find the user message sent to provider
+    agent.process("what happened earlier?");
+
+    std::string last_user_content;
+    for (const auto& msg : mock->last_messages) {
+        if (msg.role == Role::User &&
+            msg.content.find("what happened earlier?") != std::string::npos) {
+            last_user_content = msg.content;
+        }
+    }
+
+    REQUIRE(!last_user_content.empty());
+    REQUIRE(last_user_content.find("Past episodes:") != std::string::npos);
+    REQUIRE(last_user_content.find("episode:") != std::string::npos);
+
+    std::filesystem::remove(mem_path);
+    (void)mock;
+}
+
+TEST_CASE("Agent: no episode context in user message before first compaction", "[agent][per390]") {
+    // Before any compaction, episode_archives_ is empty so no "Past episodes:" line appears.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 50; // High — no compaction
+    cfg.memory.backend = "json";
+    cfg.memory.recall_limit = 5;
+
+    std::string mem_path = "/tmp/ptrclaw_test_ctx390_pre_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    agent.process("hello");
+
+    // No episodes archived → no "Past episodes:" in enriched message
+    for (const auto& msg : mock->last_messages) {
+        if (msg.role == Role::User) {
+            REQUIRE(msg.content.find("Past episodes:") == std::string::npos);
+        }
+    }
+
+    std::filesystem::remove(mem_path);
+    (void)mock;
+}

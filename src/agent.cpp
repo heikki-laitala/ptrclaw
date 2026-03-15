@@ -182,12 +182,28 @@ std::string Agent::process(const std::string& user_message) {
         inject_system_prompt();
     }
 
-    // Enrich user message with recalled memory context (skip during hatching)
+    // Enrich user message with recalled memory context (skip during hatching).
+    // Build an episode context line from recent archives so the model knows
+    // what compacted history is available (layered context: concepts, observations, episodes).
     std::string enriched_message = user_message;
     if (!hatching_) {
+        std::string episode_ctx;
+        if (!episode_archives_.empty()) {
+            std::ostringstream ep_ss;
+            ep_ss << "Past episodes: ";
+            size_t ep_start = episode_archives_.size() > 5
+                              ? episode_archives_.size() - 5 : 0;
+            for (size_t i = ep_start; i < episode_archives_.size(); i++) {
+                if (i > ep_start) ep_ss << ", ";
+                const auto& ep = episode_archives_[i];
+                ep_ss << ep.id << " (" << (ep.user_turns + ep.assistant_turns) << " turns)";
+            }
+            episode_ctx = ep_ss.str();
+        }
         enriched_message = memory_enrich(memory_.get(), user_message,
                                           config_.memory.recall_limit,
-                                          config_.memory.enrich_depth);
+                                          config_.memory.enrich_depth,
+                                          episode_ctx);
     }
     history_.push_back(ChatMessage{Role::User, enriched_message, {}, {}});
 

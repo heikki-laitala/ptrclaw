@@ -48,40 +48,73 @@ std::vector<MemoryEntry> collect_neighbors(Memory* memory,
 }
 
 std::string memory_enrich(Memory* memory, const std::string& user_message,
-                          uint32_t recall_limit, uint32_t enrich_depth) {
-    if (!memory || recall_limit == 0) return user_message;
-
-    // Over-fetch to compensate for Core entries we'll filter out (they're in the system prompt)
-    auto entries = memory->recall(user_message, recall_limit * 2, std::nullopt);
-
-    entries.erase(std::remove_if(entries.begin(), entries.end(),
-        [](const MemoryEntry& e) { return e.category == MemoryCategory::Core; }),
-        entries.end());
-    if (entries.empty()) return user_message;
-    if (entries.size() > recall_limit) entries.resize(recall_limit);
+                          uint32_t recall_limit, uint32_t enrich_depth,
+                          const std::string& episode_context) {
+    // Collect recalled entries when memory is available
+    std::vector<MemoryEntry> entries;
+    if (memory && recall_limit > 0) {
+        // Over-fetch to compensate for Core entries we'll filter out (they're in the system prompt)
+        entries = memory->recall(user_message, recall_limit * 2, std::nullopt);
+        entries.erase(std::remove_if(entries.begin(), entries.end(),
+            [](const MemoryEntry& e) { return e.category == MemoryCategory::Core; }),
+            entries.end());
+        if (entries.size() > recall_limit) entries.resize(recall_limit);
+    }
 
     std::vector<MemoryEntry> neighbor_entries;
-    if (enrich_depth > 0) {
+    if (enrich_depth > 0 && memory && !entries.empty()) {
         neighbor_entries = collect_neighbors(memory, entries, recall_limit);
     }
 
+    // Split into concepts (cross-session, session_id empty) and
+    // observations (session-specific, session_id set). Neighbors follow the same rule.
+    std::vector<const MemoryEntry*> concepts, observations;
+    for (const auto& e : entries) {
+        (e.session_id.empty() ? concepts : observations).push_back(&e);
+    }
+    for (const auto& e : neighbor_entries) {
+        (e.session_id.empty() ? concepts : observations).push_back(&e);
+    }
+
+    bool has_content = !concepts.empty() || !observations.empty() || !episode_context.empty();
+    if (!has_content) return user_message;
+
+    auto format_links = [](std::ostringstream& out, const MemoryEntry* e) {
+        if (!e->links.empty()) {
+            out << " [links: ";
+            for (size_t i = 0; i < e->links.size(); i++) {
+                if (i > 0) out << ", ";
+                out << e->links[i];
+            }
+            out << "]";
+        }
+    };
+
     std::ostringstream ss;
     ss << "[Memory context]\n";
-    for (const auto& entry : entries) {
-        ss << "- " << entry.key << ": " << entry.content;
-        if (!entry.links.empty()) {
-            ss << " [links: ";
-            for (size_t i = 0; i < entry.links.size(); i++) {
-                if (i > 0) ss << ", ";
-                ss << entry.links[i];
-            }
-            ss << "]";
+
+    if (!concepts.empty()) {
+        ss << "Concepts:\n";
+        for (const auto* e : concepts) {
+            ss << "- " << e->key << ": " << e->content;
+            format_links(ss, e);
+            ss << "\n";
         }
-        ss << "\n";
     }
-    for (const auto& entry : neighbor_entries) {
-        ss << "- " << entry.key << ": " << entry.content << "\n";
+
+    if (!observations.empty()) {
+        ss << "Observations:\n";
+        for (const auto* e : observations) {
+            ss << "- " << e->key << ": " << e->content;
+            format_links(ss, e);
+            ss << "\n";
+        }
     }
+
+    if (!episode_context.empty()) {
+        ss << episode_context << "\n";
+    }
+
     ss << "[/Memory context]\n\n" << user_message;
     return ss.str();
 }

@@ -117,8 +117,13 @@ std::vector<MemoryEntry> collect_neighbors(Memory* memory,
                                             const std::vector<MemoryEntry>& entries,
                                             uint32_t limit);
 
+// episode_context, when non-empty, is appended as-is inside the block
+// (e.g. "Past episodes: episode:0 (5 turns), episode:1 (3 turns)").
+// A [Memory context] block is emitted even when entries are empty if episode_context
+// is provided — so the model always sees the available history summary.
 std::string memory_enrich(Memory* memory, const std::string& user_message,
-                          uint32_t recall_limit, uint32_t enrich_depth = 0);
+                          uint32_t recall_limit, uint32_t enrich_depth = 0,
+                          const std::string& episode_context = "");
 
 // Create a memory backend from config.
 // Uses the plugin registry to instantiate the configured backend.

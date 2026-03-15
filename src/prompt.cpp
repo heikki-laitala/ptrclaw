@@ -73,12 +73,19 @@ std::string build_system_prompt(const std::vector<ToolSpec>& tool_specs,
            << "Use memory_link to connect related notes.\n"
            << "Use memory_recall to search memories (set depth=1 to follow links). "
            << "Use memory_forget to remove outdated entries.\n\n"
-           << "Each user message begins with a [Memory context] block containing automatically recalled memories:\n"
+           << "Each user message begins with a [Memory context] block with automatically recalled memories:\n"
            << "[Memory context]\n"
-           << "- some-key: some content [links: related-key]\n"
+           << "Concepts:\n"
+           << "- pref:example: a stable cross-session preference [links: related-key]\n"
+           << "Observations:\n"
+           << "- task-current: an episode-specific fact from this session\n"
+           << "Past episodes: episode:0 (5 turns), episode:1 (3 turns)\n"
            << "[/Memory context]\n"
-           << "This context is already retrieved for you — do not call memory_recall for the same topic. "
-           << "Only use memory_recall when you need information on a different topic than the user's message.\n"
+           << "Concepts are stable, cross-session patterns/preferences. "
+           << "Observations are facts specific to this session. "
+           << "Past episodes list compacted history you can reference by ID.\n"
+           << "This context is already retrieved — do not call memory_recall for the same topic. "
+           << "Only use memory_recall when you need information on a different topic.\n"
            << "When storing knowledge, prefer specific descriptive keys and link to related existing entries.\n\n";
     }
 
