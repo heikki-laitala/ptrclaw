@@ -578,9 +578,9 @@ TEST_CASE("Agent: compaction guard prevents premature compaction at 12 or fewer 
     REQUIRE(agent.history_size() == 7);
 }
 
-TEST_CASE("Agent: compaction summary text contains user and assistant counts", "[agent][compaction]") {
-    // compact_history() builds a summary "[Conversation history compacted.
-    // Previous discussion covered: N user messages, N assistant responses]"
+TEST_CASE("Agent: compaction produces structured episode summary", "[agent][compaction]") {
+    // compact_history() now builds a structured episode summary:
+    // "[Episode summary: N turns (U user, A assistant)[, T tool calls][. Tools: ...].]"
     // and inserts it as a User-role message.
     auto provider = std::make_unique<MockProvider>();
     auto* mock = provider.get();
@@ -603,14 +603,56 @@ TEST_CASE("Agent: compaction summary text contains user and assistant counts", "
     bool found_summary = false;
     for (const auto& msg : mock->last_messages) {
         if (msg.role == Role::User &&
-            msg.content.find("[Conversation history compacted") != std::string::npos) {
+            msg.content.find("[Episode summary:") != std::string::npos) {
             found_summary = true;
-            REQUIRE(msg.content.find("user messages") != std::string::npos);
-            REQUIRE(msg.content.find("assistant responses") != std::string::npos);
+            REQUIRE(msg.content.find("user") != std::string::npos);
+            REQUIRE(msg.content.find("assistant") != std::string::npos);
         }
     }
     REQUIRE(found_summary);
     REQUIRE(mock->last_messages[0].role == Role::System);
+}
+
+TEST_CASE("Agent: episode summary includes tool names from discarded messages", "[agent][compaction]") {
+    // When compacted messages contain tool calls, the episode summary lists
+    // the unique tool names used in the discarded portion.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+
+    ChatResponse tool_resp;
+    tool_resp.content = "Checking.";
+    tool_resp.tool_calls = {{"call_1", "mock_tool", "{}"}};
+
+    ChatResponse plain_resp;
+    plain_resp.content = "Done.";
+
+    // Queue: tool_resp -> plain_resp for each process() call
+    for (int i = 0; i < 8; i++) {
+        mock->responses.push_back(tool_resp);
+        mock->responses.push_back(plain_resp);
+    }
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<MockTool>());
+    Config cfg;
+    cfg.agent.max_tool_iterations = 5;
+    cfg.agent.max_history_messages = 10;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    for (int i = 0; i < 8; i++) {
+        agent.process("request " + std::to_string(i));
+    }
+
+    bool found_summary = false;
+    for (const auto& msg : mock->last_messages) {
+        if (msg.role == Role::User &&
+            msg.content.find("[Episode summary:") != std::string::npos) {
+            found_summary = true;
+            // Tool name "mock_tool" should appear in the summary
+            REQUIRE(msg.content.find("mock_tool") != std::string::npos);
+        }
+    }
+    REQUIRE(found_summary);
 }
 
 TEST_CASE("Agent: clear then re-process re-injects system prompt", "[agent]") {

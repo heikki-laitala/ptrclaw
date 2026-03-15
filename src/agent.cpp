@@ -16,6 +16,71 @@
 
 namespace ptrclaw {
 
+// Structured summary of a compacted conversation episode
+struct EpisodeSummary {
+    int user_turns = 0;
+    int assistant_turns = 0;
+    int tool_calls = 0;
+    std::vector<std::string> tools_used; // unique tool names from discarded messages
+
+    std::string format() const {
+        std::ostringstream out;
+        out << "[Episode summary: " << (user_turns + assistant_turns) << " turns"
+            << " (" << user_turns << " user, " << assistant_turns << " assistant)";
+        if (tool_calls > 0) {
+            out << ", " << tool_calls << " tool call" << (tool_calls != 1 ? "s" : "");
+        }
+        if (!tools_used.empty()) {
+            out << ". Tools: ";
+            for (size_t i = 0; i < tools_used.size(); ++i) {
+                if (i > 0) out << ", ";
+                out << tools_used[i];
+            }
+        }
+        out << ".]";
+        return out.str();
+    }
+};
+
+// Build an EpisodeSummary from the slice of history being discarded [start, end)
+static EpisodeSummary build_episode_summary(
+    const std::vector<ChatMessage>& history, size_t start, size_t end) {
+
+    EpisodeSummary ep;
+    std::vector<std::string> seen_tools;
+
+    for (size_t i = start; i < end; i++) {
+        switch (history[i].role) {
+            case Role::User:      ep.user_turns++;      break;
+            case Role::Assistant: ep.assistant_turns++; break;
+            case Role::Tool:      ep.tool_calls++;      break;
+            default: break;
+        }
+        // Extract unique tool names from assistant messages carrying tool_calls JSON
+        if (history[i].role == Role::Assistant) {
+            const std::string tc_json = history[i].name.value_or("");
+            if (!tc_json.empty()) {
+                try {
+                    auto tc_arr = nlohmann::json::parse(tc_json);
+                    if (tc_arr.is_array()) {
+                        for (const auto& tc : tc_arr) {
+                            if (tc.contains("name") && tc["name"].is_string()) {
+                                std::string tname = tc["name"].get<std::string>();
+                                if (std::find(seen_tools.begin(), seen_tools.end(), tname)
+                                        == seen_tools.end()) {
+                                    seen_tools.push_back(tname);
+                                }
+                            }
+                        }
+                    }
+                } catch (...) {} // NOLINT(bugprone-empty-catch)
+            }
+        }
+    }
+    ep.tools_used = std::move(seen_tools);
+    return ep;
+}
+
 // Strip [Memory context]...[/Memory context] block prepended by memory_enrich()
 static std::string strip_memory_context(const std::string& text) {
     const std::string open_tag = "[Memory context]\n";
@@ -597,32 +662,11 @@ void Agent::compact_history() {
     }
 
     // Keep system prompt (first message) + last 10 messages
-    // Summarize the middle portion
-    std::ostringstream summary;
-    summary << "[Conversation history compacted. Previous discussion covered: ";
-
+    // Build a structured episode summary for the discarded middle portion
     size_t start = (history_[0].role == Role::System) ? 1 : 0;
     size_t end = history_.size() - 10;
 
-    int user_count = 0;
-    int assistant_count = 0;
-    int tool_count = 0;
-
-    for (size_t i = start; i < end; i++) {
-        switch (history_[i].role) {
-            case Role::User: user_count++; break;
-            case Role::Assistant: assistant_count++; break;
-            case Role::Tool: tool_count++; break;
-            default: break;
-        }
-    }
-
-    summary << user_count << " user messages, "
-            << assistant_count << " assistant responses";
-    if (tool_count > 0) {
-        summary << ", " << tool_count << " tool calls";
-    }
-    summary << "]";
+    EpisodeSummary ep = build_episode_summary(history_, start, end);
 
     // Build compacted history
     std::vector<ChatMessage> compacted;
@@ -633,8 +677,8 @@ void Agent::compact_history() {
         compacted.push_back(std::move(history_[0]));
     }
 
-    // Add summary
-    compacted.push_back(ChatMessage{Role::User, summary.str(), {}, {}});
+    // Add structured episode summary
+    compacted.push_back(ChatMessage{Role::User, ep.format(), {}, {}});
 
     // Keep last 10 messages, but adjust cut point to avoid orphaning tool responses
     size_t keep_from = history_.size() - 10;
