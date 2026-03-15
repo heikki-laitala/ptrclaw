@@ -1,3 +1,4 @@
+SHELL := /bin/bash
 BUILDDIR := builddir
 
 ifeq ($(shell uname),Darwin)
