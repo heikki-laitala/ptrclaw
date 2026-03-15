@@ -210,14 +210,20 @@ extern "C" PtrClawHandle ptrclaw_create(const char* config_json) {
         h->relay->subscribe_events();
         h->sessions->subscribe_events();
 
-        // Forward streaming chunks to the active per-session callback
+        // Forward streaming chunks to the active per-session callback.
+        // Copy the callback under lock, then invoke outside to avoid
+        // deadlock if the callback re-enters the SDK.
         ptrclaw::subscribe<ptrclaw::StreamChunkEvent>(*h->bus,
             [h](const ptrclaw::StreamChunkEvent& ev) {
-                std::lock_guard<std::mutex> lock(h->session_mutex);
-                auto it = h->session_state.find(ev.session_id);
-                if (it != h->session_state.end() &&
-                    it->second.stream_cb && !ev.delta.empty()) {
-                    it->second.stream_cb(ev.delta.c_str(), 0);
+                std::function<void(const char*, int)> cb;
+                {
+                    std::lock_guard<std::mutex> lock(h->session_mutex);
+                    auto it = h->session_state.find(ev.session_id);
+                    if (it != h->session_state.end() && it->second.stream_cb)
+                        cb = it->second.stream_cb;
+                }
+                if (cb && !ev.delta.empty()) {
+                    cb(ev.delta.c_str(), 0);
                 }
             });
 
@@ -292,11 +298,15 @@ extern "C" int ptrclaw_send_stream(PtrClawHandle handle,
         return PTRCLAW_ERR_INVALID;
 
     try {
+        // Track whether any chunks were delivered via streaming
+        bool got_chunks = false;
+
         // Install stream callback before sending so chunks are captured
         {
             std::lock_guard<std::mutex> lock(handle->session_mutex);
             handle->session_state[session_id].stream_cb =
-                [on_chunk, userdata](const char* chunk, int done) {
+                [on_chunk, userdata, &got_chunks](const char* chunk, int done) {
+                    got_chunks = true;
                     on_chunk(chunk, done, userdata);
                 };
         }
@@ -304,7 +314,14 @@ extern "C" int ptrclaw_send_stream(PtrClawHandle handle,
         std::string response = handle->channel->send_user_message(
             session_id, message);
 
-        // Send terminal sentinel and clear callback
+        // For non-streaming providers (or when streaming is disabled),
+        // no StreamChunkEvents are emitted — deliver the full response
+        // as a single chunk so callers can always rely on the callback.
+        if (!got_chunks && !response.empty()) {
+            on_chunk(response.c_str(), 0, userdata);
+        }
+
+        // Send terminal sentinel
         on_chunk("", 1, userdata);
 
         {
