@@ -45,6 +45,22 @@ jobs:
       - name: Test
         run: make test
 
+      - name: Binary size check
+        run: |
+          MAX_BYTES=2097152  # 2.0 MB
+          BIN=builddir/ptrclaw
+          if [ ! -f "$BIN" ]; then
+            echo "::error::Binary not found"
+            exit 1
+          fi
+          SIZE=$(wc -c < "$BIN" | tr -d ' ')
+          SIZE_HR=$(awk "BEGIN {printf \"%.1f MB\", $SIZE / 1048576}")
+          echo "Binary: ${SIZE_HR} (${SIZE} bytes)"
+          if [ "$SIZE" -gt "$MAX_BYTES" ]; then
+            echo "::error::Binary ${SIZE_HR} exceeds limit of 2.0 MB"
+            exit 1
+          fi
+
       - name: Job summary
         if: always()
         run: |
@@ -65,6 +81,7 @@ jobs:
             SIZE=$(wc -c < "$BIN" | tr -d ' ')
             SIZE_HR=$(awk "BEGIN {printf \"%.1f MB\", $SIZE / 1048576}")
             echo "| Binary | ${SIZE_HR} (${SIZE} bytes) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Size limit | 2.0 MB |" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Upload binary
@@ -119,23 +136,41 @@ jobs:
           meson compile -C builddir-emb
           meson test -C builddir-emb
 
+      - name: SDK binary size check
+        run: |
+          MAX_BYTES=1572864  # 1.5 MB
+          LIB=""
+          for f in builddir-sdk/libptrclaw_shared.dylib builddir-sdk/libptrclaw_shared.so; do
+            [ -f "$f" ] && LIB="$f" && break
+          done
+          if [ -z "$LIB" ]; then
+            echo "::error::SDK shared library not found"
+            exit 1
+          fi
+          SIZE=$(wc -c < "$LIB" | tr -d ' ')
+          SIZE_HR=$(awk "BEGIN {printf \"%.1f KB\", $SIZE / 1024}")
+          echo "SDK library: ${SIZE_HR} (${SIZE} bytes)"
+          if [ "$SIZE" -gt "$MAX_BYTES" ]; then
+            echo "::error::SDK library ${SIZE_HR} exceeds limit of 1.5 MB"
+            exit 1
+          fi
+
       - name: Job summary
         if: always()
         run: |
           echo "## ptrClaw SDK — ${{ matrix.os }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f builddir-sdk/libptrclaw_shared.dylib ]; then
-            SIZE=$(wc -c < builddir-sdk/libptrclaw_shared.dylib | tr -d ' ')
-            SIZE_HR=$(awk "BEGIN {printf \"%.1f MB\", $SIZE / 1048576}")
+          LIB=""
+          for f in builddir-sdk/libptrclaw_shared.dylib builddir-sdk/libptrclaw_shared.so; do
+            [ -f "$f" ] && LIB="$f" && break
+          done
+          if [ -n "$LIB" ]; then
+            SIZE=$(wc -c < "$LIB" | tr -d ' ')
+            SIZE_HR=$(awk "BEGIN {printf \"%.1f KB\", $SIZE / 1024}")
             echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
             echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-            echo "| Shared library | ${SIZE_HR} (${SIZE} bytes) |" >> $GITHUB_STEP_SUMMARY
-          elif [ -f builddir-sdk/libptrclaw_shared.so ]; then
-            SIZE=$(wc -c < builddir-sdk/libptrclaw_shared.so | tr -d ' ')
-            SIZE_HR=$(awk "BEGIN {printf \"%.1f MB\", $SIZE / 1048576}")
-            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-            echo "| Shared library | ${SIZE_HR} (${SIZE} bytes) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Shared library (stripped) | ${SIZE_HR} (${SIZE} bytes) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Size limit | 1.5 MB |" >> $GITHUB_STEP_SUMMARY
           fi
 
   lint:
