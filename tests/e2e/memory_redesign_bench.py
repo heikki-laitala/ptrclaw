@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["anthropic>=0.40"]
+# ///
 """Memory redesign benchmark for ptrclaw.
 
 Compares memory behavior between main and feat/memory-redesign by driving
