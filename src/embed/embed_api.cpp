@@ -102,6 +102,12 @@ struct PtrClawHandle_ {
         // 3. Destroy sessions before bus/channel/http (releases Agents, Providers, Tools)
         sessions.reset();
         relay.reset();
+        // 4. Unregister bridged tools from the global PluginRegistry so a
+        //    subsequent create/destroy cycle doesn't see stale callbacks.
+        auto& reg = ptrclaw::PluginRegistry::instance();
+        for (const auto& name : bridged_tool_names) {
+            reg.unregister_tool(name);
+        }
     }
 
     PtrClawHandle_(const PtrClawHandle_&) = delete;
@@ -222,6 +228,12 @@ extern "C" PtrClawHandle ptrclaw_create(const char* config_json) {
 
     } catch (const std::exception& e) {
         h->last_error = std::string("create failed: ") + e.what();
+        // If tool adoption didn't happen yet, adopt pending names now
+        // so the destructor can unregister them from PluginRegistry.
+        if (h->bridged_tool_names.empty() && !g_pending_tool_names.empty()) {
+            h->bridged_tool_names = std::move(g_pending_tool_names);
+        }
+        g_pending_tool_names.clear();
         delete h;
         return nullptr;
     }
@@ -231,16 +243,7 @@ extern "C" PtrClawHandle ptrclaw_create(const char* config_json) {
 
 extern "C" void ptrclaw_destroy(PtrClawHandle handle) {
     if (!handle) return;
-
-    // Unregister bridged tools from the global registry so a subsequent
-    // ptrclaw_create() doesn't see stale callbacks.
-    auto& reg = ptrclaw::PluginRegistry::instance();
-    for (const auto& name : handle->bridged_tool_names) {
-        reg.unregister_tool(name);
-    }
-
-    // The destructor handles: thread join, bus clear, member teardown.
-    delete handle;
+    delete handle;  // destructor handles thread, bus, sessions, tools
     ptrclaw::http_cleanup();
 }
 
