@@ -10,6 +10,7 @@
 #include <nlohmann/json.hpp>
 #include <atomic>
 #include <cstdlib>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -78,9 +79,15 @@ struct PtrClawHandle_ {
     std::thread loop_thread;
     std::atomic<bool> shutdown{false};
 
-    // Per-session last response cache
-    std::mutex response_mutex;
-    std::unordered_map<std::string, std::string> last_responses;
+    // Per-session state: last response + optional stream callback.
+    // Stream callbacks are set/cleared around ptrclaw_send_stream() calls;
+    // the StreamChunkEvent handler forwards chunks to the active callback.
+    struct SessionState {
+        std::string last_response;
+        std::function<void(const char*, int)> stream_cb;
+    };
+    std::mutex session_mutex;
+    std::unordered_map<std::string, SessionState> session_state;
 
     std::string last_error;
 
@@ -203,20 +210,15 @@ extern "C" PtrClawHandle ptrclaw_create(const char* config_json) {
         h->relay->subscribe_events();
         h->sessions->subscribe_events();
 
-        // Subscribe to StreamChunkEvent to forward to host callbacks
+        // Forward streaming chunks to the active per-session callback
         ptrclaw::subscribe<ptrclaw::StreamChunkEvent>(*h->bus,
             [h](const ptrclaw::StreamChunkEvent& ev) {
-                auto cb = h->channel->get_stream_callback(ev.session_id);
-                if (cb && !ev.delta.empty()) {
-                    cb(ev.delta.c_str(), 0);
+                std::lock_guard<std::mutex> lock(h->session_mutex);
+                auto it = h->session_state.find(ev.session_id);
+                if (it != h->session_state.end() &&
+                    it->second.stream_cb && !ev.delta.empty()) {
+                    it->second.stream_cb(ev.delta.c_str(), 0);
                 }
-            });
-
-        // Subscribe to MessageReadyEvent to cache last responses
-        ptrclaw::subscribe<ptrclaw::MessageReadyEvent>(*h->bus,
-            [h](const ptrclaw::MessageReadyEvent& ev) {
-                std::lock_guard<std::mutex> lock(h->response_mutex);
-                h->last_responses[ev.session_id] = ev.content;
             });
 
         // Adopt pending bridged tool names so destroy can unregister them
@@ -261,8 +263,8 @@ extern "C" int ptrclaw_send(PtrClawHandle handle, const char* session_id,
     try {
         std::string response = handle->channel->send_user_message(
             session_id, message);
-        std::lock_guard<std::mutex> lock(handle->response_mutex);
-        handle->last_responses[session_id] = std::move(response);
+        std::lock_guard<std::mutex> lock(handle->session_mutex);
+        handle->session_state[session_id].last_response = std::move(response);
         return PTRCLAW_OK;
     } catch (const std::exception& e) {
         handle->last_error = std::string("send failed: ") + e.what();
@@ -274,9 +276,10 @@ extern "C" const char* ptrclaw_last_response(PtrClawHandle handle,
                                               const char* session_id) {
     static const char* empty = "";
     if (!handle || !session_id) return empty;
-    std::lock_guard<std::mutex> lock(handle->response_mutex);
-    auto it = handle->last_responses.find(session_id);
-    if (it != handle->last_responses.end()) return it->second.c_str();
+    std::lock_guard<std::mutex> lock(handle->session_mutex);
+    auto it = handle->session_state.find(session_id);
+    if (it != handle->session_state.end())
+        return it->second.last_response.c_str();
     return empty;
 }
 
@@ -289,20 +292,34 @@ extern "C" int ptrclaw_send_stream(PtrClawHandle handle,
         return PTRCLAW_ERR_INVALID;
 
     try {
-        auto callback = [on_chunk, userdata](const char* chunk, int done) {
-            on_chunk(chunk, done, userdata);
-        };
+        // Install stream callback before sending so chunks are captured
+        {
+            std::lock_guard<std::mutex> lock(handle->session_mutex);
+            handle->session_state[session_id].stream_cb =
+                [on_chunk, userdata](const char* chunk, int done) {
+                    on_chunk(chunk, done, userdata);
+                };
+        }
 
-        std::string response = handle->channel->send_user_message_stream(
-            session_id, message, std::move(callback));
+        std::string response = handle->channel->send_user_message(
+            session_id, message);
 
-        // Send terminal sentinel
+        // Send terminal sentinel and clear callback
         on_chunk("", 1, userdata);
 
-        std::lock_guard<std::mutex> lock(handle->response_mutex);
-        handle->last_responses[session_id] = std::move(response);
+        {
+            std::lock_guard<std::mutex> lock(handle->session_mutex);
+            auto& state = handle->session_state[session_id];
+            state.stream_cb = nullptr;
+            state.last_response = std::move(response);
+        }
         return PTRCLAW_OK;
     } catch (const std::exception& e) {
+        // Clear callback on error
+        {
+            std::lock_guard<std::mutex> lock(handle->session_mutex);
+            handle->session_state[session_id].stream_cb = nullptr;
+        }
         handle->last_error = std::string("stream failed: ") + e.what();
         return PTRCLAW_ERR_PROVIDER;
     }

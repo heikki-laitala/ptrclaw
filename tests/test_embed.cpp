@@ -54,26 +54,6 @@ TEST_CASE("EmbedChannel: send_message delivers to pending response", "[embed]") 
     REQUIRE(response == "world");
 }
 
-TEST_CASE("EmbedChannel: stream callback lifecycle", "[embed]") {
-    EmbedChannel ch;
-
-    REQUIRE(ch.get_stream_callback("s1") == nullptr);
-
-    std::vector<std::string> chunks;
-    ch.set_stream_callback("s1", [&](const char* chunk, int /*done*/) {
-        chunks.emplace_back(chunk);
-    });
-
-    auto cb = ch.get_stream_callback("s1");
-    REQUIRE(cb != nullptr);
-    cb("hello", 0);
-    REQUIRE(chunks.size() == 1);
-    REQUIRE(chunks[0] == "hello");
-
-    ch.clear_stream_callback("s1");
-    REQUIRE(ch.get_stream_callback("s1") == nullptr);
-}
-
 // ── C API tests ─────────────────────────────────────────────────
 
 #include "../../include/ptrclaw/ptrclaw.h"
