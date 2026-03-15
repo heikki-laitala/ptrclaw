@@ -215,7 +215,7 @@ jobs:
         run: |
           set -eo pipefail
           git fetch origin main --depth=1
-          CHANGED=$(git diff --name-only --diff-filter=d origin/main...HEAD -- '*.cpp' '*.hpp' | grep -E '^(src|tests)/' | tr '\n' ' ')
+          CHANGED=$(git diff --name-only --diff-filter=d origin/main...HEAD -- '*.cpp' '*.hpp' | grep -E '^(src|tests)/' || true)
           if [ -n "$CHANGED" ]; then
             if [ "$(uname)" = "Darwin" ]; then
               CLANG_TIDY_EXTRA="-extra-arg=-stdlib=libc++ -extra-arg=-isysroot$(xcrun --show-sdk-path)"
