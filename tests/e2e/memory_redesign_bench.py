@@ -45,20 +45,22 @@ MODEL = "claude-sonnet-4-6"
 JUDGE_MODEL = "claude-opus-4-6"
 TIMEOUT_SECONDS = 180
 
-# Pacing — conservative to avoid rate limits
-MESSAGE_DELAY = 2
-SEED_MESSAGE_DELAY = 5
-JUDGE_DELAY = 0.5
+# Pacing — each seed message triggers multiple internal LLM calls
+# (recall, response, store, synthesis), so we pace generously.
+MESSAGE_DELAY = 3
+SEED_MESSAGE_DELAY = 12
+JUDGE_DELAY = 1.0
 
-# Rate limit budgets (Anthropic Sonnet 4.x, with safety margin)
-REQUEST_BUDGET_PER_MINUTE = 35
-INPUT_TOKEN_BUDGET_PER_MINUTE = 18000
-OUTPUT_TOKEN_BUDGET_PER_MINUTE = 5000
+# Rate limit budgets — account for ptrclaw making 3-5 internal API calls
+# per user message (recall + response + store + possible synthesis).
+REQUEST_BUDGET_PER_MINUTE = 40
+INPUT_TOKEN_BUDGET_PER_MINUTE = 25000
+OUTPUT_TOKEN_BUDGET_PER_MINUTE = 8000
 
-MODEL_CALL_INPUT_RESERVATION = 6500
-MODEL_CALL_OUTPUT_RESERVATION = 2000
-SEED_CALL_INPUT_RESERVATION = 11000
-SEED_CALL_OUTPUT_RESERVATION = 3000
+MODEL_CALL_INPUT_RESERVATION = 3000
+MODEL_CALL_OUTPUT_RESERVATION = 1000
+SEED_CALL_INPUT_RESERVATION = 5000
+SEED_CALL_OUTPUT_RESERVATION = 1500
 RATE_LIMIT_COOLDOWN_SECONDS = 65
 
 JUDGE_MAX_TOKENS = 64
