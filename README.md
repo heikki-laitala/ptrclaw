@@ -1,6 +1,6 @@
 # PtrClaw
 
-An AI assistant you can actually deploy anywhere. Single binary with dependencies statically linked in, no containers needed. Run it as a CLI tool, a Telegram bot, or plug in your own channel. WhatsApp is available as an opt-in build flag.
+An AI assistant you can actually deploy anywhere. Single binary with dependencies statically linked in, no containers needed. Run it as a CLI tool, a Telegram bot, or embed it as a shared library in Flutter/mobile/desktop apps. WhatsApp is available as an opt-in build flag.
 
 Built in C++17 because infrastructure should be small, fast, and boring to operate.
 
@@ -10,7 +10,7 @@ Built in C++17 because infrastructure should be small, fast, and boring to opera
 
 Most AI agent frameworks are Python packages with deep dependency trees, virtual environments, and careful version management just to get running. PtrClaw is a single binary that you `scp` to a server and run. It compiles in seconds, starts instantly, and uses minimal memory.
 
-- **Deploy anywhere** — one binary with deps statically linked, runs on any Linux box or Mac
+- **Deploy anywhere** — one binary with deps statically linked, runs on any Linux box or Mac. Embeddable SDK for Flutter/mobile/desktop apps
 - **Swap providers freely** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Switch with a config change, no code modifications
 - **Real tool use** — file I/O, shell execution (with stdin piping), cron scheduling, and a persistent knowledge graph memory system. Providers with native function calling use it directly; others fall back to XML-based parsing
 - **Extend without forking** — providers, channels, tools, and memory backends self-register via a plugin system. Add a new one by implementing an interface and dropping in a `.cpp` file
@@ -29,6 +29,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Telegram channel** — long-polling, user allowlists, Markdown-to-HTML, per-user sessions, streaming message edits
 - **WhatsApp channel** *(opt-in: `-Dwith_whatsapp=true`)* — Business Cloud API with built-in webhook server (reverse-proxy ready), E.164 phone normalization, sender allowlists
 - **Soul hatching** — dynamic personality development through onboarding conversations
+- **Embeddable SDK** *(opt-in: `-Dwith_embed=true`)* — shared library (`libptrclaw_shared`) with a C API for embedding in Flutter, mobile, and desktop apps. Host-bridged tools let the host app provide platform-appropriate implementations. Uses mbedTLS for portable TLS across iOS, Android, and desktop
 
 ## Quick start
 
@@ -134,11 +135,12 @@ export TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
 - libssl (OpenSSL)
 - libcurl (macOS only; Linux uses a built-in socket HTTP backend)
 - libsqlite3 (optional — for SQLite memory backend; the default JSON file backend has zero dependencies)
+- mbedTLS (optional — for embed/SDK builds on all platforms and static builds on Linux)
 
 ### macOS
 
 ```sh
-brew install meson llvm gcovr sqlite3
+brew install meson llvm gcovr sqlite3 mbedtls
 ```
 
 ### Linux (Debian/Ubuntu)
@@ -400,12 +402,67 @@ Provide specific line references and suggested fixes.
 
 Skills are detected dynamically — add or edit `.md` files and they'll be picked up on the next `/skill` command without restarting. Skills can be organized in subdirectories (e.g. `~/.ptrclaw/skills/email/protonmail.md`).
 
+## Embed SDK
+
+PtrClaw can be built as a shared library (`libptrclaw_shared`) with a C API for embedding in Flutter, mobile, and desktop applications. The SDK build uses POSIX sockets + mbedTLS instead of libcurl, making it portable across macOS, iOS, Android, and Linux.
+
+```sh
+make build-sdk    # build libptrclaw_shared (+ ptrclaw.h header)
+```
+
+The SDK disables Telegram, WhatsApp, Ollama, and built-in file/shell tools. Instead, the host app registers **bridged tools** — platform-appropriate implementations called back through the C API.
+
+### C API
+
+```c
+#include <ptrclaw/ptrclaw.h>
+
+// Register a host-bridged tool (must be called before ptrclaw_create)
+ptrclaw_register_tool("read_file", "Read a file",
+    "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}}}",
+    my_read_callback, NULL);
+
+// Create and start (NULL = use ~/.ptrclaw/config.json as-is)
+PtrClawHandle handle = ptrclaw_create(NULL);
+
+// Send a message (blocks until response is ready)
+ptrclaw_send(handle, "user123", "What files are in the project?");
+const char* reply = ptrclaw_last_response(handle, "user123");
+
+// Or stream tokens as they arrive
+ptrclaw_send_stream(handle, "user123", "Explain this code",
+                    my_chunk_cb, NULL);
+
+// Cleanup
+ptrclaw_destroy(handle);
+```
+
+Tool callbacks receive the tool name, a JSON arguments string, and a user-data pointer. They return a `malloc`'d string that PtrClaw frees:
+
+```c
+char* my_read_callback(const char* tool_name, const char* args_json, void* userdata) {
+    // Parse args_json, perform the operation, return result
+    return strdup("file contents here");
+}
+```
+
+### Feature differences
+
+| Feature | Default build | SDK build |
+| ------- | ------------- | --------- |
+| Channels | Telegram, WhatsApp (opt-in) | Embed (C API) |
+| Tools | file_read, file_write, file_edit, shell, cron | Host-bridged (via `ptrclaw_register_tool`) |
+| TLS | libcurl (macOS) / OpenSSL (Linux) | mbedTLS (all platforms) |
+| Providers | All 5 | All except Ollama |
+| Memory | Full (JSON, SQLite, embeddings) | Full |
+
 ## Development
 
 ```sh
 make build          # compile (all features except WhatsApp)
 make build-minimal  # slim build: openai + telegram + tools + json memory
 make build-static   # size-optimized static binary for distribution
+make build-sdk      # embeddable shared library (libptrclaw_shared)
 make test           # run unit tests (Catch2)
 make lint           # run clang-tidy
 make coverage       # generate HTML coverage report
@@ -434,6 +491,7 @@ Every provider, channel, and tool is a compile-time feature flag in `meson_optio
 | `with_memory_tools` | Memory tools (store, recall, forget, link) | `true` |
 | `with_embeddings` | Embedding/vector search for memory | `true` |
 | `with_mbedtls` | Use mbedTLS instead of OpenSSL (Linux only) | `false` |
+| `with_embed` | Embeddable SDK (shared library + C API) | `false` |
 
 Pass `-D` flags to `meson setup`:
 
@@ -463,6 +521,7 @@ ninja -C builddir
 | Default (`make build`) | ~1.1 MB | ~1.3 MB |
 | Static (`make build-static`, stripped) | ~863 KB | ~2.9 MB |
 | Minimal (`make build-minimal`, stripped) | ~781 KB | ~960 KB |
+| SDK shared lib (`make build-sdk`, stripped) | ~923 KB | — |
 
 Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux static binaries are larger because they bundle TLS (mbedTLS) and sqlite3. Linux default builds can also be slightly larger than macOS depending on toolchain and linked components. LTO is enabled by default. Distribution builds are stripped and size-optimized.
 
@@ -498,8 +557,8 @@ src/
   prompt.hpp/cpp        System prompt builder
   http.hpp              HttpClient interface
   embedder.hpp          Embedding interface, scoring helpers (cosine, hybrid, recency, idle fade)
-  http_socket.cpp       Linux HTTP backend (POSIX sockets + OpenSSL)
-  http.cpp              macOS HTTP backend (libcurl)
+  http_socket.cpp       POSIX socket HTTP backend (Linux + embed/SDK builds, OpenSSL or mbedTLS)
+  http.cpp              macOS HTTP backend (libcurl, default non-embed builds)
   util.hpp/cpp          String/path utilities
   embedders/
     http_embedder.cpp   HTTP-based embedding provider (OpenAI, Ollama)
@@ -507,6 +566,9 @@ src/
     telegram.hpp/cpp    Telegram Bot API (long-polling, Markdown→HTML, streaming edits)
     whatsapp.hpp/cpp    WhatsApp Business Cloud API (webhook server, message parsing)
     webhook_server.hpp/cpp  Minimal HTTP server for receiving webhooks behind a reverse proxy
+    embed.hpp/cpp       Embed channel — thread-safe message queues for SDK integration
+  embed/
+    embed_api.cpp       C API implementation (PtrClawHandle, bridged tools, lifecycle)
   providers/
     anthropic.cpp       Anthropic Messages API (streaming)
     openai.cpp          OpenAI Chat Completions + Responses API (streaming, OAuth)
@@ -530,6 +592,8 @@ src/
     memory_forget.cpp   Delete memory entries
     memory_link.cpp     Create/remove bidirectional links between entries
     skill_activate.cpp  Activate/deactivate skills mid-conversation
+include/
+  ptrclaw/ptrclaw.h     Public C header for the embed SDK
 tests/                  Catch2 unit tests
 docs/
   memory.md             Memory system architecture, scoring, knowledge decay, config reference

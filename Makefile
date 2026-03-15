@@ -69,6 +69,9 @@ build-sdk:
 		-Dwith_embed=true -Dwith_telegram=false -Dwith_whatsapp=false \
 		-Dwith_ollama=false -Dwith_tools=false $(SIZE_FLAGS); fi
 	meson compile -C $(SDKDIR) ptrclaw_shared
+	@for f in $(SDKDIR)/libptrclaw_shared.dylib $(SDKDIR)/libptrclaw_shared.so; do \
+		[ -f "$$f" ] && $(call STRIP_CMD,$$f) 2>/dev/null || true; \
+	done
 
 run: build
 	./$(BUILDDIR)/ptrclaw
