@@ -55,7 +55,7 @@ build-emb:
 build-minimal:
 	@if [ ! -d $(MINDIR) ]; then meson setup $(MINDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
 		-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false -Dwith_compatible=false \
-		-Dwith_whatsapp=false -Dwith_sqlite_memory=false $(SIZE_FLAGS); fi
+		-Dwith_whatsapp=false -Dwith_sqlite_memory=false -Dwith_embeddings=false $(SIZE_FLAGS); fi
 	meson compile -C $(MINDIR) ptrclaw
 	$(call STRIP_CMD,$(MINDIR)/ptrclaw) 2>/dev/null || true
 
