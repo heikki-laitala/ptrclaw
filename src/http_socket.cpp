@@ -92,7 +92,88 @@ static ParsedUrl parse_url(const std::string& url) {
     return result;
 }
 
-// ── RAII connection (TCP + optional TLS) ──────────────────────
+// ── Shared TCP helpers ─────────────────────────────────────────
+
+static void set_socket_timeout(int fd, long secs) {
+    struct timeval tv{secs, 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+}
+
+// Non-blocking TCP connect with timeout.  Sets fd on success.
+static bool connect_tcp(int& fd, const ParsedUrl& url, long timeout_secs) {
+    struct addrinfo hints{};
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    struct addrinfo* res = nullptr;
+    if (getaddrinfo(url.host.c_str(), url.port.c_str(), &hints, &res) != 0)
+        return false;
+
+    bool connected = false;
+    for (auto* ai = res; ai && !connected; ai = ai->ai_next) {
+        fd = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (fd < 0) continue;
+
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+        int rc = ::connect(fd, ai->ai_addr, ai->ai_addrlen);
+        if (rc == 0) {
+            fcntl(fd, F_SETFL, flags);
+            connected = true;
+        } else if (errno == EINPROGRESS) {
+            fd_set wset;
+            FD_ZERO(&wset);
+            FD_SET(fd, &wset);
+            struct timeval tv{timeout_secs, 0};
+            rc = select(fd + 1, nullptr, &wset, nullptr, &tv);
+            if (rc > 0) {
+                int err = 0;
+                socklen_t elen = sizeof(err);
+                getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &elen);
+                if (err == 0) {
+                    fcntl(fd, F_SETFL, flags);
+                    connected = true;
+                }
+            }
+        }
+        if (!connected) { ::close(fd); fd = -1; }
+    }
+    freeaddrinfo(res);
+    return connected;
+}
+
+// Plain-socket read: returns >0 on data, 0 on EOF, -1 on error.
+// EAGAIN loops back so the caller can check abort.
+static ssize_t plain_read(int fd, char* buf, size_t len) {
+    while (true) {
+        if (g_socket_abort_flag &&
+            g_socket_abort_flag->load(std::memory_order_relaxed))
+            return -1;
+        ssize_t n = ::recv(fd, buf, len, 0);
+        if (n > 0) return n;
+        if (n == 0) return 0;
+        if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+        return -1;
+    }
+}
+
+// Plain-socket write: sends all bytes or returns false.
+static bool plain_write(int fd, const char* buf, size_t len) {
+    while (len > 0) {
+        ssize_t n = ::send(fd, buf, len, 0);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+            return false;
+        }
+        buf += n;
+        len -= static_cast<size_t>(n);
+    }
+    return true;
+}
+
+// ── RAII connection (TCP + TLS) ───────────────────────────────
 
 #ifdef PTRCLAW_USE_MBEDTLS
 
@@ -160,49 +241,10 @@ struct Connection {
     Connection& operator=(const Connection&) = delete;
 
     bool connect(const ParsedUrl& url, long timeout_secs) {
-        struct addrinfo hints{};
-        hints.ai_family   = AF_UNSPEC;
-        hints.ai_socktype = SOCK_STREAM;
-
-        struct addrinfo* res = nullptr;
-        if (getaddrinfo(url.host.c_str(), url.port.c_str(), &hints, &res) != 0)
-            return false;
-
-        bool connected = false;
-        for (auto* ai = res; ai && !connected; ai = ai->ai_next) {
-            fd = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-            if (fd < 0) continue;
-
-            int flags = fcntl(fd, F_GETFL, 0);
-            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-
-            int rc = ::connect(fd, ai->ai_addr, ai->ai_addrlen);
-            if (rc == 0) {
-                fcntl(fd, F_SETFL, flags);
-                connected = true;
-            } else if (errno == EINPROGRESS) {
-                fd_set wset;
-                FD_ZERO(&wset);
-                FD_SET(fd, &wset);
-                struct timeval tv{timeout_secs, 0};
-                rc = select(fd + 1, nullptr, &wset, nullptr, &tv);
-                if (rc > 0) {
-                    int err = 0;
-                    socklen_t elen = sizeof(err);
-                    getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &elen);
-                    if (err == 0) {
-                        fcntl(fd, F_SETFL, flags);
-                        connected = true;
-                    }
-                }
-            }
-            if (!connected) { ::close(fd); fd = -1; }
-        }
-        freeaddrinfo(res);
-        if (!connected) return false;
+        if (!connect_tcp(fd, url, timeout_secs)) return false;
 
         if (url.tls) {
-            set_socket_timeout(timeout_secs);
+            set_socket_timeout(fd, timeout_secs);
 
 #if MBEDTLS_VERSION_MAJOR < 4
             if (mbedtls_ctr_drbg_seed(&drbg_, mbedtls_entropy_func, &entropy_,
@@ -249,68 +291,44 @@ struct Connection {
             tls_active_ = true;
         }
 
-        set_socket_timeout(1);
+        set_socket_timeout(fd, 1);
         return true;
     }
 
     ssize_t read_some(char* buf, size_t len) {
+        if (!tls_active_) return plain_read(fd, buf, len);
         while (true) {
             if (g_socket_abort_flag &&
                 g_socket_abort_flag->load(std::memory_order_relaxed))
                 return -1;
-
-            if (tls_active_) {
-                int n = mbedtls_ssl_read(&ssl_, reinterpret_cast<unsigned char*>(buf),
-                                          len);
-                if (n > 0) return n;
-                if (n == 0 || n == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) return 0;
-                if (n == MBEDTLS_ERR_SSL_WANT_READ ||
-                    n == MBEDTLS_ERR_SSL_WANT_WRITE)
-                    continue;
-                return -1;
-            } else {
-                ssize_t n = ::recv(fd, buf, len, 0);
-                if (n > 0) return n;
-                if (n == 0) return 0;
-                if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
-                return -1;
-            }
+            int n = mbedtls_ssl_read(&ssl_, reinterpret_cast<unsigned char*>(buf),
+                                      len);
+            if (n > 0) return n;
+            if (n == 0 || n == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) return 0;
+            if (n == MBEDTLS_ERR_SSL_WANT_READ ||
+                n == MBEDTLS_ERR_SSL_WANT_WRITE)
+                continue;
+            return -1;
         }
     }
 
     bool write_all(const char* buf, size_t len) {
+        if (!tls_active_) return plain_write(fd, buf, len);
         while (len > 0) {
-            if (tls_active_) {
-                int n = mbedtls_ssl_write(&ssl_,
-                                           reinterpret_cast<const unsigned char*>(buf),
-                                           len);
-                if (n > 0) {
-                    buf += n;
-                    len -= static_cast<size_t>(n);
-                    continue;
-                }
-                if (n == MBEDTLS_ERR_SSL_WANT_WRITE ||
-                    n == MBEDTLS_ERR_SSL_WANT_READ)
-                    continue;
-                return false;
-            } else {
-                ssize_t n = ::send(fd, buf, len, 0);
-                if (n < 0) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
-                    return false;
-                }
+            int n = mbedtls_ssl_write(&ssl_,
+                                       reinterpret_cast<const unsigned char*>(buf),
+                                       len);
+            if (n > 0) {
                 buf += n;
                 len -= static_cast<size_t>(n);
+                continue;
             }
+            if (n == MBEDTLS_ERR_SSL_WANT_WRITE ||
+                n == MBEDTLS_ERR_SSL_WANT_READ)
+                continue;
+            return false;
         }
         return true;
-    }
-
-private:
-    void set_socket_timeout(long secs) {
-        struct timeval tv{secs, 0};
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     }
 };
 
@@ -331,52 +349,10 @@ struct Connection {
     Connection& operator=(const Connection&) = delete;
 
     bool connect(const ParsedUrl& url, long timeout_secs) {
-        struct addrinfo hints{};
-        hints.ai_family   = AF_UNSPEC;
-        hints.ai_socktype = SOCK_STREAM;
+        if (!connect_tcp(fd, url, timeout_secs)) return false;
 
-        struct addrinfo* res = nullptr;
-        if (getaddrinfo(url.host.c_str(), url.port.c_str(), &hints, &res) != 0)
-            return false;
-
-        bool connected = false;
-        for (auto* ai = res; ai && !connected; ai = ai->ai_next) {
-            fd = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-            if (fd < 0) continue;
-
-            // Non-blocking connect so we can honour timeout_secs.
-            int flags = fcntl(fd, F_GETFL, 0);
-            fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-
-            int rc = ::connect(fd, ai->ai_addr, ai->ai_addrlen);
-            if (rc == 0) {
-                fcntl(fd, F_SETFL, flags);
-                connected = true;
-            } else if (errno == EINPROGRESS) {
-                fd_set wset;
-                FD_ZERO(&wset);
-                FD_SET(fd, &wset);
-                struct timeval tv{timeout_secs, 0};
-                rc = select(fd + 1, nullptr, &wset, nullptr, &tv);
-                if (rc > 0) {
-                    int err = 0;
-                    socklen_t elen = sizeof(err);
-                    getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &elen);
-                    if (err == 0) {
-                        fcntl(fd, F_SETFL, flags);
-                        connected = true;
-                    }
-                }
-            }
-            if (!connected) { ::close(fd); fd = -1; }
-        }
-        freeaddrinfo(res);
-        if (!connected) return false;
-
-        // Use full timeout for TLS handshake, then switch to 1-second slices
-        // so abort-flag checks work during body streaming.
         if (url.tls) {
-            set_socket_timeout(timeout_secs);
+            set_socket_timeout(fd, timeout_secs);
 
             ctx = SSL_CTX_new(TLS_client_method());
             if (!ctx) return false;
@@ -392,70 +368,43 @@ struct Connection {
             if (SSL_connect(ssl) != 1) return false;
         }
 
-        // 1-second slice timeout for body I/O (enables abort-flag polling).
-        set_socket_timeout(1);
+        set_socket_timeout(fd, 1);
         return true;
     }
 
-    // Read some bytes; returns >0 on data, 0 on EOF, -1 on unrecoverable error.
-    // EAGAIN (1-second slice expiry) loops back so the caller can check abort.
     ssize_t read_some(char* buf, size_t len) {
+        if (!ssl) return plain_read(fd, buf, len);
         while (true) {
             if (g_socket_abort_flag &&
                 g_socket_abort_flag->load(std::memory_order_relaxed))
                 return -1;
-
-            ssize_t n;
-            if (ssl) {
-                n = SSL_read(ssl, buf, static_cast<int>(len));
-                if (n > 0) return n;
-                if (n == 0) return 0;
-                int err = SSL_get_error(ssl, static_cast<int>(n));
-                if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
-                    continue;
-                if (err == SSL_ERROR_SYSCALL &&
-                    (errno == EAGAIN || errno == EWOULDBLOCK))
-                    continue; // 1-second slice expired
-                return -1;
-            } else {
-                n = ::recv(fd, buf, len, 0);
-                if (n > 0) return n;
-                if (n == 0) return 0;
-                if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
-                return -1;
-            }
+            ssize_t n = SSL_read(ssl, buf, static_cast<int>(len));
+            if (n > 0) return n;
+            if (n == 0) return 0;
+            int err = SSL_get_error(ssl, static_cast<int>(n));
+            if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE)
+                continue;
+            if (err == SSL_ERROR_SYSCALL &&
+                (errno == EAGAIN || errno == EWOULDBLOCK))
+                continue;
+            return -1;
         }
     }
 
     bool write_all(const char* buf, size_t len) {
+        if (!ssl) return plain_write(fd, buf, len);
         while (len > 0) {
-            ssize_t n;
-            if (ssl) {
-                n = SSL_write(ssl, buf, static_cast<int>(len));
-                if (n <= 0) {
-                    int err = SSL_get_error(ssl, static_cast<int>(n));
-                    if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_WANT_READ)
-                        continue;
-                    return false;
-                }
-            } else {
-                n = ::send(fd, buf, len, 0);
-                if (n < 0) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
-                    return false;
-                }
+            ssize_t n = SSL_write(ssl, buf, static_cast<int>(len));
+            if (n <= 0) {
+                int err = SSL_get_error(ssl, static_cast<int>(n));
+                if (err == SSL_ERROR_WANT_WRITE || err == SSL_ERROR_WANT_READ)
+                    continue;
+                return false;
             }
             buf += n;
             len -= static_cast<size_t>(n);
         }
         return true;
-    }
-
-private:
-    void set_socket_timeout(long secs) {
-        struct timeval tv{secs, 0};
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     }
 };
 

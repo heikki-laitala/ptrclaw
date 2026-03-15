@@ -69,35 +69,4 @@ std::string EmbedChannel::send_user_message(const std::string& session_id,
     return response;
 }
 
-std::string EmbedChannel::send_user_message_stream(
-    const std::string& session_id,
-    const std::string& message,
-    EmbedChunkCallback on_chunk) {
-
-    set_stream_callback(session_id, std::move(on_chunk));
-    std::string response = send_user_message(session_id, message);
-    clear_stream_callback(session_id);
-
-    return response;
-}
-
-void EmbedChannel::set_stream_callback(const std::string& session_id,
-                                        EmbedChunkCallback callback) {
-    std::lock_guard<std::mutex> lock(stream_mutex_);
-    stream_callbacks_[session_id] = std::move(callback);
-}
-
-void EmbedChannel::clear_stream_callback(const std::string& session_id) {
-    std::lock_guard<std::mutex> lock(stream_mutex_);
-    stream_callbacks_.erase(session_id);
-}
-
-EmbedChunkCallback EmbedChannel::get_stream_callback(
-    const std::string& session_id) {
-    std::lock_guard<std::mutex> lock(stream_mutex_);
-    auto it = stream_callbacks_.find(session_id);
-    if (it != stream_callbacks_.end()) return it->second;
-    return nullptr;
-}
-
 } // namespace ptrclaw
