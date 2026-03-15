@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["anthropic>=0.40"]
+# ///
 """Memory recall benchmark for ptrclaw.
 
 Drives a multi-turn conversation through ptrclaw's pipe channel, lets
