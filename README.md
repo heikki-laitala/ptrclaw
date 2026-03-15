@@ -14,7 +14,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Swap providers freely** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Switch with a config change, no code modifications
 - **Real tool use** — file I/O, shell execution (with stdin piping), cron scheduling, and a persistent knowledge graph memory system. Providers with native function calling use it directly; others fall back to XML-based parsing
 - **Extend without forking** — providers, channels, tools, and memory backends self-register via a plugin system. Add a new one by implementing an interface and dropping in a `.cpp` file
-- **Build only what you need** — 12 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~781 KB)
+- **Build only what you need** — 12 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~764 KB)
 
 ## Features
 
@@ -519,7 +519,7 @@ ninja -C builddir
 | ------------- | ----------- | ------------ |
 | Default (`make build`) | ~1.1 MB | ~1.2 MB |
 | Static (`make build-static`, stripped) | ~879 KB | ~2.9 MB |
-| Minimal (`make build-minimal`, stripped) | ~781 KB | ~960 KB |
+| Minimal (`make build-minimal`, stripped) | ~764 KB | ~960 KB |
 | SDK shared lib (`make build-sdk`, stripped) | ~884 KB | ~397 KB |
 
 Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). Linux static binaries are larger because they bundle TLS (mbedTLS) and sqlite3. Linux default builds can also be slightly larger than macOS depending on toolchain and linked components. LTO is enabled by default. Distribution builds are stripped and size-optimized.
