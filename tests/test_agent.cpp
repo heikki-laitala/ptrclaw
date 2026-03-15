@@ -1127,6 +1127,158 @@ TEST_CASE("Agent: synthesis is no-op when memory backend is none", "[agent][synt
     REQUIRE(mock->last_simple_system.empty());
 }
 
+// ── Synthesis: concept vs observation consolidation (PER-389) ────
+
+TEST_CASE("Agent: synthesis prompt distinguishes concept and observation types", "[agent][synthesis]") {
+    // The synthesis prompt must instruct the LLM on the concept/observation distinction
+    // so it can classify stable patterns vs episode-specific facts correctly.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+    mock->simple_response = R"([{"key":"pref:rust","content":"User prefers Rust","category":"knowledge","type":"concept","links":[]}])";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_prompt_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    agent.process("I love Rust");
+
+    REQUIRE(mock->last_simple_message.find("concept") != std::string::npos);
+    REQUIRE(mock->last_simple_message.find("observation") != std::string::npos);
+    // Output format must include the type field
+    REQUIRE(mock->last_simple_message.find("\"type\"") != std::string::npos);
+
+    std::filesystem::remove(mem_path);
+}
+
+TEST_CASE("Agent: synthesis stores concept-type entries without session_id", "[agent][synthesis]") {
+    // Concept entries represent stable cross-session patterns.
+    // They must be stored without a session_id so they outlive the current session.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+    mock->simple_response = R"([{"key":"pref:rust-over-cpp","content":"User prefers Rust over C++","category":"knowledge","type":"concept","links":[]}])";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_concept_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+    agent.set_session_id("test-session-abc");
+
+    agent.process("I strongly prefer Rust over C++");
+
+    auto entry = agent.memory()->get("pref:rust-over-cpp");
+    REQUIRE(entry.has_value());
+    REQUIRE(entry.value_or(MemoryEntry{}).session_id.empty());
+
+    std::filesystem::remove(mem_path);
+    (void)mock;
+}
+
+TEST_CASE("Agent: synthesis stores observation-type entries with session_id", "[agent][synthesis]") {
+    // Observation entries are episode-specific — tied to the current session.
+    // They must retain the session_id so they can be distinguished from durable concepts.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+    mock->simple_response = R"([{"key":"user-debugging-today","content":"User is debugging a segfault today","category":"knowledge","type":"observation","links":[]}])";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_obs_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+    agent.set_session_id("test-session-xyz");
+
+    agent.process("Trying to find this segfault all day");
+
+    auto entry = agent.memory()->get("user-debugging-today");
+    REQUIRE(entry.has_value());
+    REQUIRE(entry.value_or(MemoryEntry{}).session_id == "test-session-xyz");
+
+    std::filesystem::remove(mem_path);
+    (void)mock;
+}
+
+TEST_CASE("Agent: synthesis without type field defaults to observation (backward compat)", "[agent][synthesis]") {
+    // Entries without a type field must be stored with session_id (observation default)
+    // to ensure backward compatibility with pre-PER-389 synthesis responses.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+    mock->simple_response = R"([{"key":"user-likes-go","content":"User likes Go","category":"knowledge","links":[]}])";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_compat_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+    agent.set_session_id("test-session-compat");
+
+    agent.process("I like writing Go");
+
+    auto entry = agent.memory()->get("user-likes-go");
+    REQUIRE(entry.has_value());
+    REQUIRE(entry.value_or(MemoryEntry{}).session_id == "test-session-compat");
+
+    std::filesystem::remove(mem_path);
+    (void)mock;
+}
+
+TEST_CASE("Agent: synthesis stores core-category entries as concepts (no session_id)", "[agent][synthesis]") {
+    // Core-category entries (personality, identity, behavior) are inherently cross-session
+    // concepts regardless of the type field — they must always be stored without session_id.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+    mock->simple_response = R"([{"key":"personality:direct-communication","content":"User prefers direct communication","category":"core","type":"observation","links":[]}])";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_core_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+    agent.set_session_id("test-session-core");
+
+    agent.process("Get to the point please");
+
+    auto entry = agent.memory()->get("personality:direct-communication");
+    REQUIRE(entry.has_value());
+    // Core category overrides observation type — must be stored as a cross-session concept
+    REQUIRE(entry.value_or(MemoryEntry{}).session_id.empty());
+
+    std::filesystem::remove(mem_path);
+    (void)mock;
+}
+
 // ── Contextual tool selection ───────────────────────────────────
 
 TEST_CASE("Agent: memory tools excluded from specs when memory inactive", "[agent]") {

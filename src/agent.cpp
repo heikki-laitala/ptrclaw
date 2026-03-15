@@ -623,7 +623,14 @@ void Agent::run_synthesis() {
             std::string cat_str = note.value("category", "knowledge");
             MemoryCategory category = category_from_string(cat_str);
 
-            memory_->store(key, content, category, session_id_);
+            // Concepts and core entries are cross-session — stored without session_id
+            // so they survive past the current session and are not tied to a single episode.
+            // Observations are episode-specific — bound to the current session.
+            std::string type_str = note.value("type", "observation");
+            bool is_concept = (type_str == "concept") || (category == MemoryCategory::Core);
+            std::string entry_session = is_concept ? "" : session_id_;
+
+            memory_->store(key, content, category, entry_session);
 
             if (note.contains("links") && note["links"].is_array()) {
                 for (const auto& lnk : note["links"]) {

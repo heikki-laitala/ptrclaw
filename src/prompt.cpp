@@ -149,20 +149,25 @@ std::string build_synthesis_prompt(const std::vector<ChatMessage>& history,
     std::ostringstream ss;
 
     ss << "Extract atomic knowledge notes from the following conversation.\n\n"
+       << "Classify each note by type:\n"
+       << "- \"concept\": A stable, generalizable pattern, preference, decision, or constraint\n"
+       << "  that persists across sessions (recurring behavior, explicit decision, persistent rule).\n"
+       << "  Use namespaced keys: pref:, decision:, constraint:, pattern:\n"
+       << "  (e.g., \"pref:rust-over-cpp\", \"decision:use-cmake\", \"constraint:no-external-deps\").\n"
+       << "- \"observation\": A concrete, episode-specific fact — what happened this session,\n"
+       << "  what was tried, current state. Does not generalize beyond this conversation.\n"
+       << "  Use descriptive keys without namespace prefixes (e.g., \"user-debugging-segfault\").\n\n"
        << "Rules:\n"
-       << "- Each note should capture exactly one fact, claim, or preference.\n"
-       << "- Use concise, descriptive keys (e.g., \"user-prefers-python\", \"project-uses-cmake\").\n"
-       << "- Category must be \"core\" (identity/behavior) or \"knowledge\" (factual).\n"
+       << "- Each note captures exactly one fact, claim, or preference.\n"
+       << "- Category must be \"core\" (identity/behavior) or \"knowledge\" (factual/situational).\n"
        << "- Suggest links to existing entries when related.\n"
        << "- Prefer fewer high-quality notes over many trivial ones.\n"
        << "- Do not extract greetings, acknowledgments, or meta-conversation.\n"
-       << "- Extract communication patterns as \"personality:\" prefixed core entries\n"
-       << "  (e.g., \"personality:responds-to-humor\", \"personality:prefers-code-examples\").\n"
+       << "- Extract communication patterns as \"personality:\" prefixed core entries (type: concept).\n"
        << "  These capture how the user likes to communicate. At most one per synthesis.\n"
-       << "- Extract situational style observations as \"style:\" prefixed knowledge entries\n"
-       << "  (e.g., \"style:debugging-prefers-terse\", \"style:casual-enjoys-banter\").\n"
+       << "- Extract situational style preferences as \"style:\" prefixed knowledge entries (type: concept).\n"
        << "  These capture context-specific tone preferences. At most one per synthesis.\n\n"
-       << "Output a JSON array: [{\"key\":\"...\",\"content\":\"...\",\"category\":\"...\",\"links\":[\"...\"]}]\n"
+       << "Output a JSON array: [{\"key\":\"...\",\"content\":\"...\",\"category\":\"...\",\"type\":\"...\",\"links\":[\"...\"]}]\n"
        << "Output ONLY the JSON array, no other text.\n\n";
 
     if (!existing_entries.empty()) {
