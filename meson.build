@@ -167,13 +167,14 @@ if opt_embeddings
     'src/embedders/http_embedder.cpp',
   )
 endif
-# Embed channel + C API (always compiled; LTO removes unused symbols)
-embed_sources = files(
-  'src/channels/embed.cpp',
-  'src/embed/embed_api.cpp',
-)
+if opt_embed
+  optional_sources += files(
+    'src/channels/embed.cpp',
+    'src/embed/embed_api.cpp',
+  )
+endif
 
-lib_sources = core_sources + optional_sources + embed_sources
+lib_sources = core_sources + optional_sources
 
 ptrclaw_lib = static_library('ptrclaw_lib', lib_sources,
   include_directories: inc,
@@ -217,7 +218,6 @@ core_test_sources = files(
   'tests/test_output_filter.cpp',
   'tests/test_skill.cpp',
   'tests/test_commands.cpp',
-  'tests/test_embed.cpp',
 )
 
 optional_test_sources = []
@@ -265,6 +265,9 @@ if opt_embeddings
     'tests/test_embedder.cpp',
     'tests/test_hybrid_search.cpp',
   )
+endif
+if opt_embed
+  optional_test_sources += files('tests/test_embed.cpp')
 endif
 test_sources = core_test_sources + optional_test_sources
 
