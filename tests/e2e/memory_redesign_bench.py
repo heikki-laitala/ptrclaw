@@ -696,8 +696,11 @@ def run_scenario(binary, backend, scenario, limiters):
                 file=sys.stderr,
             )
         close_pipe(proc)
-        print("    Seed phase complete.", file=sys.stderr)
-        time.sleep(3)
+        print(
+            "    Seed phase complete. Cooling down before follow-ups...",
+            file=sys.stderr,
+        )
+        time.sleep(RATE_LIMIT_COOLDOWN_SECONDS)
 
         # Inspect memory state after seeding
         memory_after_seed = inspect_memory_files(home)
