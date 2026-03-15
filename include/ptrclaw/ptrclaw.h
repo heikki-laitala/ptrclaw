@@ -1,32 +1,28 @@
 /*
- * ptrclaw.h — Embeddable PtrClaw Core API
+ * ptrclaw.h — Embeddable PtrClaw API
  *
  * C API for embedding PtrClaw in host applications (Flutter, mobile, desktop,
- * CLI wrappers, or any language with C FFI support).
+ * or any language with C FFI support).
  *
- * Link against libptrclaw_shared (shared library target) for dynamic linking,
- * or include engine.cpp together with ptrclaw_lib for static embedding.
+ * Internally runs the full channel pipeline (EventBus, SessionManager,
+ * StreamRelay) so all features work: commands (/status, /model, /skill, ...),
+ * memory, skills, streaming, and multi-session management.
  *
  * Thread safety
  * -------------
- *   PtrClawEngine handles are immutable after creation and safe to read from
- *   multiple threads.  PtrClawSession handles are NOT thread-safe — callers
- *   must serialise access (one active call at a time per session).
+ *   ptrclaw_send() and ptrclaw_send_stream() may be called from any thread.
+ *   The internal event loop runs on a dedicated background thread created by
+ *   ptrclaw_create().  Do not call ptrclaw_send() concurrently for the same
+ *   session_id — serialise per session.
  *
  * Typical usage
  * -------------
- *   PtrClawEngine eng = ptrclaw_engine_create(
- *       "{\"provider\":\"anthropic\","
- *       " \"api_key\":\"sk-ant-...\","
- *       " \"model\":\"claude-sonnet-4-6\"}");
+ *   PtrClawHandle h = ptrclaw_create(NULL);  // uses ~/.ptrclaw/config.json
  *
- *   PtrClawSession sess = ptrclaw_session_create(eng, "user-42");
+ *   if (ptrclaw_send(h, "user-1", "Hello!") == PTRCLAW_OK)
+ *       puts(ptrclaw_last_response(h, "user-1"));
  *
- *   if (ptrclaw_process(sess, "Hello!") == PTRCLAW_OK)
- *       puts(ptrclaw_session_last_response(sess));
- *
- *   ptrclaw_session_destroy(sess);
- *   ptrclaw_engine_destroy(eng);
+ *   ptrclaw_destroy(h);
  */
 
 #ifndef PTRCLAW_H
@@ -39,115 +35,77 @@ extern "C" {
 /* ── Return codes ──────────────────────────────────────────────── */
 
 #define PTRCLAW_OK           0  /* success                         */
-#define PTRCLAW_ERR_INVALID  1  /* null argument or bad config     */
-#define PTRCLAW_ERR_PROVIDER 2  /* LLM provider call failed        */
+#define PTRCLAW_ERR_INVALID  1  /* null argument or bad state       */
+#define PTRCLAW_ERR_PROVIDER 2  /* provider or processing error     */
 
 /* ── Version ───────────────────────────────────────────────────── */
 
-/* Returns a NUL-terminated string such as "0.0.9". Never NULL. */
+/* Returns a NUL-terminated version string (e.g. "0.0.9"). Never NULL. */
 const char *ptrclaw_version(void);
 
-/* ── Opaque handle types ────────────────────────────────────────── */
+/* ── Opaque handle ─────────────────────────────────────────────── */
 
-typedef struct PtrClawEngine_  *PtrClawEngine;
-typedef struct PtrClawSession_ *PtrClawSession;
+typedef struct PtrClawHandle_ *PtrClawHandle;
 
-/* ── Engine lifecycle ───────────────────────────────────────────── */
-
-/*
- * ptrclaw_engine_create — parse config_json and initialise an engine.
- *
- * config_json is a UTF-8 JSON object.  Recognised keys:
- *
- *   "provider"              string   LLM provider name (default: "anthropic").
- *                                    Registered providers: anthropic, openai,
- *                                    ollama, openrouter, compatible.
- *   "api_key"               string   Provider API key (required for cloud
- *                                    providers; may be empty for local ones).
- *   "model"                 string   Model name (default: "claude-sonnet-4-6").
- *   "temperature"           number   Sampling temperature 0.0–1.0 (default 0.7).
- *   "tools"                 array    Tool names to enable; omit the key to
- *                                    enable all registered tools.  Pass an
- *                                    empty array [] to disable all tools.
- *   "max_tool_iterations"   number   Agent loop cap (default 10).
- *   "max_history_messages"  number   Rolling history window (default 50).
- *
- * Returns a non-null handle on success.  Returns NULL only when config_json
- * is NULL.  On JSON parse errors the handle is still returned so that the
- * caller can inspect ptrclaw_engine_last_error().
- */
-PtrClawEngine ptrclaw_engine_create(const char *config_json);
-
-void          ptrclaw_engine_destroy(PtrClawEngine engine);
-
-/* Returns the last error message, or an empty string.  Never NULL. */
-const char   *ptrclaw_engine_last_error(PtrClawEngine engine);
-
-/* ── Session lifecycle ──────────────────────────────────────────── */
+/* ── Lifecycle ─────────────────────────────────────────────────── */
 
 /*
- * ptrclaw_session_create — create a stateful, single-user conversation.
+ * ptrclaw_create — initialise ptrclaw and start the background event loop.
  *
- * engine     An engine handle returned by ptrclaw_engine_create().
- * session_id Optional identifier used for log correlation (may be NULL or "").
+ * config_json  Optional JSON string to override config values.
+ *              Pass NULL to use ~/.ptrclaw/config.json as-is.
+ *              Recognised keys: "provider", "model", "temperature".
  *
- * Returns NULL on failure; inspect ptrclaw_engine_last_error() for the reason.
- * Each session owns its own HTTP client, provider instance, and history.
+ * Returns a non-null handle on success.
  */
-PtrClawSession ptrclaw_session_create(PtrClawEngine engine, const char *session_id);
+PtrClawHandle ptrclaw_create(const char *config_json);
 
-void           ptrclaw_session_destroy(PtrClawSession session);
+/* Stop the background loop and free all resources. */
+void ptrclaw_destroy(PtrClawHandle handle);
 
-/* Erase conversation history without destroying the session. */
-void           ptrclaw_session_clear_history(PtrClawSession session);
+/* Returns the last error message, or an empty string. Never NULL. */
+const char *ptrclaw_last_error(PtrClawHandle handle);
 
-/* ── Message processing ─────────────────────────────────────────── */
+/* ── Messaging ─────────────────────────────────────────────────── */
 
 /*
- * ptrclaw_process — send a user message and block until the response is ready.
+ * ptrclaw_send — send a user message and block until the response is ready.
  *
- * The full response (including any tool-use round-trips) is stored internally
- * and accessible via ptrclaw_session_last_response() until the next call to
- * ptrclaw_process() or ptrclaw_process_stream() on the same session.
+ * session_id  Identifies the conversation (creates a new session on first use).
+ * message     UTF-8 user message text.  Slash commands (/status, /model, etc.)
+ *             are handled automatically.
  *
- * Returns PTRCLAW_OK on success, or a PTRCLAW_ERR_* code on failure.
+ * Returns PTRCLAW_OK on success.  The response is accessible via
+ * ptrclaw_last_response() until the next send on the same session.
  */
-int         ptrclaw_process(PtrClawSession session, const char *message);
+int ptrclaw_send(PtrClawHandle handle, const char *session_id,
+                 const char *message);
 
-/* Returns the response from the most recent successful ptrclaw_process*() call.
- * The pointer is owned by the session and invalidated by the next process call.
- * Returns an empty string (never NULL) if no response has been produced yet. */
-const char *ptrclaw_session_last_response(PtrClawSession session);
+/* Returns the response from the last ptrclaw_send*() for this session.
+ * Never NULL (returns empty string if no response yet). */
+const char *ptrclaw_last_response(PtrClawHandle handle,
+                                   const char *session_id);
 
 /*
  * Streaming chunk callback.
  *
- *   chunk    UTF-8 text delta (may be an empty string on the terminal call).
+ *   chunk    UTF-8 text delta (empty on the terminal call).
  *   done     0 for intermediate chunks; 1 for the terminal sentinel.
- *   userdata Opaque pointer passed through from ptrclaw_process_stream().
- *
- * The callback is invoked on the same thread that called ptrclaw_process_stream().
- * Do not call any ptrclaw_* function from within the callback.
+ *   userdata Opaque pointer passed through from ptrclaw_send_stream().
  */
-typedef void (*PtrClawChunkCallback)(const char *chunk, int done, void *userdata);
+typedef void (*PtrClawChunkCallback)(const char *chunk, int done,
+                                      void *userdata);
 
 /*
- * ptrclaw_process_stream — like ptrclaw_process but delivers text deltas via
- * on_chunk as the provider streams output.  Falls back to a single chunk when
- * the active provider does not support streaming.
+ * ptrclaw_send_stream — like ptrclaw_send but delivers text deltas via
+ * on_chunk as the provider streams output.  Falls back to a single chunk
+ * for non-streaming providers.
  *
- * on_chunk is called one or more times with done=0, then exactly once with
- * done=1 (and an empty chunk) to signal completion.
- *
- * The assembled response is also available via ptrclaw_session_last_response()
- * after this function returns.
- *
- * Returns PTRCLAW_OK on success, or a PTRCLAW_ERR_* code on failure.
+ * The assembled response is also available via ptrclaw_last_response().
  */
-int ptrclaw_process_stream(PtrClawSession session,
-                           const char *message,
-                           PtrClawChunkCallback on_chunk,
-                           void *userdata);
+int ptrclaw_send_stream(PtrClawHandle handle, const char *session_id,
+                        const char *message,
+                        PtrClawChunkCallback on_chunk, void *userdata);
 
 #ifdef __cplusplus
 }
