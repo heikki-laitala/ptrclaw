@@ -70,7 +70,6 @@ TEST_CASE("cmd_soul: returns hatch prompt when dev and no soul data", "[commands
 TEST_CASE("cmd_models: shows current provider and model", "[commands]") {
     auto agent = make_cmd_agent();
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["anthropic"].api_key = "test-key";
     cfg.providers["openai"].api_key = "sk-test";
 
@@ -86,7 +85,6 @@ TEST_CASE("cmd_models: shows current provider and model", "[commands]") {
 TEST_CASE("cmd_models: shows OAuth for openai with oauth token", "[commands]") {
     auto agent = make_cmd_agent();
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["openai"].api_key = "sk-test";
     cfg.providers["openai"].oauth_access_token = "token";
 
@@ -97,7 +95,6 @@ TEST_CASE("cmd_models: shows OAuth for openai with oauth token", "[commands]") {
 TEST_CASE("cmd_models: empty providers", "[commands]") {
     auto agent = make_cmd_agent();
     Config cfg;
-    cfg.providers.clear();
 
     auto result = cmd_models(agent, cfg);
     REQUIRE(result.find("Current:") != std::string::npos);
