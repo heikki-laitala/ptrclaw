@@ -108,11 +108,12 @@ jobs:
 
       - name: Build & test with embed
         run: |
+          SDK_FLAGS="-Dwith_embed=true -Dwith_telegram=false -Dwith_whatsapp=false -Dwith_ollama=false -Dwith_tools=false -Dcatch2:tests=false"
           if [ ! -d builddir-emb ]; then
             if [ "$(uname)" = "Darwin" ]; then
-              meson setup builddir-emb --native-file meson-native-macos.ini -Dwith_embed=true -Dcatch2:tests=false
+              meson setup builddir-emb --native-file meson-native-macos.ini $SDK_FLAGS
             else
-              meson setup builddir-emb --native-file meson-native-linux.ini -Dwith_embed=true -Dcatch2:tests=false
+              meson setup builddir-emb --native-file meson-native-linux.ini $SDK_FLAGS
             fi
           fi
           meson compile -C builddir-emb

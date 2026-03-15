@@ -14,7 +14,7 @@ public:
     ChatResponse chat(const std::vector<ChatMessage>&,
                       const std::vector<ToolSpec>&,
                       const std::string&, double) override {
-        return ChatResponse{"reply", {}};
+        return ChatResponse{"reply", {}, {}, {}};
     }
     std::string chat_simple(const std::string&, const std::string&,
                             const std::string&, double) override {
