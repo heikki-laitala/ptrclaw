@@ -1,5 +1,5 @@
 project('ptrclaw', 'cpp',
-  version: '0.0.9',
+  version: '0.0.10',
   default_options: ['cpp_std=c++17', 'buildtype=release', 'warning_level=2', 'b_lto=true'])
 
 # ── HTTP / TLS backend selection ────────────────────────────────
