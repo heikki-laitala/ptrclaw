@@ -65,6 +65,45 @@ TEST_CASE("cmd_soul: returns hatch prompt when dev and no soul data", "[commands
     REQUIRE(result.find("hatch") != std::string::npos);
 }
 
+// ── cmd_models ──────────────────────────────────────────────────
+
+TEST_CASE("cmd_models: shows current provider and model", "[commands]") {
+    auto agent = make_cmd_agent();
+    Config cfg;
+    cfg.providers.clear();
+    cfg.providers["anthropic"].api_key = "test-key";
+    cfg.providers["openai"].api_key = "sk-test";
+
+    auto result = cmd_models(agent, cfg);
+    REQUIRE(result.find("Current: stub") != std::string::npos);
+    REQUIRE(result.find("Providers:") != std::string::npos);
+    REQUIRE(result.find("anthropic") != std::string::npos);
+    REQUIRE(result.find("openai") != std::string::npos);
+    REQUIRE(result.find("API key") != std::string::npos);
+    REQUIRE(result.find("/provider") != std::string::npos);
+}
+
+TEST_CASE("cmd_models: shows OAuth for openai with oauth token", "[commands]") {
+    auto agent = make_cmd_agent();
+    Config cfg;
+    cfg.providers.clear();
+    cfg.providers["openai"].api_key = "sk-test";
+    cfg.providers["openai"].oauth_access_token = "token";
+
+    auto result = cmd_models(agent, cfg);
+    REQUIRE(result.find("OAuth") != std::string::npos);
+}
+
+TEST_CASE("cmd_models: empty providers", "[commands]") {
+    auto agent = make_cmd_agent();
+    Config cfg;
+    cfg.providers.clear();
+
+    auto result = cmd_models(agent, cfg);
+    REQUIRE(result.find("Current:") != std::string::npos);
+    REQUIRE(result.find("Providers:") != std::string::npos);
+}
+
 // ── cmd_skill ────────────────────────────────────────────────────
 
 TEST_CASE("cmd_skill: no skills available", "[commands]") {

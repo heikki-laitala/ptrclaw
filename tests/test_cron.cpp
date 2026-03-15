@@ -5,7 +5,7 @@ using namespace ptrclaw;
 
 // ═══ CronTool: metadata ═════════════════════════════════════════
 
-TEST_CASE("CronTool: tool_name is cron", "[tools][cron]") {
+TEST_CASE("CronTool: tool_name is cron", "[tools]") {
     CronTool tool;
     REQUIRE(tool.tool_name() == "cron");
     REQUIRE_FALSE(tool.description().empty());
@@ -14,49 +14,49 @@ TEST_CASE("CronTool: tool_name is cron", "[tools][cron]") {
 
 // ═══ CronTool: argument validation ══════════════════════════════
 
-TEST_CASE("CronTool: invalid JSON args", "[tools][cron]") {
+TEST_CASE("CronTool: invalid JSON args", "[tools]") {
     CronTool tool;
     auto result = tool.execute("not json");
     REQUIRE_FALSE(result.success);
     REQUIRE(result.output.find("parse") != std::string::npos);
 }
 
-TEST_CASE("CronTool: missing action", "[tools][cron]") {
+TEST_CASE("CronTool: missing action", "[tools]") {
     CronTool tool;
     auto result = tool.execute(R"({})");
     REQUIRE_FALSE(result.success);
     REQUIRE(result.output.find("action") != std::string::npos);
 }
 
-TEST_CASE("CronTool: unknown action", "[tools][cron]") {
+TEST_CASE("CronTool: unknown action", "[tools]") {
     CronTool tool;
     auto result = tool.execute(R"({"action":"bogus"})");
     REQUIRE_FALSE(result.success);
     REQUIRE(result.output.find("Unknown action") != std::string::npos);
 }
 
-TEST_CASE("CronTool: add missing schedule", "[tools][cron]") {
+TEST_CASE("CronTool: add missing schedule", "[tools]") {
     CronTool tool;
     auto result = tool.execute(R"({"action":"add","command":"echo hi","label":"test"})");
     REQUIRE_FALSE(result.success);
     REQUIRE(result.output.find("schedule") != std::string::npos);
 }
 
-TEST_CASE("CronTool: add missing command", "[tools][cron]") {
+TEST_CASE("CronTool: add missing command", "[tools]") {
     CronTool tool;
     auto result = tool.execute(R"({"action":"add","schedule":"0 * * * *","label":"test"})");
     REQUIRE_FALSE(result.success);
     REQUIRE(result.output.find("command") != std::string::npos);
 }
 
-TEST_CASE("CronTool: add missing label", "[tools][cron]") {
+TEST_CASE("CronTool: add missing label", "[tools]") {
     CronTool tool;
     auto result = tool.execute(R"({"action":"add","schedule":"0 * * * *","command":"echo hi"})");
     REQUIRE_FALSE(result.success);
     REQUIRE(result.output.find("label") != std::string::npos);
 }
 
-TEST_CASE("CronTool: remove missing label", "[tools][cron]") {
+TEST_CASE("CronTool: remove missing label", "[tools]") {
     CronTool tool;
     auto result = tool.execute(R"({"action":"remove"})");
     REQUIRE_FALSE(result.success);
@@ -87,7 +87,7 @@ TEST_CASE("CronTool: validate_schedule accepts valid expressions", "[tools][cron
     tool.execute(R"({"action":"remove","label":"__ptrclaw_test_valid2"})");
 }
 
-TEST_CASE("CronTool: validate_schedule rejects invalid expressions", "[tools][cron]") {
+TEST_CASE("CronTool: validate_schedule rejects invalid expressions", "[tools]") {
     CronTool tool;
 
     // Too few fields
