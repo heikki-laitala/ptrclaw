@@ -9,11 +9,47 @@
 #include "../stream_relay.hpp"
 #include <nlohmann/json.hpp>
 #include <atomic>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
+
+// ── Host-bridged tool ───────────────────────────────────────────
+
+namespace ptrclaw {
+
+class BridgedTool : public Tool {
+public:
+    BridgedTool(std::string name, std::string desc, std::string params,
+                PtrClawToolCallback cb, void* ud)
+        : name_(std::move(name)), desc_(std::move(desc)),
+          params_(std::move(params)), callback_(cb), userdata_(ud) {}
+
+    std::string tool_name() const override { return name_; }
+    std::string description() const override { return desc_; }
+    std::string parameters_json() const override { return params_; }
+
+    ToolResult execute(const std::string& args_json) override {
+        char* result = callback_(name_.c_str(), args_json.c_str(), userdata_);
+        if (!result) {
+            return ToolResult{false, "tool callback returned null"};
+        }
+        std::string output(result);
+        free(result);  // NOLINT(cppcoreguidelines-no-malloc)
+        return ToolResult{true, std::move(output)};
+    }
+
+private:
+    std::string name_;
+    std::string desc_;
+    std::string params_;
+    PtrClawToolCallback callback_;
+    void* userdata_;
+};
+
+} // namespace ptrclaw
 
 // ── Opaque handle ────────────────────────────────────────────────
 
@@ -57,6 +93,27 @@ static void embed_loop(PtrClawHandle_* h) {
 
 extern "C" const char* ptrclaw_version(void) {
     return PTRCLAW_VERSION_STRING;
+}
+
+// ── Host-bridged tool registration ───────────────────────────────
+
+extern "C" int ptrclaw_register_tool(const char* name,
+                                      const char* description,
+                                      const char* parameters_json,
+                                      PtrClawToolCallback callback,
+                                      void* userdata) {
+    if (!name || !description || !parameters_json || !callback)
+        return PTRCLAW_ERR_INVALID;
+
+    std::string n = name;
+    std::string d = description;
+    std::string p = parameters_json;
+    ptrclaw::PluginRegistry::instance().register_tool(n,
+        [n, d, p, callback, userdata]() -> std::unique_ptr<ptrclaw::Tool> {
+            return std::make_unique<ptrclaw::BridgedTool>(n, d, p, callback, userdata);
+        });
+
+    return PTRCLAW_OK;
 }
 
 // ── Lifecycle ────────────────────────────────────────────────────

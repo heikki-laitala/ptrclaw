@@ -86,6 +86,42 @@ int ptrclaw_send(PtrClawHandle handle, const char *session_id,
 const char *ptrclaw_last_response(PtrClawHandle handle,
                                    const char *session_id);
 
+/* ── Host-bridged tools ────────────────────────────────────────── */
+
+/*
+ * Tool execution callback.
+ *
+ *   tool_name  Name of the tool being invoked.
+ *   args_json  JSON string with the tool's arguments.
+ *   userdata   Opaque pointer passed through from ptrclaw_register_tool().
+ *
+ * Must return a malloc'd NUL-terminated string with the tool's result.
+ * The caller (ptrclaw) will free() it.  Return NULL to signal failure.
+ */
+typedef char *(*PtrClawToolCallback)(const char *tool_name,  // NOLINT(modernize-use-using)
+                                      const char *args_json,
+                                      void *userdata);
+
+/*
+ * ptrclaw_register_tool — register a host-implemented tool.
+ *
+ * The agent will see this tool and may invoke it.  The callback runs on
+ * the agent's thread (the background loop), so it must be thread-safe.
+ *
+ * Must be called BEFORE ptrclaw_create().
+ *
+ *   name             Tool name shown to the LLM (e.g. "read_file").
+ *   description      One-line description for the LLM.
+ *   parameters_json  JSON Schema string describing the parameters.
+ *   callback         Called when the agent invokes the tool.
+ *   userdata         Passed through to callback.
+ */
+int ptrclaw_register_tool(const char *name, const char *description,
+                          const char *parameters_json,
+                          PtrClawToolCallback callback, void *userdata);
+
+/* ── Messaging ─────────────────────────────────────────────────── */
+
 /*
  * Streaming chunk callback.
  *
@@ -93,7 +129,7 @@ const char *ptrclaw_last_response(PtrClawHandle handle,
  *   done     0 for intermediate chunks; 1 for the terminal sentinel.
  *   userdata Opaque pointer passed through from ptrclaw_send_stream().
  */
-typedef void (*PtrClawChunkCallback)(const char *chunk, int done,
+typedef void (*PtrClawChunkCallback)(const char *chunk, int done,  // NOLINT(modernize-use-using)
                                       void *userdata);
 
 /*

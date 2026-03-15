@@ -65,7 +65,9 @@ build-static:
 	$(call STRIP_CMD,$(STATICDIR)/ptrclaw) 2>/dev/null || true
 
 build-sdk:
-	@if [ ! -d $(SDKDIR) ]; then meson setup $(SDKDIR) $(NATIVE_ARGS) -Dcatch2:tests=false -Dwith_embed=true; fi
+	@if [ ! -d $(SDKDIR) ]; then meson setup $(SDKDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
+		-Dwith_embed=true -Dwith_telegram=false -Dwith_whatsapp=false \
+		-Dwith_ollama=false -Dwith_tools=false $(SIZE_FLAGS); fi
 	meson compile -C $(SDKDIR) ptrclaw_shared
 
 run: build
