@@ -193,6 +193,8 @@ core_test_sources = files(
   'tests/test_onboard.cpp',
   'tests/test_output_filter.cpp',
   'tests/test_skill.cpp',
+  'tests/test_commands.cpp',
+  'tests/test_skill_activate.cpp',
 )
 
 optional_test_sources = []
