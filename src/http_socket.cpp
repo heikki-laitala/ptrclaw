@@ -510,7 +510,7 @@ static long parse_response_headers(Connection& conn, std::string& leftover,
         if (name == "transfer-encoding")
             is_chunked = (value.find("chunked") != std::string::npos);
         else if (name == "content-length")
-            try { content_length = std::stoul(value); } catch (...) {}
+            try { content_length = std::stoul(value); } catch (...) { /* malformed header; keep default */ }
     }
     return status;
 }
