@@ -511,6 +511,62 @@ TEST_CASE("Agent: compaction does not orphan tool response messages", "[agent]")
     }
 }
 
+TEST_CASE("Agent: compaction guard prevents premature compaction at 12 or fewer messages", "[agent][compaction]") {
+    // The compact_history() guard: history_.size() <= 12 prevents compaction
+    // even when message count exceeds max_history_messages.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 3; // Very low to make should_compact=true
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    // 3 calls -> 1 sys + 3 user + 3 asst = 7 messages
+    // 7 > 3 (should_compact=true) but 7 <= 12 (guard fires), so NO compaction
+    for (int i = 0; i < 3; i++) {
+        agent.process("msg" + std::to_string(i));
+    }
+
+    // All messages intact — no summary injected
+    REQUIRE(agent.history_size() == 7);
+}
+
+TEST_CASE("Agent: compaction summary text contains user and assistant counts", "[agent][compaction]") {
+    // compact_history() builds a summary "[Conversation history compacted.
+    // Previous discussion covered: N user messages, N assistant responses]"
+    // and inserts it as a User-role message.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "reply";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 10;
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    // 7 calls -> 1+14=15 messages, exceeds 10 AND 12 -> compaction fires at call 7
+    for (int i = 0; i < 7; i++) {
+        agent.process("msg" + std::to_string(i));
+    }
+
+    // One more call so provider sees the post-compaction history
+    agent.process("after");
+
+    bool found_summary = false;
+    for (const auto& msg : mock->last_messages) {
+        if (msg.role == Role::User &&
+            msg.content.find("[Conversation history compacted") != std::string::npos) {
+            found_summary = true;
+            REQUIRE(msg.content.find("user messages") != std::string::npos);
+            REQUIRE(msg.content.find("assistant responses") != std::string::npos);
+        }
+    }
+    REQUIRE(found_summary);
+    REQUIRE(mock->last_messages[0].role == Role::System);
+}
+
 TEST_CASE("Agent: clear then re-process re-injects system prompt", "[agent]") {
     auto [agent, mock] = make_agent();
     mock->next_response.content = "ok";
@@ -615,6 +671,144 @@ TEST_CASE("Agent: synthesis passes system prompt and message correctly", "[agent
     REQUIRE(mock->last_simple_message.find("Hello world") != std::string::npos);
 
     std::filesystem::remove(mem_path);
+}
+
+TEST_CASE("Agent: synthesis disabled flag prevents chat_simple calls", "[agent][synthesis]") {
+    // When config_.memory.synthesis == false, maybe_synthesize() returns early
+    // and chat_simple should never be invoked.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = false; // Disabled
+    cfg.memory.synthesis_interval = 1;
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_disabled_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    agent.process("hello");
+    agent.process("world");
+
+    REQUIRE(mock->last_simple_system.empty());
+
+    std::filesystem::remove(mem_path);
+}
+
+TEST_CASE("Agent: synthesis interval=0 disables periodic synthesis", "[agent][synthesis]") {
+    // maybe_synthesize() guards against synthesis_interval == 0 explicitly.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 0; // Guard: never trigger
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_zero_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    for (int i = 0; i < 10; i++) {
+        agent.process("message " + std::to_string(i));
+    }
+
+    REQUIRE(mock->last_simple_system.empty());
+
+    std::filesystem::remove(mem_path);
+}
+
+TEST_CASE("Agent: synthesis stores extracted entries in memory", "[agent][synthesis]") {
+    // When synthesis returns valid JSON, entries are stored in the memory backend.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+    mock->simple_response = R"([{"key":"user-likes-rust","content":"User prefers Rust","category":"knowledge","links":[]}])";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+
+    std::string mem_path = "/tmp/ptrclaw_test_synth_store_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    agent.process("I love Rust programming");
+
+    auto entries = agent.memory()->list(std::nullopt, 10);
+    bool found = false;
+    for (const auto& e : entries) {
+        if (e.key == "user-likes-rust") {
+            REQUIRE(e.content == "User prefers Rust");
+            found = true;
+        }
+    }
+    REQUIRE(found);
+
+    std::filesystem::remove(mem_path);
+}
+
+TEST_CASE("Agent: compaction forces synthesis before discarding history", "[agent][compaction]") {
+    // When turns_since_synthesis_ > 0 at compaction time, compact_history()
+    // calls run_synthesis() to extract knowledge before the middle history is lost.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "reply";
+    mock->simple_response = R"([{"key":"captured","content":"Before compaction","category":"knowledge","links":[]}])";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.agent.max_history_messages = 10;
+    cfg.memory.backend = "json";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 100; // Won't fire periodically; forces at compaction
+
+    std::string mem_path = "/tmp/ptrclaw_test_compact_synth_" + std::to_string(getpid()) + ".json";
+    auto memory = std::make_unique<JsonMemory>(mem_path);
+    Agent agent(std::move(provider), std::move(tools), cfg);
+    agent.set_memory(std::move(memory));
+
+    // 7 calls -> 15 messages -> compaction fires; turns_since_synthesis_ = 7 > 0
+    for (int i = 0; i < 7; i++) {
+        agent.process("message " + std::to_string(i));
+    }
+
+    // chat_simple must have been called (synthesis was forced during compaction)
+    REQUIRE(!mock->last_simple_system.empty());
+    REQUIRE(mock->last_simple_system.find("knowledge extraction") != std::string::npos);
+
+    std::filesystem::remove(mem_path);
+}
+
+TEST_CASE("Agent: synthesis is no-op when memory backend is none", "[agent][synthesis]") {
+    // has_active_memory() returns false for backend="none"; synthesis must be skipped.
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "I understand.";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    Config cfg;
+    cfg.memory.backend = "none";
+    cfg.memory.synthesis = true;
+    cfg.memory.synthesis_interval = 1;
+
+    Agent agent(std::move(provider), std::move(tools), cfg);
+
+    for (int i = 0; i < 5; i++) {
+        agent.process("message " + std::to_string(i));
+    }
+
+    REQUIRE(mock->last_simple_system.empty());
 }
 
 // ── Contextual tool selection ───────────────────────────────────
