@@ -167,20 +167,21 @@ if opt_embeddings
     'src/embedders/http_embedder.cpp',
   )
 endif
-# Embed engine source: always compiled so that test_embed.cpp can link it
-# without requiring with_embed=true.  When not needed, LTO/gc-sections
-# removes the unused extern-C symbols from the final ptrclaw binary.
-embed_sources = files('src/embed/engine.cpp')
+# Embed channel + C API (always compiled; LTO removes unused symbols)
+embed_sources = files(
+  'src/channels/embed.cpp',
+  'src/embed/embed_api.cpp',
+)
 
 lib_sources = core_sources + optional_sources + embed_sources
 
 ptrclaw_lib = static_library('ptrclaw_lib', lib_sources,
-  include_directories: [inc, include_directories('include')],
+  include_directories: inc,
   dependencies: lib_deps)
 
 ptrclaw_dep = declare_dependency(
   link_whole: ptrclaw_lib,
-  include_directories: [inc, include_directories('include')])
+  include_directories: inc)
 
 executable('ptrclaw', 'src/main.cpp',
   dependencies: [ptrclaw_dep],
@@ -189,7 +190,7 @@ executable('ptrclaw', 'src/main.cpp',
 # ── Embeddable shared library (opt-in) ─────────────────────────
 if opt_embed
   shared_library('ptrclaw_shared', lib_sources,
-    include_directories: [inc, include_directories('include')],
+    include_directories: inc,
     dependencies: lib_deps,
     install: true)
 

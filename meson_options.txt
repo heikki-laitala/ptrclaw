@@ -40,6 +40,6 @@ option('with_mbedtls', type: 'boolean', value: false,
 option('with_pipe', type: 'boolean', value: false,
        description: 'Build pipe channel (JSONL stdin/stdout for benchmarks and scripting)')
 
-# Embeddable host-app SDK
+# Embed SDK (shared library + C header for Flutter, mobile, desktop FFI)
 option('with_embed', type: 'boolean', value: false,
-       description: 'Build libptrclaw_shared and install ptrclaw.h for host-app embedding (Flutter, mobile, desktop)')
+       description: 'Build libptrclaw_shared and install ptrclaw.h for host-app embedding')

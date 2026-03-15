@@ -52,10 +52,6 @@ build-emb:
 	@if [ ! -d $(EMBDIR) ]; then meson setup $(EMBDIR) $(NATIVE_ARGS) -Dcatch2:tests=false -Dwith_embeddings=true; fi
 	meson compile -C $(EMBDIR)
 
-build-sdk:
-	@if [ ! -d $(SDKDIR) ]; then meson setup $(SDKDIR) $(NATIVE_ARGS) -Dcatch2:tests=false -Dwith_embed=true; fi
-	meson compile -C $(SDKDIR) ptrclaw_shared
-
 build-minimal:
 	@if [ ! -d $(MINDIR) ]; then meson setup $(MINDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
 		-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false -Dwith_compatible=false \
@@ -67,6 +63,10 @@ build-static:
 	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) $(NATIVE_ARGS) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false -Dwith_mbedtls=true $(SIZE_FLAGS); fi
 	meson compile -C $(STATICDIR) ptrclaw
 	$(call STRIP_CMD,$(STATICDIR)/ptrclaw) 2>/dev/null || true
+
+build-sdk:
+	@if [ ! -d $(SDKDIR) ]; then meson setup $(SDKDIR) $(NATIVE_ARGS) -Dcatch2:tests=false -Dwith_embed=true; fi
+	meson compile -C $(SDKDIR) ptrclaw_shared
 
 run: build
 	./$(BUILDDIR)/ptrclaw
