@@ -36,7 +36,7 @@ SDKDIR := builddir-sdk
 deps:
 ifeq ($(shell uname),Darwin)
 	@command -v brew >/dev/null || { echo "Error: Homebrew is required. Install from https://brew.sh"; exit 1; }
-	brew install meson llvm gcovr sqlite3
+	brew install meson llvm gcovr sqlite3 mbedtls
 else
 	sudo apt-get update
 	sudo apt-get install -y g++ clang meson ninja-build pkg-config libssl-dev libmbedtls-dev libsqlite3-dev clang-tidy lld gcovr

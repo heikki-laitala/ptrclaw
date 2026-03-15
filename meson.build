@@ -2,13 +2,37 @@ project('ptrclaw', 'cpp',
   version: '0.0.9',
   default_options: ['cpp_std=c++17', 'buildtype=release', 'warning_level=2', 'b_lto=true'])
 
-# Linux uses a lightweight POSIX-socket + OpenSSL HTTP backend to avoid
-# the libcurl dependency and reduce static binary size.
-# macOS keeps libcurl (available via the system SDK / Homebrew).
+# ── HTTP / TLS backend selection ────────────────────────────────
+#
+# Default builds:
+#   Linux  → POSIX sockets + OpenSSL (or mbedTLS with -Dwith_mbedtls=true)
+#   macOS  → libcurl (system SDK)
+#
+# Embed/SDK builds (-Dwith_embed=true):
+#   All platforms → POSIX sockets + mbedTLS (no libcurl dependency,
+#   portable across macOS, iOS, Android, Linux).
 host_system = host_machine.system()
-opt_mbedtls = get_option('with_mbedtls') and host_system == 'linux'
+opt_embed_early = get_option('with_embed')
+opt_mbedtls = (get_option('with_mbedtls') and host_system == 'linux') or opt_embed_early
 
-if host_system == 'linux'
+if opt_embed_early and host_system != 'linux'
+  # Embed on non-Linux: use socket backend with mbedTLS
+  mbedtls_dep = dependency('mbedtls', required: false)
+  mbedx509_dep = dependency('mbedx509', required: false)
+  mbedcrypto_dep = dependency('mbedcrypto', required: false)
+  if mbedtls_dep.found() and mbedx509_dep.found() and mbedcrypto_dep.found()
+    http_dep = declare_dependency(dependencies: [mbedtls_dep, mbedx509_dep, mbedcrypto_dep])
+  else
+    cc = meson.get_compiler('cpp')
+    mbedtls_lib  = cc.find_library('mbedtls',    required: true)
+    mbedx509_lib = cc.find_library('mbedx509',   required: true)
+    mbedcrypto_lib = cc.find_library('mbedcrypto', required: true)
+    http_dep = declare_dependency(dependencies: [mbedtls_lib, mbedx509_lib, mbedcrypto_lib])
+  endif
+  add_project_arguments('-DPTRCLAW_USE_MBEDTLS', language: 'cpp')
+  add_project_arguments('-DPTRCLAW_USE_SOCKET_HTTP', language: 'cpp')
+  http_impl_source = files('src/http_socket.cpp')
+elif host_system == 'linux'
   if opt_mbedtls
     cc = meson.get_compiler('cpp')
     mbedtls_lib  = cc.find_library('mbedtls',    required: true)
@@ -37,7 +61,8 @@ endif
 # macOS: use CommonCrypto (system framework, no extra deps, no Keychain prompts).
 # Linux with mbedTLS: uses mbedtls/sha256.h (PTRCLAW_USE_MBEDTLS already defined above).
 # Linux with OpenSSL: OpenSSL is already linked via http_dep.
-if host_system != 'linux'
+# Embed builds use mbedTLS SHA-256 on all platforms.
+if host_system != 'linux' and not opt_embed_early
   add_project_arguments('-DPTRCLAW_USE_COMMONCRYPTO', language: 'cpp')
 endif
 

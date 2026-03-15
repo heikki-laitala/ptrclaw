@@ -47,9 +47,9 @@ public:
 
 // Platform-specific concrete implementations.
 // Only one is compiled per build target (meson.build gates the source file).
-#ifdef __linux__
+#if defined(__linux__) || defined(PTRCLAW_USE_SOCKET_HTTP)
 
-// Linux: POSIX sockets + OpenSSL (no libcurl dependency)
+// POSIX sockets + OpenSSL/mbedTLS (Linux default, embed/SDK builds on all platforms)
 class SocketHttpClient : public HttpClient {
 public:
     HttpResponse post(const std::string& url,

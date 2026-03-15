@@ -1,19 +1,33 @@
-// Linux HTTP/HTTPS client using POSIX sockets + TLS.
+// POSIX-socket HTTP/HTTPS client with pluggable TLS backend.
 // Implements the same public API as http.cpp (libcurl) with identical
 // interface behaviour: http_init/cleanup are no-ops.
 // TLS backend: mbedTLS (when PTRCLAW_USE_MBEDTLS) or OpenSSL (default).
-#ifdef __linux__
+//
+// Used on Linux (default) and on all platforms for embed/SDK builds
+// (avoids libcurl dependency for mobile/desktop embedding).
+#if defined(__linux__) || defined(PTRCLAW_USE_SOCKET_HTTP)
 
 #include "http.hpp"
 
 #ifdef PTRCLAW_USE_MBEDTLS
 #include <mbedtls/version.h>
 #include <mbedtls/ssl.h>
+#include <mbedtls/error.h>
+#include <mbedtls/x509_crt.h>
+#if MBEDTLS_VERSION_MAJOR >= 4
+#include <psa/crypto.h>
+// net_sockets.h removed in 4.0; define error codes used by BIO callbacks.
+#ifndef MBEDTLS_ERR_NET_SEND_FAILED
+#define MBEDTLS_ERR_NET_SEND_FAILED (-0x004E)
+#endif
+#ifndef MBEDTLS_ERR_NET_RECV_FAILED
+#define MBEDTLS_ERR_NET_RECV_FAILED (-0x004C)
+#endif
+#else
 #include <mbedtls/entropy.h>
 #include <mbedtls/ctr_drbg.h>
-#include <mbedtls/error.h>
 #include <mbedtls/net_sockets.h>
-#include <mbedtls/x509_crt.h>
+#endif
 #else
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -112,25 +126,33 @@ struct Connection {
 
     mbedtls_ssl_context      ssl_;
     mbedtls_ssl_config       conf_;
+    mbedtls_x509_crt         cacert_;
+#if MBEDTLS_VERSION_MAJOR < 4
     mbedtls_entropy_context  entropy_;
     mbedtls_ctr_drbg_context drbg_;
-    mbedtls_x509_crt         cacert_;
+#endif
 
     Connection() {
         mbedtls_ssl_init(&ssl_);
         mbedtls_ssl_config_init(&conf_);
+        mbedtls_x509_crt_init(&cacert_);
+#if MBEDTLS_VERSION_MAJOR >= 4
+        psa_crypto_init();
+#else
         mbedtls_entropy_init(&entropy_);
         mbedtls_ctr_drbg_init(&drbg_);
-        mbedtls_x509_crt_init(&cacert_);
+#endif
     }
 
     ~Connection() {
         if (tls_active_) mbedtls_ssl_close_notify(&ssl_);
         mbedtls_ssl_free(&ssl_);
         mbedtls_ssl_config_free(&conf_);
+        mbedtls_x509_crt_free(&cacert_);
+#if MBEDTLS_VERSION_MAJOR < 4
         mbedtls_ctr_drbg_free(&drbg_);
         mbedtls_entropy_free(&entropy_);
-        mbedtls_x509_crt_free(&cacert_);
+#endif
         if (fd >= 0) ::close(fd);
     }
 
@@ -182,9 +204,11 @@ struct Connection {
         if (url.tls) {
             set_socket_timeout(timeout_secs);
 
+#if MBEDTLS_VERSION_MAJOR < 4
             if (mbedtls_ctr_drbg_seed(&drbg_, mbedtls_entropy_func, &entropy_,
                                        nullptr, 0) != 0)
                 return false;
+#endif
 
             if (mbedtls_ssl_config_defaults(&conf_, MBEDTLS_SSL_IS_CLIENT,
                                              MBEDTLS_SSL_TRANSPORT_STREAM,
@@ -192,17 +216,20 @@ struct Connection {
                 return false;
 
             mbedtls_ssl_conf_authmode(&conf_, MBEDTLS_SSL_VERIFY_REQUIRED);
+#if MBEDTLS_VERSION_MAJOR >= 4
+            // mbedTLS 4.0: RNG handled internally by PSA Crypto
+#elif MBEDTLS_VERSION_MAJOR >= 3
             mbedtls_ssl_conf_rng(&conf_, mbedtls_ctr_drbg_random, &drbg_);
-#if MBEDTLS_VERSION_MAJOR >= 3
             mbedtls_ssl_conf_min_tls_version(&conf_, MBEDTLS_SSL_VERSION_TLS1_2);
 #else
+            mbedtls_ssl_conf_rng(&conf_, mbedtls_ctr_drbg_random, &drbg_);
             mbedtls_ssl_conf_min_version(&conf_, MBEDTLS_SSL_MAJOR_VERSION_3,
                                           MBEDTLS_SSL_MINOR_VERSION_3);
 #endif
 
-            // Load system CA certificates. Try the directory first
-            // (/etc/ssl/certs, Debian/Ubuntu), then the bundle file
-            // (/etc/ssl/cert.pem, Alpine/RHEL). Fail fast if neither works.
+            // Load system CA certificates.
+            // Linux: /etc/ssl/certs (Debian/Ubuntu) or /etc/ssl/cert.pem (Alpine/RHEL)
+            // macOS/iOS: /etc/ssl/cert.pem (system bundle)
             int ca_ret = mbedtls_x509_crt_parse_path(&cacert_, "/etc/ssl/certs");
             if (ca_ret < 0)
                 ca_ret = mbedtls_x509_crt_parse_file(&cacert_, "/etc/ssl/cert.pem");
@@ -734,4 +761,4 @@ HttpResponse http_stream_post_raw(const std::string& url,
 
 } // namespace ptrclaw
 
-#endif // __linux__
+#endif // __linux__ || PTRCLAW_USE_SOCKET_HTTP
