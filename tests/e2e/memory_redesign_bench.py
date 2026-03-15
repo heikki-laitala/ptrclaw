@@ -911,10 +911,13 @@ def print_summary(scenario_results, backend, baseline=None):
 
 
 def main():
+    scenario_names = [s["name"] for s in SCENARIOS]
+
     binary = None
     backend = "sqlite"
     output_file = None
     compare_file = None
+    selected_scenarios = None  # None = all
 
     args = sys.argv[1:]
     i = 0
@@ -928,6 +931,19 @@ def main():
         elif args[i] == "--compare" and i + 1 < len(args):
             compare_file = args[i + 1]
             i += 2
+        elif args[i] == "--scenario" and i + 1 < len(args):
+            name = args[i + 1]
+            if name not in scenario_names:
+                print(
+                    f"Unknown scenario: {name}\n"
+                    f"Available: {', '.join(scenario_names)}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if selected_scenarios is None:
+                selected_scenarios = []
+            selected_scenarios.append(name)
+            i += 2
         elif args[i].startswith("--"):
             print(f"Unknown option: {args[i]}", file=sys.stderr)
             sys.exit(1)
@@ -938,7 +954,9 @@ def main():
     if not binary:
         print(
             f"Usage: {sys.argv[0]} <path-to-ptrclaw-binary> "
-            f"[--backend sqlite|json] [--output FILE] [--compare FILE]",
+            f"[--backend sqlite|json] [--output FILE] [--compare FILE] "
+            f"[--scenario NAME]\n"
+            f"Available scenarios: {', '.join(scenario_names)}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -971,9 +989,13 @@ def main():
         TokenRateLimiter(REQUEST_BUDGET_PER_MINUTE),
     )
 
-    # Run all scenarios
+    # Run scenarios
+    run_scenarios = SCENARIOS
+    if selected_scenarios:
+        run_scenarios = [s for s in SCENARIOS if s["name"] in selected_scenarios]
+
     scenario_results = []
-    for scenario in SCENARIOS:
+    for scenario in run_scenarios:
         print(f"\n{'─' * 50}", file=sys.stderr)
         print(f"  Scenario: {scenario['description']}", file=sys.stderr)
         print(f"{'─' * 50}", file=sys.stderr)
