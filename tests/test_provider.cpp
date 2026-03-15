@@ -72,14 +72,12 @@ TEST_CASE("create_provider: unknown provider throws", "[provider]") {
 
 TEST_CASE("list_providers: empty config returns nothing", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     auto result = list_providers(cfg, "anthropic");
     REQUIRE(result.empty());
 }
 
 TEST_CASE("list_providers: skips providers without credentials", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["anthropic"] = ProviderEntry{};  // no api_key
     auto result = list_providers(cfg, "");
     REQUIRE(result.empty());
@@ -87,7 +85,6 @@ TEST_CASE("list_providers: skips providers without credentials", "[provider]") {
 
 TEST_CASE("list_providers: includes provider with api_key", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["anthropic"].api_key = "test-key";
     auto result = list_providers(cfg, "");
     REQUIRE(result.size() == 1);
@@ -98,7 +95,6 @@ TEST_CASE("list_providers: includes provider with api_key", "[provider]") {
 
 TEST_CASE("list_providers: marks active provider", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["anthropic"].api_key = "test-key";
     auto result = list_providers(cfg, "anthropic");
     REQUIRE(result.size() == 1);
@@ -107,7 +103,6 @@ TEST_CASE("list_providers: marks active provider", "[provider]") {
 
 TEST_CASE("list_providers: openai with api_key only", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["openai"].api_key = "sk-test";
     auto result = list_providers(cfg, "openai");
     REQUIRE(result.size() == 1);
@@ -119,7 +114,6 @@ TEST_CASE("list_providers: openai with api_key only", "[provider]") {
 
 TEST_CASE("list_providers: openai with oauth only", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["openai"].oauth_access_token = "token";
     auto result = list_providers(cfg, "");
     REQUIRE(result.size() == 1);
@@ -129,7 +123,6 @@ TEST_CASE("list_providers: openai with oauth only", "[provider]") {
 
 TEST_CASE("list_providers: openai with both api_key and oauth", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["openai"].api_key = "sk-test";
     cfg.providers["openai"].oauth_access_token = "token";
     auto result = list_providers(cfg, "");
@@ -140,7 +133,6 @@ TEST_CASE("list_providers: openai with both api_key and oauth", "[provider]") {
 
 TEST_CASE("list_providers: openai without any credentials skipped", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["openai"] = ProviderEntry{};
     auto result = list_providers(cfg, "");
     REQUIRE(result.empty());
@@ -148,7 +140,6 @@ TEST_CASE("list_providers: openai without any credentials skipped", "[provider]"
 
 TEST_CASE("list_providers: local provider with base_url only when active", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["ollama"].base_url = "http://localhost:11434";
     // Not active — should not appear
     auto result1 = list_providers(cfg, "anthropic");
@@ -162,7 +153,6 @@ TEST_CASE("list_providers: local provider with base_url only when active", "[pro
 
 TEST_CASE("list_providers: multiple providers", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["anthropic"].api_key = "key1";
     cfg.providers["openai"].api_key = "key2";
     auto result = list_providers(cfg, "anthropic");
@@ -211,7 +201,6 @@ TEST_CASE("auth_mode_label: unknown provider returns API key", "[provider]") {
 
 TEST_CASE("switch_provider: unknown provider returns error", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     auto result = switch_provider("nonexistent", "", "model", cfg, test_http);
     REQUIRE_FALSE(result.error.empty());
     REQUIRE(result.error.find("Unknown provider") != std::string::npos);
@@ -220,7 +209,6 @@ TEST_CASE("switch_provider: unknown provider returns error", "[provider]") {
 
 TEST_CASE("switch_provider: no credentials returns error", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["anthropic"] = ProviderEntry{};  // no key, no base_url
     auto result = switch_provider("anthropic", "", "model", cfg, test_http);
     REQUIRE_FALSE(result.error.empty());
@@ -229,7 +217,6 @@ TEST_CASE("switch_provider: no credentials returns error", "[provider]") {
 
 TEST_CASE("switch_provider: openai no credentials returns error", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["openai"] = ProviderEntry{};
     auto result = switch_provider("openai", "", "gpt-4", cfg, test_http);
     REQUIRE_FALSE(result.error.empty());
@@ -238,7 +225,6 @@ TEST_CASE("switch_provider: openai no credentials returns error", "[provider]") 
 
 TEST_CASE("switch_provider: openai codex no credentials returns error", "[provider]") {
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["openai"] = ProviderEntry{};
     auto result = switch_provider("openai", "codex-mini", "gpt-4", cfg, test_http);
     REQUIRE_FALSE(result.error.empty());
@@ -248,7 +234,6 @@ TEST_CASE("switch_provider: openai codex no credentials returns error", "[provid
 TEST_CASE("switch_provider: valid provider with api_key succeeds", "[provider]") {
     REQUIRE_PROVIDER("anthropic");
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["anthropic"].api_key = "test-key";
     auto result = switch_provider("anthropic", "claude-sonnet", "old-model", cfg, test_http);
     REQUIRE(result.error.empty());
@@ -259,7 +244,6 @@ TEST_CASE("switch_provider: valid provider with api_key succeeds", "[provider]")
 TEST_CASE("switch_provider: openai with api_key succeeds", "[provider]") {
     REQUIRE_PROVIDER("openai");
     Config cfg;
-    cfg.providers.clear();
     cfg.providers["openai"].api_key = "sk-test";
     auto result = switch_provider("openai", "gpt-4", "gpt-3.5", cfg, test_http);
     REQUIRE(result.error.empty());
