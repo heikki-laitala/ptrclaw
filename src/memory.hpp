@@ -117,6 +117,13 @@ protected:
 std::string category_to_string(MemoryCategory cat);
 MemoryCategory category_from_string(const std::string& s);
 
+// Query intent classification for tiered retrieval policy.
+// Chronological: query asks about recent/historical events (boosts observations).
+// Stable: query asks about stable facts or preferences (boosts concepts).
+// Unknown: balanced retrieval.
+enum class QueryIntent { Stable, Chronological, Unknown };
+QueryIntent classify_query_intent(const std::string& query);
+
 // Enrich a user message with recalled memory context.
 // Returns the enriched message (original message with prepended context),
 // or the original message unchanged if memory is null or recall returns nothing.
@@ -130,6 +137,9 @@ std::vector<MemoryEntry> collect_neighbors(Memory* memory,
 // (e.g. "Past episodes: episode:0 (5 turns), episode:1 (3 turns)").
 // A [Memory context] block is emitted even when entries are empty if episode_context
 // is provided — so the model always sees the available history summary.
+// Retrieval policy (PER-395): entries within each tier are score-sorted descending;
+// tier budgets are split based on query intent (chronological boosts observations,
+// stable boosts concepts, unknown splits evenly).
 std::string memory_enrich(Memory* memory, const std::string& user_message,
                           uint32_t recall_limit, uint32_t enrich_depth = 0,
                           const std::string& episode_context = "");

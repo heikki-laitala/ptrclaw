@@ -242,3 +242,154 @@ TEST_CASE("memory_enrich: episode_context combined with entries shows all sectio
     }
     std::filesystem::remove(path);
 }
+
+// ── PER-395: Retrieval/ranking policy ────────────────────────────
+
+TEST_CASE("classify_query_intent: chronological keywords", "[memory][per395]") {
+    REQUIRE(classify_query_intent("what happened recently") == QueryIntent::Chronological);
+    REQUIRE(classify_query_intent("what did we discuss earlier") == QueryIntent::Chronological);
+    REQUIRE(classify_query_intent("show me the history") == QueryIntent::Chronological);
+    REQUIRE(classify_query_intent("what happened before") == QueryIntent::Chronological);
+    REQUIRE(classify_query_intent("2 days ago we talked") == QueryIntent::Chronological);
+    REQUIRE(classify_query_intent("what happened yesterday") == QueryIntent::Chronological);
+    REQUIRE(classify_query_intent("previously we agreed") == QueryIntent::Chronological);
+}
+
+TEST_CASE("classify_query_intent: stable keywords", "[memory][per395]") {
+    REQUIRE(classify_query_intent("what do I prefer") == QueryIntent::Stable);
+    REQUIRE(classify_query_intent("what is my favorite language") == QueryIntent::Stable);
+    REQUIRE(classify_query_intent("I usually use vim") == QueryIntent::Stable);
+    REQUIRE(classify_query_intent("I typically work with Python") == QueryIntent::Stable);
+    REQUIRE(classify_query_intent("I always use dark mode") == QueryIntent::Stable);
+    REQUIRE(classify_query_intent("generally speaking I like rust") == QueryIntent::Stable);
+}
+
+TEST_CASE("classify_query_intent: unknown for generic queries", "[memory][per395]") {
+    REQUIRE(classify_query_intent("help me debug this") == QueryIntent::Unknown);
+    REQUIRE(classify_query_intent("what is rust") == QueryIntent::Unknown);
+    REQUIRE(classify_query_intent("") == QueryIntent::Unknown);
+    REQUIRE(classify_query_intent("how does memory work") == QueryIntent::Unknown);
+}
+
+TEST_CASE("classify_query_intent: case-insensitive matching", "[memory][per395]") {
+    REQUIRE(classify_query_intent("What Happened RECENTLY") == QueryIntent::Chronological);
+    REQUIRE(classify_query_intent("I PREFER python") == QueryIntent::Stable);
+}
+
+TEST_CASE("memory_enrich: entries within each tier sorted by score descending", "[memory][per395]") {
+    std::string path = "/tmp/ptrclaw_test_score_order_" + std::to_string(getpid()) + ".json";
+    {
+        JsonMemory mem(path);
+        // High relevance to "rust coding": key contains both query tokens (2x weight each)
+        // plus content matches — total token score much higher than entry B
+        mem.store("rust-coding-pref", "User loves rust coding daily", MemoryCategory::Knowledge, "");
+        // Lower relevance: key contains only one query token ("coding")
+        mem.store("coding-note", "User does some coding work", MemoryCategory::Knowledge, "");
+
+        std::string result = memory_enrich(&mem, "rust coding", 10);
+
+        auto high_pos = result.find("rust-coding-pref");
+        auto low_pos  = result.find("coding-note");
+
+        REQUIRE(high_pos != std::string::npos);
+        REQUIRE(low_pos  != std::string::npos);
+        // Higher-scoring entry must appear before lower-scoring entry
+        REQUIRE(high_pos < low_pos);
+    }
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("memory_enrich: tier budgets cap concepts and observations independently", "[memory][per395]") {
+    std::string path = "/tmp/ptrclaw_test_tier_budget_" + std::to_string(getpid()) + ".json";
+    {
+        JsonMemory mem(path);
+        // 4 session-scoped observations
+        for (int i = 0; i < 4; i++) {
+            mem.store("obs:" + std::to_string(i),
+                      "session observation about task " + std::to_string(i),
+                      MemoryCategory::Knowledge, "sess1");
+        }
+        // 4 cross-session concepts
+        for (int i = 0; i < 4; i++) {
+            mem.store("concept:" + std::to_string(i),
+                      "general knowledge about task " + std::to_string(i),
+                      MemoryCategory::Knowledge, "");
+        }
+
+        // recall_limit=4, Unknown intent → concept_budget=2, obs_budget=2
+        std::string result = memory_enrich(&mem, "task", 4);
+
+        int obs_shown = 0, concept_shown = 0;
+        for (int i = 0; i < 4; i++) {
+            if (result.find("obs:" + std::to_string(i)) != std::string::npos) obs_shown++;
+            if (result.find("concept:" + std::to_string(i)) != std::string::npos) concept_shown++;
+        }
+
+        // Each tier capped at budget (2), and both types should appear
+        REQUIRE(obs_shown <= 2);
+        REQUIRE(concept_shown <= 2);
+        REQUIRE(obs_shown >= 1);
+        REQUIRE(concept_shown >= 1);
+    }
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("memory_enrich: chronological intent boosts observation budget", "[memory][per395]") {
+    std::string path = "/tmp/ptrclaw_test_chron_budget_" + std::to_string(getpid()) + ".json";
+    {
+        JsonMemory mem(path);
+        // 3 concepts and 3 observations, all containing query token "task"
+        for (int i = 0; i < 3; i++) {
+            mem.store("concept:" + std::to_string(i),
+                      "knowledge task note " + std::to_string(i),
+                      MemoryCategory::Knowledge, "");
+            mem.store("obs:" + std::to_string(i),
+                      "session task note " + std::to_string(i),
+                      MemoryCategory::Knowledge, "sess1");
+        }
+
+        // recall_limit=3, Chronological → concept_budget=1, obs_budget=2
+        std::string result = memory_enrich(&mem, "task recently", 3);
+
+        int obs_shown = 0, concept_shown = 0;
+        for (int i = 0; i < 3; i++) {
+            if (result.find("obs:" + std::to_string(i)) != std::string::npos) obs_shown++;
+            if (result.find("concept:" + std::to_string(i)) != std::string::npos) concept_shown++;
+        }
+
+        // Chronological: obs_budget=2, concept_budget=1
+        REQUIRE(obs_shown <= 2);
+        REQUIRE(concept_shown <= 1);
+    }
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("memory_enrich: stable intent boosts concept budget", "[memory][per395]") {
+    std::string path = "/tmp/ptrclaw_test_stable_budget_" + std::to_string(getpid()) + ".json";
+    {
+        JsonMemory mem(path);
+        // 3 concepts and 3 observations, all containing query token "task"
+        for (int i = 0; i < 3; i++) {
+            mem.store("concept:" + std::to_string(i),
+                      "knowledge task fact " + std::to_string(i),
+                      MemoryCategory::Knowledge, "");
+            mem.store("obs:" + std::to_string(i),
+                      "session task fact " + std::to_string(i),
+                      MemoryCategory::Knowledge, "sess1");
+        }
+
+        // recall_limit=3, Stable → concept_budget=2, obs_budget=1
+        std::string result = memory_enrich(&mem, "task prefer", 3);
+
+        int obs_shown = 0, concept_shown = 0;
+        for (int i = 0; i < 3; i++) {
+            if (result.find("obs:" + std::to_string(i)) != std::string::npos) obs_shown++;
+            if (result.find("concept:" + std::to_string(i)) != std::string::npos) concept_shown++;
+        }
+
+        // Stable: concept_budget=2, obs_budget=1
+        REQUIRE(concept_shown <= 2);
+        REQUIRE(obs_shown <= 1);
+    }
+    std::filesystem::remove(path);
+}
