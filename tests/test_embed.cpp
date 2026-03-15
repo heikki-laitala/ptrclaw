@@ -1,14 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "channels/embed.hpp"
-#include "test_helpers.hpp"
-#include "config.hpp"
-#include "event.hpp"
-#include "event_bus.hpp"
-#include "session.hpp"
-#include "stream_relay.hpp"
-#include "http.hpp"
 #include "plugin.hpp"
-#include <atomic>
 #include <cstdlib>
 #include <thread>
 
