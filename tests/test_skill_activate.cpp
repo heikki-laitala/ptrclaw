@@ -1,61 +1,28 @@
 #include <catch2/catch_test_macros.hpp>
 #include "agent.hpp"
 #include "plugin.hpp"
-#include "tool.hpp"
-#include <filesystem>
-#include <fstream>
-#include <unistd.h>
+#include "test_helpers.hpp"
 
 using namespace ptrclaw;
 
-// ── Mock provider ────────────────────────────────────────────────
-
-class SkillMockProvider : public Provider {
-public:
-    ChatResponse chat(const std::vector<ChatMessage>&,
-                      const std::vector<ToolSpec>&,
-                      const std::string&, double) override {
-        return ChatResponse{"ok", {}};
-    }
-    std::string chat_simple(const std::string&, const std::string&,
-                            const std::string&, double) override {
-        return "ok";
-    }
-    bool supports_native_tools() const override { return true; }
-    std::string provider_name() const override { return "mock"; }
-};
-
 struct SkillActivateFixture {
-    std::string old_home;
-    std::filesystem::path tmpdir;
+    HomeGuard home;
     std::unique_ptr<Tool> standalone_tool_;
     Agent agent;
     AgentAwareTool* skill_tool;
 
     SkillActivateFixture()
-        : tmpdir(std::filesystem::temp_directory_path() /
-                 ("ptrclaw_skill_act_" + std::to_string(getpid())))
-        , agent(std::make_unique<SkillMockProvider>(),
+        : agent(std::make_unique<StubProvider>(),
                 std::vector<std::unique_ptr<Tool>>{},
                 []{ Config c; c.agent.max_tool_iterations = 5;
                     c.memory.backend = "none"; return c; }())
         , skill_tool(nullptr)
     {
-        // Redirect HOME so load_skills finds our temp skills dir
-        old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
-        std::filesystem::create_directories(tmpdir / ".ptrclaw" / "skills");
-        setenv("HOME", tmpdir.c_str(), 1);
+        home.add_skill("review.md",
+            "---\nname: review\ntools: [file_read]\n---\nReview.\n");
+        home.add_skill("debug.md",
+            "---\nname: debug\ntools: [shell]\n---\nDebug.\n");
 
-        {
-            std::ofstream f(tmpdir / ".ptrclaw" / "skills" / "review.md");
-            f << "---\nname: review\ntools: [file_read]\n---\nReview.\n";
-        }
-        {
-            std::ofstream f(tmpdir / ".ptrclaw" / "skills" / "debug.md");
-            f << "---\nname: debug\ntools: [shell]\n---\nDebug.\n";
-        }
-
-        // Get a standalone skill_activate tool and wire it to our agent
         auto tools = create_builtin_tools();
         for (auto& t : tools) {
             if (t->tool_name() == "skill_activate") {
@@ -66,15 +33,6 @@ struct SkillActivateFixture {
             }
         }
     }
-
-    ~SkillActivateFixture() noexcept {
-        setenv("HOME", old_home.c_str(), 1);
-        std::error_code ec;
-        std::filesystem::remove_all(tmpdir, ec);
-    }
-
-    SkillActivateFixture(const SkillActivateFixture&) = delete;
-    SkillActivateFixture& operator=(const SkillActivateFixture&) = delete;
 };
 
 // ── Tests ────────────────────────────────────────────────────────
