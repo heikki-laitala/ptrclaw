@@ -2,12 +2,33 @@
 #include "agent.hpp"
 #include "dispatcher.hpp"
 #include "memory/json_memory.hpp"
+#include "tool_manager.hpp"
+#include "event_bus.hpp"
 #include <stdexcept>
 #include <filesystem>
 #include <fstream>
 #include <unistd.h>
 
 using namespace ptrclaw;
+
+// Helper: wires up Agent + ToolManager + EventBus for tests.
+struct TestAgentSetup {
+    EventBus bus;
+    std::unique_ptr<ToolManager> tool_mgr;
+    Agent agent;
+
+    TestAgentSetup(std::unique_ptr<Provider> provider,
+                   std::vector<std::unique_ptr<Tool>> tools,
+                   const Config& config)
+        : tool_mgr(std::make_unique<ToolManager>(std::move(tools), config, bus))
+        , agent(std::move(provider), config)
+    {
+        agent.set_event_bus(&bus);
+        tool_mgr->wire_agent(&agent);
+        tool_mgr->wire_memory(agent.memory());
+        tool_mgr->publish_tool_specs();
+    }
+};
 
 // ── Mock provider ────────────────────────────────────────────────
 
@@ -101,7 +122,11 @@ public:
 };
 
 // Helper to build an Agent with a mock provider
-static std::pair<Agent, MockProvider*> make_agent() {
+struct MakeAgentResult {
+    TestAgentSetup setup;
+    MockProvider* mock;
+};
+static MakeAgentResult make_agent() {
     auto provider = std::make_unique<MockProvider>();
     auto* provider_ptr = provider.get();
 
@@ -112,14 +137,14 @@ static std::pair<Agent, MockProvider*> make_agent() {
     cfg.agent.max_tool_iterations = 5;
     cfg.agent.max_history_messages = 50;
 
-    Agent agent(std::move(provider), std::move(tools), cfg);
-    return {std::move(agent), provider_ptr};
+    return {TestAgentSetup(std::move(provider), std::move(tools), cfg), provider_ptr};
 }
 
 // ── Basic process ────────────────────────────────────────────────
 
 TEST_CASE("Agent: process returns content from provider", "[agent]") {
-    auto [agent, mock] = make_agent();
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
     mock->next_response.content = "Hello from LLM";
 
     std::string reply = agent.process("Hi");
@@ -128,7 +153,8 @@ TEST_CASE("Agent: process returns content from provider", "[agent]") {
 }
 
 TEST_CASE("Agent: process includes system prompt in first call", "[agent]") {
-    auto [agent, mock] = make_agent();
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
     mock->next_response.content = "ok";
 
     agent.process("test");
@@ -139,7 +165,8 @@ TEST_CASE("Agent: process includes system prompt in first call", "[agent]") {
 }
 
 TEST_CASE("Agent: process appends user message to history", "[agent]") {
-    auto [agent, mock] = make_agent();
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
     mock->next_response.content = "reply";
 
     agent.process("my question");
@@ -157,7 +184,8 @@ TEST_CASE("Agent: process appends user message to history", "[agent]") {
 }
 
 TEST_CASE("Agent: no content returns default message", "[agent]") {
-    auto [agent, mock] = make_agent();
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
     mock->next_response.content = std::nullopt;
 
     std::string reply = agent.process("Hi");
@@ -167,7 +195,9 @@ TEST_CASE("Agent: no content returns default message", "[agent]") {
 // ── Tool call loop ───────────────────────────────────────────────
 
 TEST_CASE("Agent: executes tool call and loops", "[agent]") {
-    auto [agent, mock] = make_agent();
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
+    (void)agent;
 
     // First call returns a tool call
     ChatResponse tool_response;
@@ -192,7 +222,8 @@ TEST_CASE("Agent: executes tool call and loops", "[agent]") {
     tools.push_back(std::make_unique<MockTool>());
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
-    Agent agent2(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup2(std::move(provider), std::move(tools), cfg);
+    auto& agent2 = setup2.agent;
     (void)call_num;
 
     std::string reply = agent2.process("test");
@@ -202,7 +233,8 @@ TEST_CASE("Agent: executes tool call and loops", "[agent]") {
 // ── History management ───────────────────────────────────────────
 
 TEST_CASE("Agent: history_size grows with messages", "[agent]") {
-    auto [agent, mock] = make_agent();
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
     mock->next_response.content = "reply";
 
     REQUIRE(agent.history_size() == 0);
@@ -215,7 +247,8 @@ TEST_CASE("Agent: history_size grows with messages", "[agent]") {
 }
 
 TEST_CASE("Agent: clear_history resets everything", "[agent]") {
-    auto [agent, mock] = make_agent();
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
     mock->next_response.content = "reply";
 
     agent.process("hi");
@@ -226,7 +259,8 @@ TEST_CASE("Agent: clear_history resets everything", "[agent]") {
 }
 
 TEST_CASE("Agent: estimated_tokens is non-zero after messages", "[agent]") {
-    auto [agent, mock] = make_agent();
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
     mock->next_response.content = "this is a long enough response to have some tokens";
 
     agent.process("a message with some content too");
@@ -236,20 +270,23 @@ TEST_CASE("Agent: estimated_tokens is non-zero after messages", "[agent]") {
 // ── Model switching ──────────────────────────────────────────────
 
 TEST_CASE("Agent: set_model and model getter", "[agent]") {
-    auto [agent, mock] = make_agent();
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
     agent.set_model("gpt-4");
     REQUIRE(agent.model() == "gpt-4");
 }
 
 TEST_CASE("Agent: provider_name returns mock", "[agent]") {
-    auto [agent, mock] = make_agent();
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
     REQUIRE(agent.provider_name() == "mock");
 }
 
 // ── Provider switching ───────────────────────────────────────────
 
 TEST_CASE("Agent: set_provider switches provider", "[agent]") {
-    auto [agent, mock] = make_agent();
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
     mock->next_response.content = "from old";
     agent.process("init");
 
@@ -311,7 +348,8 @@ TEST_CASE("Agent: tool call triggers second chat round", "[agent]") {
     tools.push_back(std::make_unique<MockTool>());
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     std::string reply = agent.process("do something");
     REQUIRE(reply == "Done after tool");
@@ -332,7 +370,8 @@ TEST_CASE("Agent: max tool iterations reached", "[agent]") {
     tools.push_back(std::make_unique<MockTool>());
     Config cfg;
     cfg.agent.max_tool_iterations = 3;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     std::string reply = agent.process("loop forever");
     REQUIRE(reply == "[Max tool iterations reached]");
@@ -348,7 +387,8 @@ TEST_CASE("Agent: provider exception returns error message", "[agent]") {
     std::vector<std::unique_ptr<Tool>> tools;
     tools.push_back(std::make_unique<MockTool>());
     Config cfg;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     std::string reply = agent.process("trigger error");
     REQUIRE(reply.find("Error calling provider") != std::string::npos);
@@ -375,7 +415,8 @@ TEST_CASE("Agent: tool result appears in history for native provider", "[agent]"
     tools.push_back(std::make_unique<MockTool>());
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     agent.process("test");
 
@@ -411,7 +452,8 @@ TEST_CASE("Agent: XML tool call parsed for non-native provider", "[agent]") {
     tools.push_back(std::make_unique<MockTool>());
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     std::string reply = agent.process("read file");
     REQUIRE(reply == "Here's the result.");
@@ -430,7 +472,8 @@ TEST_CASE("Agent: non-native provider without tool call returns content", "[agen
     std::vector<std::unique_ptr<Tool>> tools;
     tools.push_back(std::make_unique<MockTool>());
     Config cfg;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     std::string reply = agent.process("hello");
     REQUIRE(reply == "Just a plain response with no tools");
@@ -447,7 +490,8 @@ TEST_CASE("Agent: compact_history triggers on large history", "[agent]") {
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
     cfg.agent.max_history_messages = 10; // Low threshold to trigger compaction
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     // Generate enough messages to exceed max_history_messages
     for (int i = 0; i < 10; i++) {
@@ -487,7 +531,8 @@ TEST_CASE("Agent: compaction does not orphan tool response messages", "[agent]")
     cfg.agent.max_tool_iterations = 5;
     cfg.agent.max_history_messages = 10; // Low threshold to trigger compaction
 
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     // Generate enough messages with tool calls to trigger compaction
     for (int i = 0; i < 8; i++) {
@@ -521,7 +566,8 @@ TEST_CASE("Agent: compaction guard prevents premature compaction at 12 or fewer 
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
     cfg.agent.max_history_messages = 3; // Very low to make should_compact=true
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     // 3 calls -> 1 sys + 3 user + 3 asst = 7 messages
     // 7 > 3 (should_compact=true) but 7 <= 12 (guard fires), so NO compaction
@@ -544,7 +590,8 @@ TEST_CASE("Agent: compaction summary text contains user and assistant counts", "
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
     cfg.agent.max_history_messages = 10;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     // 7 calls -> 1+14=15 messages, exceeds 10 AND 12 -> compaction fires at call 7
     for (int i = 0; i < 7; i++) {
@@ -568,7 +615,8 @@ TEST_CASE("Agent: compaction summary text contains user and assistant counts", "
 }
 
 TEST_CASE("Agent: clear then re-process re-injects system prompt", "[agent]") {
-    auto [agent, mock] = make_agent();
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
     mock->next_response.content = "ok";
 
     agent.process("first");
@@ -582,7 +630,8 @@ TEST_CASE("Agent: clear then re-process re-injects system prompt", "[agent]") {
 // ── set_provider re-injects system prompt ───────────────────────
 
 TEST_CASE("Agent: set_provider removes old system prompt", "[agent]") {
-    auto [agent, mock] = make_agent();
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
     mock->next_response.content = "ok";
     agent.process("init");
 
@@ -627,7 +676,8 @@ TEST_CASE("Agent: synthesis triggers after configured interval", "[agent]") {
     std::string mem_path = "/tmp/ptrclaw_test_synthesis_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
 
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     // Process enough messages to trigger synthesis
@@ -659,7 +709,8 @@ TEST_CASE("Agent: synthesis passes system prompt and message correctly", "[agent
     std::string mem_path = "/tmp/ptrclaw_test_synth_args_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
 
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     agent.process("Hello world");
@@ -688,7 +739,8 @@ TEST_CASE("Agent: synthesis disabled flag prevents chat_simple calls", "[agent][
 
     std::string mem_path = "/tmp/ptrclaw_test_synth_disabled_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     agent.process("hello");
@@ -713,7 +765,8 @@ TEST_CASE("Agent: synthesis interval=0 disables periodic synthesis", "[agent][sy
 
     std::string mem_path = "/tmp/ptrclaw_test_synth_zero_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     for (int i = 0; i < 10; i++) {
@@ -740,7 +793,8 @@ TEST_CASE("Agent: synthesis stores extracted entries in memory", "[agent][synthe
 
     std::string mem_path = "/tmp/ptrclaw_test_synth_store_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     agent.process("I love Rust programming");
@@ -775,7 +829,8 @@ TEST_CASE("Agent: compaction forces synthesis before discarding history", "[agen
 
     std::string mem_path = "/tmp/ptrclaw_test_compact_synth_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     // 7 calls -> 15 messages -> compaction fires; turns_since_synthesis_ = 7 > 0
@@ -802,7 +857,8 @@ TEST_CASE("Agent: synthesis is no-op when memory backend is none", "[agent][synt
     cfg.memory.synthesis = true;
     cfg.memory.synthesis_interval = 1;
 
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     for (int i = 0; i < 5; i++) {
         agent.process("message " + std::to_string(i));
@@ -829,7 +885,8 @@ TEST_CASE("Agent: memory tools excluded from specs when memory inactive", "[agen
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
     cfg.memory.backend = "none"; // Explicitly inactive
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     agent.process("test");
 
@@ -856,8 +913,11 @@ TEST_CASE("Agent: memory tools included when memory is active", "[agent]") {
     std::string mem_path = "/tmp/ptrclaw_test_ctx_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
 
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
+    setup.tool_mgr->wire_memory(agent.memory());
+    setup.tool_mgr->publish_tool_specs();
 
     agent.process("test");
 
@@ -881,7 +941,8 @@ TEST_CASE("Agent: memory tools excluded from system prompt for non-native provid
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
     cfg.memory.backend = "none"; // Explicitly inactive
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     agent.process("test");
 
@@ -914,7 +975,8 @@ TEST_CASE("Agent: tool output is filtered (ANSI stripped)", "[agent]") {
     tools.push_back(std::make_unique<VerboseOutputTool>());
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     agent.process("run verbose");
 
@@ -928,111 +990,5 @@ TEST_CASE("Agent: tool output is filtered (ANSI stripped)", "[agent]") {
     }
 }
 
-// ── Skill whitelist — blocked tool feedback ──────────────────────
-
-// A second named mock tool used only in skill whitelist tests.
-class BlockedMockTool : public Tool {
-public:
-    ToolResult execute(const std::string&) override { return {true, "blocked output"}; }
-    std::string tool_name() const override { return "blocked_tool"; }
-    std::string description() const override { return "A tool that will be blocked"; }
-    std::string parameters_json() const override { return R"({"type":"object"})"; }
-};
-
-TEST_CASE("Agent: blocked tool call returns skill context error", "[agent]") {
-    namespace fs = std::filesystem;
-
-    // Set up a temporary skill directory with one skill that whitelists mock_tool only.
-    auto tmpdir = fs::temp_directory_path() /
-                  ("ptrclaw_agent_skill_" + std::to_string(std::rand()));
-    fs::create_directories(tmpdir);
-    {
-        std::ofstream f(tmpdir / "restricted.md");
-        f << "---\nname: restricted\ntools: [mock_tool]\n---\nRestricted skill.\n";
-    }
-
-    auto provider = std::make_unique<MockProvider>();
-    auto* mock = provider.get();
-    mock->native_tools = true;
-
-    std::vector<std::unique_ptr<Tool>> tools;
-    tools.push_back(std::make_unique<MockTool>());       // "mock_tool"  (allowed)
-    tools.push_back(std::make_unique<BlockedMockTool>()); // "blocked_tool" (blocked)
-
-    Config cfg;
-    cfg.agent.max_tool_iterations = 5;
-    Agent agent(std::move(provider), std::move(tools), cfg);
-
-    agent.load_skills(tmpdir.string());
-    REQUIRE(agent.activate_skill("restricted"));
-
-    // First response: LLM calls the blocked tool
-    ChatResponse r1;
-    r1.tool_calls = {ToolCall{"call1", "blocked_tool", "{}"}};
-    // Second response: final answer
-    ChatResponse r2;
-    r2.content = "done";
-    mock->responses = {r1, r2};
-
-    agent.process("do something");
-
-    // The second provider call's messages should contain the blocked-tool error
-    // as an "Error: ..." tool result message.
-    bool found_blocked_error = false;
-    for (const auto& msg : mock->last_messages) {
-        if (msg.role == Role::Tool &&
-            msg.content.find("blocked_tool") != std::string::npos &&
-            msg.content.find("restricted") != std::string::npos &&
-            msg.content.find("mock_tool") != std::string::npos) {
-            found_blocked_error = true;
-        }
-    }
-    REQUIRE(found_blocked_error);
-
-    fs::remove_all(tmpdir);
-}
-
-TEST_CASE("Agent: allowed tool succeeds with skill whitelist active", "[agent]") {
-    namespace fs = std::filesystem;
-
-    auto tmpdir = fs::temp_directory_path() /
-                  ("ptrclaw_agent_skill2_" + std::to_string(std::rand()));
-    fs::create_directories(tmpdir);
-    {
-        std::ofstream f(tmpdir / "focused.md");
-        f << "---\nname: focused\ntools: [mock_tool]\n---\nFocused skill.\n";
-    }
-
-    auto provider = std::make_unique<MockProvider>();
-    auto* mock = provider.get();
-    mock->native_tools = true;
-
-    std::vector<std::unique_ptr<Tool>> tools;
-    tools.push_back(std::make_unique<MockTool>()); // "mock_tool" — whitelisted
-
-    Config cfg;
-    cfg.agent.max_tool_iterations = 5;
-    Agent agent(std::move(provider), std::move(tools), cfg);
-
-    agent.load_skills(tmpdir.string());
-    REQUIRE(agent.activate_skill("focused"));
-
-    ChatResponse r1;
-    r1.tool_calls = {ToolCall{"call1", "mock_tool", "{}"}};
-    ChatResponse r2;
-    r2.content = "done";
-    mock->responses = {r1, r2};
-
-    agent.process("use allowed tool");
-
-    // Tool result should be the actual mock output, not a blocked error
-    bool found_success = false;
-    for (const auto& msg : mock->last_messages) {
-        if (msg.role == Role::Tool && msg.content == "mock output") {
-            found_success = true;
-        }
-    }
-    REQUIRE(found_success);
-
-    fs::remove_all(tmpdir);
-}
+// Skill whitelist tests removed — skill tool whitelisting was removed.
+// Skills now only inject prompts; all tools are always available.

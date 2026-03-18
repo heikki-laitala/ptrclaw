@@ -1,5 +1,6 @@
 #pragma once
 #include "agent.hpp"
+#include "tool_manager.hpp"
 #include "config.hpp"
 #include "http.hpp"
 #include "oauth.hpp"
@@ -18,6 +19,7 @@ struct MessageReceivedEvent; // forward declaration
 struct Session {
     std::string id;
     std::unique_ptr<Agent> agent;
+    std::unique_ptr<ToolManager> tool_manager;
     uint64_t last_active = 0;
 };
 

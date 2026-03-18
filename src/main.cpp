@@ -8,6 +8,7 @@
 #include "channel.hpp"
 #include "plugin.hpp"
 #include "event_bus.hpp"
+#include "tool_manager.hpp"
 #include "session.hpp"
 #include "stream_relay.hpp"
 #include "oauth.hpp"
@@ -273,9 +274,17 @@ int main(int argc, char* argv[]) try {
     }
     ptrclaw::setup_oauth_refresh(provider.get(), config);
 
+    ptrclaw::EventBus cli_bus;
     auto tools = ptrclaw::create_builtin_tools();
-    ptrclaw::Agent agent(std::move(provider), std::move(tools), config);
+    ptrclaw::ToolManager tool_mgr(std::move(tools), config, cli_bus);
+
+    ptrclaw::Agent agent(std::move(provider), config);
+    agent.set_event_bus(&cli_bus);
     agent.set_binary_path(binary_path);
+
+    tool_mgr.wire_agent(&agent);
+    tool_mgr.wire_memory(agent.memory());
+    tool_mgr.publish_tool_specs();
 
 #ifdef PTRCLAW_HAS_EMBEDDINGS
     auto embedder = ptrclaw::create_embedder(config, http_client);

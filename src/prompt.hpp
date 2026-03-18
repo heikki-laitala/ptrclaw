@@ -4,7 +4,6 @@
 #include "tool.hpp"
 #include <string>
 #include <vector>
-#include <memory>
 #include <utility>
 
 namespace ptrclaw {
@@ -17,22 +16,15 @@ struct RuntimeInfo {
     std::string session_id;   // current session ID (e.g. telegram chat ID)
 };
 
-// Check if a tool should be included given memory state and skill whitelist.
-// Used by both system prompt building and native tool spec filtering.
-bool tool_allowed(const std::string& name,
-                  bool memory_active,
-                  const std::vector<std::string>& allowed_tools);
-
 // Build the system prompt, including tool descriptions for XML-based providers.
+// Tool specs are pre-filtered (e.g. memory tools omitted when inactive).
 // When has_memory is true, includes instructions about memory tools and context format.
 // When memory is non-null, injects soul identity block if soul entries exist.
-// When allowed_tools is non-empty, only tools in the set are included.
-std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
+std::string build_system_prompt(const std::vector<ToolSpec>& tool_specs,
                                 bool include_tool_descriptions,
                                 bool has_memory = false,
                                 Memory* memory = nullptr,
-                                const RuntimeInfo& runtime = {},
-                                const std::vector<std::string>& allowed_tools = {});
+                                const RuntimeInfo& runtime = {});
 
 // Build the hatching bootstrap system prompt for soul creation.
 std::string build_hatch_prompt();

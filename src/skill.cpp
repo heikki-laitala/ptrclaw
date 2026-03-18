@@ -61,8 +61,6 @@ std::optional<SkillDef> parse_skill_file(const std::string& content,
             skill.name = val;
         } else if (key == "description") {
             skill.description = val;
-        } else if (key == "tools") {
-            skill.tools = parse_list(val);
         }
     }
 

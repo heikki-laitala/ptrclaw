@@ -8,7 +8,6 @@ namespace ptrclaw {
 struct SkillDef {
     std::string name;
     std::string description;
-    std::vector<std::string> tools;  // empty = all tools available
     std::string prompt;              // markdown body after frontmatter
     std::string path;                // source file path
 };

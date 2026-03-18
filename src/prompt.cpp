@@ -7,27 +7,11 @@
 
 namespace ptrclaw {
 
-bool tool_allowed(const std::string& name,
-                         bool memory_active,
-                         const std::vector<std::string>& allowed_tools) {
-    if (!memory_active && is_memory_tool(name)) return false;
-    if (!allowed_tools.empty()) {
-        // skill_activate is always allowed so the agent can switch skills
-        if (name == "skill_activate") return true;
-        for (const auto& t : allowed_tools) {
-            if (t == name) return true;
-        }
-        return false;
-    }
-    return true;
-}
-
-std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
+std::string build_system_prompt(const std::vector<ToolSpec>& tool_specs,
                                 bool include_tool_descriptions,
                                 bool has_memory,
                                 Memory* memory,
-                                const RuntimeInfo& runtime,
-                                const std::vector<std::string>& allowed_tools) {
+                                const RuntimeInfo& runtime) {
     std::ostringstream ss;
 
     ss << "You are PtrClaw, an autonomous AI assistant.\n\n";
@@ -39,18 +23,15 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
     }
 
     // ── Tooling ──
-    // Contextual selection: omit memory tools when memory is inactive,
-    // and filter to skill-allowed tools when a skill is active.
-    bool memory_active = has_memory && memory && memory->backend_name() != "none";
-    if (!tools.empty()) {
+    // Tool specs are pre-filtered by ToolManager (memory tools omitted when inactive).
+    if (!tool_specs.empty()) {
         if (include_tool_descriptions) {
             // Non-native providers: full tool schemas in prompt + XML call format
             ss << "## Tooling\n";
             ss << "Available tools:\n";
-            for (const auto& tool : tools) {
-                if (!tool_allowed(tool->tool_name(), memory_active, allowed_tools)) continue;
-                ss << "- " << tool->tool_name() << ": " << tool->description() << "\n";
-                ss << "  Parameters: " << tool->parameters_json() << "\n";
+            for (const auto& spec : tool_specs) {
+                ss << "- " << spec.name << ": " << spec.description << "\n";
+                ss << "  Parameters: " << spec.parameters_json << "\n";
             }
             ss << "\nTo use a tool, wrap your call in XML tags:\n";
             ss << "<tool_call>{\"name\": \"tool_name\", \"arguments\": {...}}</tool_call>\n\n";
@@ -58,9 +39,8 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
             // Native providers: brief capability summary (schemas come via API)
             ss << "## Tooling\n";
             ss << "You have tools to interact with the system:\n";
-            for (const auto& tool : tools) {
-                if (!tool_allowed(tool->tool_name(), memory_active, allowed_tools)) continue;
-                ss << "- " << tool->tool_name() << ": " << tool->description() << "\n";
+            for (const auto& spec : tool_specs) {
+                ss << "- " << spec.name << ": " << spec.description << "\n";
             }
             ss << "\nUse tools proactively to accomplish tasks. "
                << "When the user asks you to do something, take action rather than just explaining how.\n\n";
@@ -68,7 +48,7 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
     }
 
     // ── Tool Call Style ──
-    if (!tools.empty()) {
+    if (!tool_specs.empty()) {
         ss << "## Tool Call Style\n"
            << "Do not narrate routine tool calls. Just call the tool.\n"
            << "Narrate only when it helps: multi-step work, complex problems, "
@@ -137,8 +117,8 @@ std::string build_system_prompt(const std::vector<std::unique_ptr<Tool>>& tools,
     // Scheduling hint — only when cron tool is available and binary path is set
     if (!runtime.binary_path.empty()) {
         bool has_cron = false;
-        for (const auto& tool : tools) {
-            if (tool->tool_name() == "cron") {
+        for (const auto& spec : tool_specs) {
+            if (spec.name == "cron") {
                 has_cron = true;
                 break;
             }

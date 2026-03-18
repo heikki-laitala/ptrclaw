@@ -24,6 +24,7 @@ public:
     virtual std::string description() const = 0;
     virtual std::string parameters_json() const = 0;
     virtual void reset() {}
+    virtual bool is_parallel_safe() const { return false; }
 
     ToolSpec spec() const {
         return ToolSpec{tool_name(), description(), parameters_json()};
