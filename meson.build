@@ -71,6 +71,9 @@ inc = include_directories('include', 'src')
 # ── Feature flag dependency resolution ─────────────────────────
 # openrouter and compatible inherit from OpenAIProvider
 opt_openai     = get_option('with_openai') or get_option('with_openrouter') or get_option('with_compatible')
+if opt_openai
+  add_project_arguments('-DPTRCLAW_HAS_OPENAI', language: 'cpp')
+endif
 opt_anthropic  = get_option('with_anthropic')
 opt_openrouter = get_option('with_openrouter')
 opt_compatible = get_option('with_compatible')
@@ -123,7 +126,7 @@ core_sources = files(
   'src/agent.cpp', 'src/channel.cpp', 'src/commands.cpp', 'src/config.cpp',
   'src/dispatcher.cpp', 'src/event_bus.cpp', 'src/oauth.cpp',
   'src/onboard.cpp', 'src/output_filter.cpp', 'src/plugin.cpp',
-  'src/prompt.cpp', 'src/provider.cpp',
+  'src/prompt.cpp', 'src/provider.cpp', 'src/repl.cpp',
   'src/session.cpp', 'src/skill.cpp', 'src/stream_relay.cpp', 'src/tool.cpp',
   'src/tool_manager.cpp', 'src/util.cpp',
 ) + http_impl_source
@@ -138,7 +141,7 @@ if opt_anthropic
   optional_sources += files('src/providers/anthropic.cpp')
 endif
 if opt_openai
-  optional_sources += files('src/providers/openai.cpp')
+  optional_sources += files('src/providers/openai.cpp', 'src/providers/oauth_openai.cpp')
 endif
 if opt_openrouter
   optional_sources += files('src/providers/openrouter.cpp')

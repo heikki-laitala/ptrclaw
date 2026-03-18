@@ -2,6 +2,9 @@
 #include "oauth.hpp"
 #include "plugin.hpp"
 #include "util.hpp"
+#ifdef PTRCLAW_HAS_OPENAI
+#include "providers/oauth_openai.hpp"
+#endif
 #include <iostream>
 #include <string>
 #include <vector>
@@ -119,6 +122,7 @@ bool persist_channel_token(const std::string& channel,
     });
 }
 
+#ifdef PTRCLAW_HAS_OPENAI
 // OpenAI OAuth inline flow — returns true if OAuth was completed
 bool setup_openai_oauth(Config& config, HttpClient& http) {
     auto flow = start_oauth_flow(config.providers["openai"]);
@@ -158,6 +162,7 @@ bool setup_openai_oauth(Config& config, HttpClient& http) {
     }
     return true;
 }
+#endif
 
 // Step 1: Provider setup
 bool setup_provider(Config& config, HttpClient& http) {
@@ -212,6 +217,7 @@ bool setup_provider(Config& config, HttpClient& http) {
         if (url.empty()) url = current_url;
         config.providers[chosen].base_url = url;
     } else {
+#ifdef PTRCLAW_HAS_OPENAI
         // OpenAI: offer OAuth as alternative to API key
         if (chosen == "openai") {
             std::cout << "Authentication method:\n"
@@ -223,6 +229,7 @@ bool setup_provider(Config& config, HttpClient& http) {
                 return setup_openai_oauth(config, http);
             }
         }
+#endif
 
         std::cout << "Enter your " << provider_label(chosen) << " API key: " << std::flush;
         std::string api_key;
