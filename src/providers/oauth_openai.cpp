@@ -146,6 +146,7 @@ OAuthApplyResult apply_oauth_result(const std::string& code,
     result.provider = create_provider("openai", config.api_key_for("openai"), http,
                                        config.base_url_for("openai"),
                                        config.prompt_caching_for("openai"), &updated);
+    setup_oauth_refresh(result.provider.get(), config);
     result.success = true;
     return result;
 }
