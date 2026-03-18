@@ -134,7 +134,7 @@ jobs:
             fi
           fi
           meson compile -C builddir-emb
-          meson test -C builddir-emb
+          meson test -C builddir-emb --print-errorlogs
 
       - name: SDK binary size check
         run: |
