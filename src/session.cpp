@@ -1,13 +1,15 @@
 #include "session.hpp"
 #include "commands.hpp"
 #include "embedder.hpp"
-#include "oauth.hpp"
 #include "onboard.hpp"
 #include "event.hpp"
 #include "event_bus.hpp"
 #include "tool_manager.hpp"
 #include "plugin.hpp"
 #include "util.hpp"
+#ifdef PTRCLAW_HAS_OPENAI
+#include "providers/oauth_openai.hpp"
+#endif
 #include <nlohmann/json.hpp>
 
 namespace ptrclaw {
@@ -32,7 +34,9 @@ Agent& SessionManager::get_session(const std::string& session_id) {
         throw std::runtime_error("Cannot create provider: " + sr.error);
     }
     auto provider = std::move(sr.provider);
+#ifdef PTRCLAW_HAS_OPENAI
     setup_oauth_refresh(provider.get(), config_);
+#endif
 
     Session session;
     session.id = session_id;
@@ -262,6 +266,7 @@ bool SessionManager::handle_auth_command(
     Agent& agent,
     const std::function<void(const std::string&)>& send_reply) {
 
+#ifdef PTRCLAW_HAS_OPENAI
     auto finish_oauth = [&](const PendingOAuth& pending,
                              const std::string& code) {
         auto r = apply_oauth_result(code, pending, config_, http_);
@@ -276,11 +281,13 @@ bool SessionManager::handle_auth_command(
                     ? " Saved to ~/.ptrclaw/config.json"
                     : " (warning: could not persist to config file)"));
     };
+#endif
 
     // Handle /auth commands
     if (ev.message.content.rfind("/auth", 0) == 0) {
         auto parts = split(ev.message.content, ' ');
 
+#ifdef PTRCLAW_HAS_OPENAI
         // /auth openai start — two-step OAuth flow
         if (parts.size() >= 3 && parts[1] == "openai" && parts[2] == "start") {
             auto openai_it = config_.providers.find("openai");
@@ -324,6 +331,7 @@ bool SessionManager::handle_auth_command(
             finish_oauth(*pending, parsed.code);
             return true;
         }
+#endif
 
         // /auth <provider> <key> — set API key for any provider
         if (parts.size() >= 3) {
@@ -354,6 +362,7 @@ bool SessionManager::handle_auth_command(
         return true;
     }
 
+#ifdef PTRCLAW_HAS_OPENAI
     // If OpenAI OAuth is pending, accept raw callback URL/code directly.
     auto pending_oauth = get_pending_oauth(ev.session_id);
     if (pending_oauth && pending_oauth->provider == "openai") {
@@ -380,6 +389,7 @@ bool SessionManager::handle_auth_command(
             return true;
         }
     }
+#endif
 
     return false;
 }

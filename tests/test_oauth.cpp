@@ -1,11 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
 #include "oauth.hpp"
 #include "session.hpp"
+#ifdef PTRCLAW_HAS_OPENAI
+#include "providers/oauth_openai.hpp"
+#endif
 
 using namespace ptrclaw;
 
-// ── Constants ────────────────────────────────────────────────────
+// ── Constants (OpenAI-specific) ──────────────────────────────────
 
+#ifdef PTRCLAW_HAS_OPENAI
 TEST_CASE("OAuth: default client_id matches Codex CLI", "[oauth]") {
     REQUIRE(std::string(kDefaultOAuthClientId) == "app_EMoamEEZ73f0CkXaXp7hrann");
 }
@@ -23,6 +27,7 @@ TEST_CASE("OAuth: default token URL", "[oauth]") {
 TEST_CASE("OAuth: default authorize base URL", "[oauth]") {
     REQUIRE(std::string(kDefaultAuthorizeBaseUrl) == "https://auth.openai.com/oauth/authorize");
 }
+#endif
 
 // ── oauth_url_encode ─────────────────────────────────────────────
 
@@ -107,8 +112,9 @@ TEST_CASE("make_code_challenge_s256: different input gives different output", "[
     REQUIRE(c1 != c2);
 }
 
-// ── build_authorize_url ──────────────────────────────────────────
+// ── build_authorize_url (OpenAI-specific) ────────────────────────
 
+#ifdef PTRCLAW_HAS_OPENAI
 TEST_CASE("build_authorize_url: contains all required params", "[oauth]") {
     auto url = build_authorize_url("test-client", "http://localhost:1455/auth/callback",
                                     "test-challenge", "test-state");
@@ -128,6 +134,7 @@ TEST_CASE("build_authorize_url: starts with authorize base URL", "[oauth]") {
     auto url = build_authorize_url("c", "r", "ch", "s");
     REQUIRE(url.rfind(kDefaultAuthorizeBaseUrl, 0) == 0);
 }
+#endif
 
 // ── parse_oauth_input ────────────────────────────────────────────
 

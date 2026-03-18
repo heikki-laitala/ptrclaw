@@ -1,7 +1,6 @@
 #include "provider.hpp"
 #include "plugin.hpp"
 #include "config.hpp"
-#include "oauth.hpp"
 
 namespace ptrclaw {
 

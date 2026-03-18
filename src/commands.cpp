@@ -3,10 +3,15 @@
 #include "config.hpp"
 #include "http.hpp"
 #include "memory.hpp"
-#include "oauth.hpp"
+#include "onboard.hpp"
 #include "prompt.hpp"
 #include "provider.hpp"
 #include "util.hpp"
+#ifdef PTRCLAW_HAS_OPENAI
+#include "providers/oauth_openai.hpp"
+#endif
+
+#include <fstream>
 
 namespace ptrclaw {
 
@@ -66,6 +71,7 @@ std::string cmd_hatch(Agent& agent) {
 std::string cmd_model(const std::string& new_model, Agent& agent,
                        Config& config, HttpClient& http) {
     // On openai, re-create provider if auth mode changes
+#ifdef PTRCLAW_HAS_OPENAI
     if (agent.provider_name() == "openai") {
         auto oai_it = config.providers.find("openai");
         bool on_oauth = oai_it != config.providers.end() &&
@@ -85,6 +91,7 @@ std::string cmd_model(const std::string& new_model, Agent& agent,
             return "Model set to: " + agent.model();
         }
     }
+#endif
     agent.set_model(new_model);
     config.model = new_model;
     config.persist_selection();
@@ -103,7 +110,9 @@ std::string cmd_provider(const std::string& args_str, Agent& agent,
     auto sr = switch_provider(prov_name, model_arg, agent.model(), config, http);
     if (!sr.error.empty()) return sr.error;
 
+#ifdef PTRCLAW_HAS_OPENAI
     setup_oauth_refresh(sr.provider.get(), config);
+#endif
     agent.set_provider(std::move(sr.provider));
     if (!sr.model.empty()) agent.set_model(sr.model);
     config.provider = prov_name;
@@ -152,6 +161,58 @@ std::string cmd_skill(const std::string& args, Agent& agent) {
         return "Skill '" + trimmed + "' activated";
     }
     return "Unknown skill: " + trimmed;
+}
+
+std::string cmd_help(bool dev) {
+    std::string result =
+        "Commands:\n"
+        "  /status          Show current status\n"
+        "  /model X         Switch to model X\n"
+        "  /models          List configured providers\n"
+        "  /provider X [M]  Switch to provider X, optional model M\n"
+        "  /clear           Clear conversation history\n"
+        "  /skill [name]    List or activate skills\n"
+        "  /memory          Show memory status\n"
+        "  /memory export   Export memories as JSON\n"
+        "  /memory import P Import memories from JSON file\n"
+        "  /auth            Show auth status for all providers\n"
+        "  /auth <provider> Set credentials for a provider\n";
+    if (dev) {
+        result += "  /soul            Show current soul/identity data\n";
+    }
+    result +=
+        "  /hatch           Create or re-create assistant identity\n"
+        "  /onboard         Run setup wizard\n"
+        "  /exit, /quit     Exit\n"
+        "  /help            Show this help\n";
+    return result;
+}
+
+std::string cmd_memory_export(const Agent& agent) {
+    auto* mem = agent.memory();
+    if (!mem || mem->backend_name() == "none") {
+        return "Memory: disabled";
+    }
+    return mem->snapshot_export();
+}
+
+std::string cmd_memory_import(Agent& agent, const std::string& path) {
+    auto* mem = agent.memory();
+    if (!mem || mem->backend_name() == "none") {
+        return "Memory: disabled";
+    }
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        return "Error: cannot open " + path;
+    }
+    std::string content((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+    uint32_t n = mem->snapshot_import(content);
+    return "Imported " + std::to_string(n) + " entries.";
+}
+
+std::string cmd_auth_status(const Config& config) {
+    return format_auth_status(config) + "\nSet credentials: /auth <provider>";
 }
 
 } // namespace ptrclaw

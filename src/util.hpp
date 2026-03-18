@@ -41,4 +41,7 @@ std::string expand_home(const std::string& path);
 // Atomic file write: create parent dirs, write to .tmp, rename into place
 bool atomic_write_file(const std::string& path, const std::string& content);
 
+// Resolve argv[0] to an absolute binary path (searches PATH if bare name)
+std::string resolve_binary_path(const char* argv0);
+
 } // namespace ptrclaw

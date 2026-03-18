@@ -1,7 +1,7 @@
 #include "openai.hpp"
 #include "sse.hpp"
 #include "../http.hpp"
-#include "../oauth.hpp"
+#include "oauth_openai.hpp"
 #include "../plugin.hpp"
 #include <nlohmann/json.hpp>
 #include <stdexcept>

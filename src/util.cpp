@@ -179,4 +179,32 @@ bool atomic_write_file(const std::string& path, const std::string& content) {
     return std::rename(tmp_path.c_str(), path.c_str()) == 0;
 }
 
+std::string resolve_binary_path(const char* argv0) {
+    std::string path(argv0);
+
+    // Absolute or relative path — resolve via filesystem
+    if (path.find('/') != std::string::npos) {
+        std::error_code ec;
+        auto canonical = std::filesystem::canonical(path, ec);
+        if (!ec) return canonical.string();
+        return path;
+    }
+
+    // Bare name — search PATH
+    const char* path_env = std::getenv("PATH");
+    if (!path_env) return path;
+
+    std::istringstream dirs(path_env);
+    std::string dir;
+    while (std::getline(dirs, dir, ':')) {
+        auto candidate = std::filesystem::path(dir) / path;
+        std::error_code ec;
+        if (std::filesystem::exists(candidate, ec)) {
+            auto canonical = std::filesystem::canonical(candidate, ec);
+            if (!ec) return canonical.string();
+        }
+    }
+    return path;
+}
+
 } // namespace ptrclaw

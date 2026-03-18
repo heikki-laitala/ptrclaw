@@ -6,6 +6,7 @@ namespace ptrclaw {
 class Agent;
 class HttpClient;
 struct Config;
+class Memory;
 
 // Shared command handlers used by both REPL (main.cpp) and channel mode
 // (session.cpp). Each returns a string result for the caller to deliver.
@@ -22,5 +23,15 @@ std::string cmd_model(const std::string& new_model, Agent& agent,
                        Config& config, HttpClient& http);
 std::string cmd_provider(const std::string& args, Agent& agent,
                           Config& config, HttpClient& http);
+
+// Help text for interactive REPL
+std::string cmd_help(bool dev);
+
+// Memory export/import
+std::string cmd_memory_export(const Agent& agent);
+std::string cmd_memory_import(Agent& agent, const std::string& path);
+
+// Auth status display
+std::string cmd_auth_status(const Config& config);
 
 } // namespace ptrclaw

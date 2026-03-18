@@ -1,9 +1,7 @@
-#include "commands.hpp"
 #include "config.hpp"
 #include "provider.hpp"
 #include "tool.hpp"
 #include "agent.hpp"
-#include "memory.hpp"
 #include "http.hpp"
 #include "channel.hpp"
 #include "plugin.hpp"
@@ -11,20 +9,20 @@
 #include "tool_manager.hpp"
 #include "session.hpp"
 #include "stream_relay.hpp"
-#include "oauth.hpp"
 #include "onboard.hpp"
+#ifdef PTRCLAW_HAS_OPENAI
+#include "providers/oauth_openai.hpp"
+#endif
+#include "repl.hpp"
 #include "util.hpp"
 #ifdef PTRCLAW_HAS_EMBEDDINGS
 #include "embedder.hpp"
 #endif
 #include <iostream>
-#include <fstream>
 #include <string>
 #include <cstring>
 #include <atomic>
 #include <csignal>
-#include <filesystem>
-#include <sstream>
 
 namespace {
 
@@ -41,34 +39,6 @@ static std::atomic<bool> g_shutdown{false};
 
 static void signal_handler(int /*sig*/) {
     g_shutdown.store(true);
-}
-
-static std::string resolve_binary_path(const char* argv0) {
-    std::string path(argv0);
-
-    // Absolute or relative path — resolve via filesystem
-    if (path.find('/') != std::string::npos) {
-        std::error_code ec;
-        auto canonical = std::filesystem::canonical(path, ec);
-        if (!ec) return canonical.string();
-        return path;
-    }
-
-    // Bare name — search PATH
-    const char* path_env = std::getenv("PATH");
-    if (!path_env) return path;
-
-    std::istringstream dirs(path_env);
-    std::string dir;
-    while (std::getline(dirs, dir, ':')) {
-        auto candidate = std::filesystem::path(dir) / path;
-        std::error_code ec;
-        if (std::filesystem::exists(candidate, ec)) {
-            auto canonical = std::filesystem::canonical(candidate, ec);
-            if (!ec) return canonical.string();
-        }
-    }
-    return path;
 }
 
 static void print_usage() {
@@ -222,7 +192,7 @@ int main(int argc, char* argv[]) try {
     }
 
     // Resolve binary path for cron scheduling
-    std::string binary_path = resolve_binary_path(argv[0]);
+    std::string binary_path = ptrclaw::resolve_binary_path(argv[0]);
 
     // Initialize
     HttpGuard http_guard;
@@ -272,7 +242,9 @@ int main(int argc, char* argv[]) try {
         std::cerr << "Error creating provider: " << e.what() << "\n";
         return 1;
     }
+#ifdef PTRCLAW_HAS_OPENAI
     ptrclaw::setup_oauth_refresh(provider.get(), config);
+#endif
 
     ptrclaw::EventBus cli_bus;
     auto tools = ptrclaw::create_builtin_tools();
@@ -329,311 +301,7 @@ int main(int argc, char* argv[]) try {
     }
 
     // Interactive REPL
-    std::cout << "PtrClaw AI Assistant\n"
-              << "Provider: " << agent.provider_name()
-              << " | Model: " << agent.model() << "\n"
-              << "Type /help for commands, /exit to exit.\n\n";
-
-    // Auto-detect unhatched agent (skip if onboarding ran and user declined)
-    if (agent.memory() && !agent.is_hatched()) {
-        bool do_hatch = false;
-        if (onboard_ran) {
-            if (onboard_hatch) {
-                std::cout << "Starting hatching...\n\n";
-                do_hatch = true;
-            }
-        } else {
-            std::cout << "Your assistant doesn't have an identity yet. Starting hatching...\n\n";
-            do_hatch = true;
-        }
-        if (do_hatch) {
-            agent.start_hatch();
-            std::string response = agent.process("Begin the hatching interview.");
-            std::cout << response << "\n\n";
-        }
-    }
-
-    std::optional<ptrclaw::PendingOAuth> pending_oauth;
-
-    auto finish_oauth = [&](const ptrclaw::PendingOAuth& pending,
-                             const std::string& code) {
-        auto r = ptrclaw::apply_oauth_result(code, pending, config, http_client);
-        if (!r.success) { std::cout << r.error << "\n"; return; }
-        ptrclaw::setup_oauth_refresh(r.provider.get(), config);
-        agent.set_provider(std::move(r.provider));
-        agent.set_model(ptrclaw::kDefaultOAuthModel);
-        pending_oauth.reset();
-        std::cout << "OpenAI OAuth connected. Model switched to "
-                  << ptrclaw::kDefaultOAuthModel << "."
-                  << (r.persisted
-                      ? " Saved to ~/.ptrclaw/config.json\n"
-                      : " (warning: could not persist to config file)\n");
-    };
-
-    std::string line;
-    while (true) {
-        std::cout << "ptrclaw> " << std::flush;
-
-        if (!std::getline(std::cin, line)) {
-            // EOF (Ctrl+D)
-            std::cout << "\n";
-            break;
-        }
-
-        // Skip empty lines
-        if (line.empty()) continue;
-
-        // Raw OAuth paste detection (when auth flow is pending)
-        if (pending_oauth && line[0] != '/') {
-            std::string raw = ptrclaw::trim(line);
-            bool looks_like_oauth =
-                (!raw.empty() &&
-                 (raw.find("code=") != std::string::npos ||
-                  raw.find("auth/callback") != std::string::npos ||
-                  raw.find("localhost:1455") != std::string::npos));
-            if (looks_like_oauth) {
-                auto parsed = ptrclaw::parse_oauth_input(raw);
-                if (parsed.code.empty()) {
-                    std::cout << "Missing code. Paste callback URL or auth code.\n";
-                } else if (!parsed.state.empty() && parsed.state != pending_oauth->state) {
-                    std::cout << "State mismatch. Please restart with /auth openai start\n";
-                } else {
-                    finish_oauth(*pending_oauth, parsed.code);
-                }
-                continue;
-            }
-        }
-
-        // Handle slash commands
-        if (line[0] == '/') {
-            if (line == "/quit" || line == "/exit") {
-                break;
-            } else if (line == "/status") {
-                std::cout << ptrclaw::cmd_status(agent);
-            } else if (line == "/clear") {
-                agent.clear_history();
-                std::cout << "History cleared.\n";
-            } else if (line.substr(0, 7) == "/model ") {
-                std::cout << ptrclaw::cmd_model(line.substr(7), agent,
-                                                config, http_client) << "\n";
-            } else if (line == "/models") {
-                std::cout << ptrclaw::cmd_models(agent, config) << "\n";
-            } else if (line.substr(0, 10) == "/provider ") {
-                std::cout << ptrclaw::cmd_provider(line.substr(10), agent,
-                                                   config, http_client) << "\n";
-            } else if (line == "/memory") {
-                std::cout << ptrclaw::cmd_memory(agent) << "\n";
-            } else if (line == "/memory export") {
-                auto* mem = agent.memory();
-                if (!mem || mem->backend_name() == "none") {
-                    std::cout << "Memory: disabled\n";
-                } else {
-                    std::cout << mem->snapshot_export() << "\n";
-                }
-            } else if (line.substr(0, 15) == "/memory import ") {
-                auto* mem = agent.memory();
-                if (!mem || mem->backend_name() == "none") {
-                    std::cout << "Memory: disabled\n";
-                } else {
-                    std::string path = line.substr(15);
-                    std::ifstream file(path);
-                    if (!file.is_open()) {
-                        std::cout << "Error: cannot open " << path << "\n";
-                    } else {
-                        std::string content((std::istreambuf_iterator<char>(file)),
-                                             std::istreambuf_iterator<char>());
-                        uint32_t n = mem->snapshot_import(content);
-                        std::cout << "Imported " << n << " entries.\n";
-                    }
-                }
-            } else if (line == "/soul") {
-                std::cout << ptrclaw::cmd_soul(agent, config.dev) << "\n";
-            } else if (line == "/onboard") {
-                bool hatch_req = false;
-                if (ptrclaw::run_onboard(config, http_client, hatch_req)) {
-                    auto sr = ptrclaw::switch_provider(
-                        config.provider, config.model, config.model, config, http_client);
-                    if (!sr.error.empty()) {
-                        std::cout << sr.error << "\n";
-                    } else {
-                        ptrclaw::setup_oauth_refresh(sr.provider.get(), config);
-                        agent.set_provider(std::move(sr.provider));
-                        if (!sr.model.empty()) agent.set_model(sr.model);
-                        std::cout << "Provider: " << agent.provider_name()
-                                  << " | Model: " << agent.model() << "\n";
-                        if (hatch_req) {
-                            agent.start_hatch();
-                            std::string r = agent.process("Begin the hatching interview.");
-                            std::cout << r << "\n";
-                        }
-                    }
-                }
-            } else if (line == "/skill" || line.substr(0, 7) == "/skill ") {
-                std::string args = (line.size() > 7) ? line.substr(7) : "";
-                std::cout << ptrclaw::cmd_skill(args, agent) << "\n";
-            } else if (line == "/hatch") {
-                std::cout << ptrclaw::cmd_hatch(agent) << "\n";
-
-            // ── /auth commands ───────────────────────────────────
-            } else if (line == "/auth openai start") {
-                auto openai_it = config.providers.find("openai");
-                if (openai_it == config.providers.end()) {
-                    std::cout << "OpenAI provider config missing.\n";
-                } else {
-                    auto flow = ptrclaw::start_oauth_flow(openai_it->second);
-                    pending_oauth = std::move(flow.pending);
-
-                    std::cout << "Open this URL to authorize OpenAI:\n" << flow.authorize_url
-                              << "\n\nThen paste the full callback URL with:\n"
-                              << "/auth openai finish <callback_url>\n"
-                              << "(or paste just the code)\n";
-                }
-            } else if (line.rfind("/auth openai finish ", 0) == 0) {
-                if (!pending_oauth || pending_oauth->provider != "openai") {
-                    std::cout << "No pending OpenAI auth flow. Start with: /auth openai start\n";
-                } else {
-                    std::string input = line.substr(
-                        line.find("finish") + 7);
-                    auto parsed = ptrclaw::parse_oauth_input(input);
-
-                    if (parsed.code.empty()) {
-                        std::cout << "Missing code. Paste callback URL or auth code.\n";
-                    } else if (!parsed.state.empty() && parsed.state != pending_oauth->state) {
-                        std::cout << "State mismatch. Please restart with /auth openai start\n";
-                    } else {
-                        finish_oauth(*pending_oauth, parsed.code);
-                    }
-                }
-            } else if (line.rfind("/auth ", 0) == 0) {
-                // /auth <provider> — interactive credential setup
-                std::string prov = ptrclaw::trim(line.substr(6));
-                auto& reg = ptrclaw::PluginRegistry::instance();
-                auto all = reg.provider_names();
-                bool known = false;
-                for (const auto& n : all) {
-                    if (n == prov) { known = true; break; }
-                }
-                if (ptrclaw::is_hidden_provider(prov)) known = false;
-                if (!known) {
-                    std::cout << "Unknown provider: " << prov << "\n";
-                } else if (prov == "ollama") {
-                    auto it = config.providers.find("ollama");
-                    std::string current = (it != config.providers.end())
-                        ? it->second.base_url : "http://localhost:11434";
-                    std::cout << "Base URL [" << current << "]: " << std::flush;
-                    std::string url;
-                    std::getline(std::cin, url);
-                    url = ptrclaw::trim(url);
-                    if (url.empty()) url = current;
-                    config.providers["ollama"].base_url = url;
-                    ptrclaw::modify_config_json([&](nlohmann::json& j) {
-                        j["providers"]["ollama"]["base_url"] = url;
-                    });
-                    std::cout << "Saved.\n";
-                } else if (prov == "openai") {
-                    std::cout << "Authentication method:\n"
-                              << "  1. API key\n"
-                              << "  2. OAuth login (ChatGPT subscription)\n"
-                              << "> " << std::flush;
-                    std::string choice_str;
-                    std::getline(std::cin, choice_str);
-                    choice_str = ptrclaw::trim(choice_str);
-                    if (choice_str == "2") {
-                        // Inline OAuth flow
-                        auto flow = ptrclaw::start_oauth_flow(config.providers["openai"]);
-                        std::cout << "\nOpen this URL to authorize:\n" << flow.authorize_url
-                                  << "\n\nPaste the callback URL or code: " << std::flush;
-                        std::string input;
-                        std::getline(std::cin, input);
-                        input = ptrclaw::trim(input);
-                        if (input.empty()) {
-                            std::cout << "Skipped.\n";
-                        } else {
-                            auto parsed = ptrclaw::parse_oauth_input(input);
-                            if (parsed.code.empty()) {
-                                std::cout << "Could not extract auth code.\n";
-                            } else if (!parsed.state.empty() && parsed.state != flow.pending.state) {
-                                std::cout << "State mismatch. Please try again.\n";
-                            } else {
-                                finish_oauth(flow.pending, parsed.code);
-                            }
-                        }
-                    } else {
-                        std::cout << "Enter your " << ptrclaw::provider_label("openai")
-                                  << " API key: " << std::flush;
-                        std::string api_key;
-                        std::getline(std::cin, api_key);
-                        api_key = ptrclaw::trim(api_key);
-                        if (api_key.empty()) {
-                            std::cout << "No API key provided.\n";
-                        } else {
-                            config.providers["openai"].api_key = api_key;
-                            ptrclaw::persist_provider_key("openai", api_key);
-                            std::cout << "Saved.\n";
-                        }
-                    }
-                } else {
-                    // Other providers: API key prompt
-                    std::cout << "Enter your " << ptrclaw::provider_label(prov)
-                              << " API key: " << std::flush;
-                    std::string api_key;
-                    std::getline(std::cin, api_key);
-                    api_key = ptrclaw::trim(api_key);
-                    if (api_key.empty()) {
-                        std::cout << "No API key provided.\n";
-                    } else {
-                        config.providers[prov].api_key = api_key;
-                        ptrclaw::persist_provider_key(prov, api_key);
-                        std::cout << "Saved.\n";
-                    }
-                }
-                // Re-create active provider if credentials changed
-                if (prov == config.provider) {
-                    auto sr = ptrclaw::switch_provider(
-                        config.provider, config.model, config.model, config, http_client);
-                    if (!sr.error.empty()) {
-                        std::cout << sr.error << "\n";
-                    } else {
-                        ptrclaw::setup_oauth_refresh(sr.provider.get(), config);
-                        agent.set_provider(std::move(sr.provider));
-                        if (!sr.model.empty()) agent.set_model(sr.model);
-                    }
-                }
-            } else if (line == "/auth") {
-                std::cout << ptrclaw::format_auth_status(config)
-                          << "\nSet credentials: /auth <provider>\n";
-            } else if (line == "/help") {
-                std::cout << "Commands:\n"
-                          << "  /status          Show current status\n"
-                          << "  /model X         Switch to model X\n"
-                          << "  /models          List configured providers\n"
-                          << "  /provider X [M]  Switch to provider X, optional model M\n"
-                          << "  /clear           Clear conversation history\n"
-                          << "  /skill [name]    List or activate skills\n"
-                          << "  /memory          Show memory status\n"
-                          << "  /memory export   Export memories as JSON\n"
-                          << "  /memory import P Import memories from JSON file\n"
-                          << "  /auth            Show auth status for all providers\n"
-                          << "  /auth <provider> Set credentials for a provider\n";
-                if (config.dev) {
-                    std::cout << "  /soul            Show current soul/identity data\n";
-                }
-                std::cout << "  /hatch           Create or re-create assistant identity\n"
-                          << "  /onboard         Run setup wizard\n"
-                          << "  /exit, /quit     Exit\n"
-                          << "  /help            Show this help\n";
-            } else {
-                std::cout << "Unknown command: " << line << "\n";
-            }
-            continue;
-        }
-
-        // Process user message
-        std::string response = agent.process(line);
-        std::cout << "\n" << response << "\n\n";
-    }
-
-    return 0;
+    return ptrclaw::run_repl(agent, config, http_client, onboard_ran, onboard_hatch);
 } catch (const std::exception& e) {
     std::cerr << "Fatal error: " << e.what() << '\n';
     return 1;
