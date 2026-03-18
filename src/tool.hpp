@@ -2,8 +2,25 @@
 #include <string>
 #include <memory>
 #include <vector>
+#include <atomic>
 
 namespace ptrclaw {
+
+// Cooperative cancellation token. Tools check this periodically during long
+// operations and bail out early when signalled.
+using CancellationToken = std::shared_ptr<std::atomic<bool>>;
+
+inline CancellationToken make_cancellation_token() {
+    return std::make_shared<std::atomic<bool>>(false);
+}
+
+inline bool is_cancelled(const CancellationToken& token) {
+    return token && token->load(std::memory_order_relaxed);
+}
+
+inline void cancel(const CancellationToken& token) {
+    if (token) token->store(true, std::memory_order_relaxed);
+}
 
 struct ToolSpec {
     std::string name;
@@ -20,6 +37,10 @@ class Tool {
 public:
     virtual ~Tool() = default;
     virtual ToolResult execute(const std::string& args_json) = 0;
+    virtual ToolResult execute(const std::string& args_json,
+                               const CancellationToken& /*token*/) {
+        return execute(args_json);
+    }
     virtual std::string tool_name() const = 0;
     virtual std::string description() const = 0;
     virtual std::string parameters_json() const = 0;

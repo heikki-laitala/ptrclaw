@@ -21,6 +21,11 @@ void ShellTool::reset() {
 }
 
 ToolResult ShellTool::execute(const std::string& args_json) {
+    return execute(args_json, nullptr);
+}
+
+ToolResult ShellTool::execute(const std::string& args_json,
+                               const CancellationToken& token) {
     nlohmann::json args;
     if (auto err = parse_tool_json(args_json, args)) return *err;
 
@@ -33,7 +38,7 @@ ToolResult ShellTool::execute(const std::string& args_json) {
     // Resume existing process (ignore empty string — some clients send all schema fields)
     if (args.contains("process_id") && args["process_id"].is_string()
         && !args["process_id"].get<std::string>().empty()) {
-        return resume_process(args["process_id"].get<std::string>(), stdin_data);
+        return resume_process(args["process_id"].get<std::string>(), stdin_data, token);
     }
 
     // New command
@@ -41,12 +46,13 @@ ToolResult ShellTool::execute(const std::string& args_json) {
         return ToolResult{false, "Missing required parameter: command (or process_id to resume)"};
     }
 
-    return run_new_command(args["command"].get<std::string>(), stdin_data, has_stdin);
+    return run_new_command(args["command"].get<std::string>(), stdin_data, has_stdin, token);
 }
 
 ToolResult ShellTool::run_new_command(const std::string& command,
                                      const std::string& stdin_data,
-                                     bool has_stdin) {
+                                     bool has_stdin,
+                                     const CancellationToken& token) {
     std::string cmd = command + " 2>&1";
 
     int stdin_pipe[2];
@@ -103,10 +109,20 @@ ToolResult ShellTool::run_new_command(const std::string& command,
 
     // Read output with stall detection
     constexpr size_t max_output = 10000;
-    auto result = read_with_timeout(stdout_pipe[0], pid, kStallTimeoutMs);
+    auto result = read_with_timeout(stdout_pipe[0], pid, kStallTimeoutMs, token);
 
     if (result.output.size() > max_output) {
         result.output = result.output.substr(0, max_output) + "\n[truncated]";
+    }
+
+    if (result.cancelled) {
+        // Cancelled — kill child and report
+        if (stdin_pipe[1] >= 0) close(stdin_pipe[1]);
+        kill(pid, SIGKILL);
+        close(stdout_pipe[0]);
+        int status = 0;
+        waitpid(pid, &status, 0);
+        return ToolResult{false, result.output + "\n[cancelled]"};
     }
 
     if (!result.still_running) {
@@ -136,7 +152,9 @@ ToolResult ShellTool::run_new_command(const std::string& command,
     return ToolResult{true, result.output};
 }
 
-ToolResult ShellTool::resume_process(const std::string& proc_id, const std::string& stdin_data) {
+ToolResult ShellTool::resume_process(const std::string& proc_id,
+                                     const std::string& stdin_data,
+                                     const CancellationToken& token) {
     auto it = processes_.find(proc_id);
     if (it == processes_.end()) {
         return ToolResult{false, "No such process: " + proc_id};
@@ -162,10 +180,15 @@ ToolResult ShellTool::resume_process(const std::string& proc_id, const std::stri
     // Read new output — use longer timeout since we just sent data and
     // the process may need time for network/IO before responding
     constexpr size_t max_output = 10000;
-    auto result = read_with_timeout(proc.stdout_fd, proc.pid, kResumeTimeoutMs);
+    auto result = read_with_timeout(proc.stdout_fd, proc.pid, kResumeTimeoutMs, token);
 
     if (result.output.size() > max_output) {
         result.output = result.output.substr(0, max_output) + "\n[truncated]";
+    }
+
+    if (result.cancelled) {
+        cleanup_process(proc_id);
+        return ToolResult{false, result.output + "\n[cancelled]"};
     }
 
     if (!result.still_running) {
@@ -185,40 +208,63 @@ ToolResult ShellTool::resume_process(const std::string& proc_id, const std::stri
     return ToolResult{true, result.output};
 }
 
-ShellTool::ReadResult ShellTool::read_with_timeout(int stdout_fd, pid_t pid, int timeout_ms) {
+ShellTool::ReadResult ShellTool::read_with_timeout(int stdout_fd, pid_t pid,
+                                                    int timeout_ms,
+                                                    const CancellationToken& token) {
     std::string output;
     std::array<char, 4096> buffer;
+    // Use short poll intervals to check cancellation, but track total stall time
+    constexpr int kPollIntervalMs = 200;
+
+    int stall_elapsed_ms = 0;
 
     while (true) {
+        if (is_cancelled(token)) {
+            return {output, true, true, 0, false};
+        }
+
         struct pollfd pfd;
         pfd.fd = stdout_fd;
         pfd.events = POLLIN;
 
-        int ret = poll(&pfd, 1, timeout_ms);
+        int poll_ms = (timeout_ms > 0)
+            ? std::min(kPollIntervalMs, timeout_ms - stall_elapsed_ms)
+            : kPollIntervalMs;
+        if (poll_ms <= 0) poll_ms = 1;
+
+        int ret = poll(&pfd, 1, poll_ms);
 
         if (ret < 0) {
             break; // poll error
         }
 
         if (ret == 0) {
-            // Timeout — check if process is still alive
-            int status = 0;
-            pid_t result = waitpid(pid, &status, WNOHANG);
-            if (result == 0) {
-                // Still running, no output = stalled (waiting for input)
-                return {output, true, 0, false};
+            stall_elapsed_ms += poll_ms;
+            // Check cancellation on every poll timeout
+            if (is_cancelled(token)) {
+                return {output, true, true, 0, false};
             }
-            // Process exited during timeout — already reaped by WNOHANG
-            return {output, false, status, result > 0};
+            // Check if we've exceeded the stall timeout
+            if (timeout_ms > 0 && stall_elapsed_ms >= timeout_ms) {
+                int status = 0;
+                pid_t result = waitpid(pid, &status, WNOHANG);
+                if (result == 0) {
+                    return {output, true, false, 0, false};
+                }
+                return {output, false, false, status, result > 0};
+            }
+            continue;
         }
+
+        // Got activity — reset stall timer
+        stall_elapsed_ms = 0;
 
         if ((pfd.revents & POLLIN) != 0) {
             ssize_t n = read(stdout_fd, buffer.data(), buffer.size());
             if (n > 0) {
                 output.append(buffer.data(), static_cast<size_t>(n));
-                continue; // Reset timeout — got data, keep reading
+                continue;
             }
-            // EOF
             return {output, false};
         }
 

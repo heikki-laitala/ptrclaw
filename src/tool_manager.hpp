@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdint>
 #include <future>
+#include <unordered_map>
 
 namespace ptrclaw {
 
@@ -67,8 +68,11 @@ public:
 
 private:
     void on_tool_call_request(const ToolCallRequestEvent& ev);
-    void execute_and_publish(const ToolCallRequestEvent& ev);
-    ToolResult execute_tool(const std::string& name, const std::string& args_json);
+    void on_tool_call_cancel(const ToolCallCancelEvent& ev);
+    void execute_and_publish(const ToolCallRequestEvent& ev,
+                             const CancellationToken& token);
+    ToolResult execute_tool(const std::string& name, const std::string& args_json,
+                            const CancellationToken& token);
     std::string apply_filters(const std::string& tool_name,
                               const std::string& args_json,
                               bool success,
@@ -78,10 +82,17 @@ private:
     std::vector<std::unique_ptr<Tool>> tools_;
     Config config_;
     EventBus& bus_;
-    uint64_t subscription_id_ = 0;
+    uint64_t request_sub_id_ = 0;
+    uint64_t cancel_sub_id_ = 0;
     bool memory_active_ = false;
     std::vector<std::future<void>> pending_futures_;
     std::mutex futures_mutex_;
+    struct ActiveCall {
+        CancellationToken token;
+        std::string batch_id;
+    };
+    std::unordered_map<std::string, ActiveCall> active_calls_;  // keyed by tool_call_id
+    std::mutex calls_mutex_;
 };
 
 } // namespace ptrclaw

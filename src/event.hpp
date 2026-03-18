@@ -29,6 +29,7 @@ namespace event_tags {
     constexpr const char* StreamStart      = "StreamStart";
     constexpr const char* StreamChunk      = "StreamChunk";
     constexpr const char* ToolsAvailable   = "ToolsAvailable";
+    constexpr const char* ToolCallCancel   = "ToolCallCancel";
     constexpr const char* SkillRequest     = "SkillRequest";
     constexpr const char* SkillResponse    = "SkillResponse";
     constexpr const char* StreamEnd        = "StreamEnd";
@@ -96,6 +97,13 @@ struct ToolCallResultEvent : Event {
     uint32_t filtered_tokens = 0;
 
     ToolCallResultEvent() { type_tag = TAG; }
+};
+
+struct ToolCallCancelEvent : Event {
+    static constexpr const char* TAG = event_tags::ToolCallCancel;
+    std::string batch_id;  // cancel all tool calls in this batch
+
+    ToolCallCancelEvent() { type_tag = TAG; }
 };
 
 struct ToolsAvailableEvent : Event {

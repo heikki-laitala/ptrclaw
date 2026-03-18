@@ -17,6 +17,8 @@ public:
     ~ShellTool() override;
 
     ToolResult execute(const std::string& args_json) override;
+    ToolResult execute(const std::string& args_json,
+                       const CancellationToken& token) override;
     std::string tool_name() const override { return "shell"; }
     std::string description() const override;
     std::string parameters_json() const override;
@@ -28,16 +30,19 @@ private:
     static constexpr size_t kMaxProcesses = 4;
 
     ToolResult run_new_command(const std::string& command, const std::string& stdin_data,
-                              bool has_stdin);
-    ToolResult resume_process(const std::string& proc_id, const std::string& stdin_data);
+                              bool has_stdin, const CancellationToken& token);
+    ToolResult resume_process(const std::string& proc_id, const std::string& stdin_data,
+                              const CancellationToken& token);
 
     struct ReadResult {
         std::string output;
         bool still_running;
+        bool cancelled = false;
         int exit_status = 0;  // valid when !still_running && reaped by WNOHANG
         bool reaped = false;  // true if waitpid was already called
     };
-    ReadResult read_with_timeout(int stdout_fd, pid_t pid, int timeout_ms);
+    ReadResult read_with_timeout(int stdout_fd, pid_t pid, int timeout_ms,
+                                 const CancellationToken& token);
 
     void cleanup_process(const std::string& id);
     void kill_all_processes();
