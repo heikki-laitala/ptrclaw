@@ -35,7 +35,8 @@ nlohmann::json Config::defaults_json() {
             {"max_history_messages", 50},
             {"token_limit", 128000},
             {"disable_streaming", false},
-            {"tee_mode", "off"}
+            {"tee_mode", "off"},
+            {"tool_timeout", 120}
         }},
         {"channels", {
             {"telegram", {{"bot_token", ""}, {"allow_from", nlohmann::json::array()}, {"reply_in_private", true}, {"proxy", ""}}},
@@ -166,6 +167,8 @@ Config Config::load() {
                 cfg.agent.tee_mode = mode;
             }
         }
+        if (a.contains("tool_timeout") && a["tool_timeout"].is_number_unsigned())
+            cfg.agent.tool_timeout = a["tool_timeout"].get<uint32_t>();
     }
 
     // Channel configurations — store raw JSON per channel name

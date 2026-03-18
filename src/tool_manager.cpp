@@ -22,14 +22,24 @@ void BatchCollector::on_result(const ToolCallResultEvent& ev) {
     }
 }
 
-void BatchCollector::wait() {
+bool BatchCollector::wait(std::chrono::seconds timeout) {
     std::unique_lock<std::mutex> lock(mutex_);
-    cv_.wait(lock, [this] { return results_.size() >= expected_; });
+    if (timeout.count() == 0) {
+        cv_.wait(lock, [this] { return results_.size() >= expected_; });
+        return true;
+    }
+    return cv_.wait_for(lock, timeout,
+        [this] { return results_.size() >= expected_; });
 }
 
 std::vector<ToolCallResultEvent> BatchCollector::results() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return results_;
+}
+
+size_t BatchCollector::missing() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return expected_ > results_.size() ? expected_ - results_.size() : 0;
 }
 
 // ── ToolManager ─────────────────────────────────────────────────
@@ -41,6 +51,12 @@ ToolManager::ToolManager(std::vector<std::unique_ptr<Tool>> tools,
     subscription_id_ = subscribe<ToolCallRequestEvent>(bus_,
         std::function<void(const ToolCallRequestEvent&)>(
             [this](const ToolCallRequestEvent& ev) { on_tool_call_request(ev); }));
+
+    // Wire EventBus into tools that need it
+    for (auto& tool : tools_) {
+        auto* ebt = dynamic_cast<EventBusAwareTool*>(tool.get());
+        if (ebt) ebt->set_event_bus(&bus_);
+    }
 }
 
 void ToolManager::publish_tool_specs(const std::string& session_id) {
@@ -67,15 +83,6 @@ void ToolManager::wire_memory(Memory* memory) {
     }
 }
 
-void ToolManager::wire_agent(Agent* agent) {
-    for (auto& tool : tools_) {
-        auto* aat = dynamic_cast<AgentAwareTool*>(tool.get());
-        if (aat) {
-            aat->set_agent(agent);
-        }
-    }
-}
-
 void ToolManager::reset_all() {
     for (auto& tool : tools_) {
         tool->reset();
@@ -92,20 +99,15 @@ ToolManager::~ToolManager() {
 void ToolManager::on_tool_call_request(const ToolCallRequestEvent& ev) {
     std::cerr << "[tool] " << ev.tool_name << '\n';
 
-    Tool* tool = find_tool(ev.tool_name);
-    if (tool && tool->is_parallel_safe()) {
-        cleanup_futures();
-        std::lock_guard<std::mutex> lock(futures_mutex_);
-        pending_futures_.push_back(
-            std::async(std::launch::async,
-                [this, ev]() noexcept { // NOLINT(bugprone-exception-escape)
-                    try {
-                        execute_and_publish(ev);
-                    } catch (...) {} // NOLINT(bugprone-empty-catch)
-                }));
-    } else {
-        execute_and_publish(ev);
-    }
+    cleanup_futures();
+    std::lock_guard<std::mutex> lock(futures_mutex_);
+    pending_futures_.push_back(
+        std::async(std::launch::async,
+            [this, ev]() noexcept { // NOLINT(bugprone-exception-escape)
+                try {
+                    execute_and_publish(ev);
+                } catch (...) {} // NOLINT(bugprone-empty-catch)
+            }));
 }
 
 void ToolManager::execute_and_publish(const ToolCallRequestEvent& ev) {
@@ -134,17 +136,11 @@ void ToolManager::execute_and_publish(const ToolCallRequestEvent& ev) {
     bus_.publish(rev);
 }
 
-Tool* ToolManager::find_tool(const std::string& name) {
-    for (const auto& tool : tools_) {
-        if (tool->tool_name() == name) return tool.get();
-    }
-    return nullptr;
-}
-
 ToolResult ToolManager::execute_tool(const std::string& name,
                                      const std::string& args_json) {
-    Tool* tool = find_tool(name);
-    if (tool) return tool->execute(args_json);
+    for (const auto& tool : tools_) {
+        if (tool->tool_name() == name) return tool->execute(args_json);
+    }
     return ToolResult{false, "Unknown tool: " + name};
 }
 

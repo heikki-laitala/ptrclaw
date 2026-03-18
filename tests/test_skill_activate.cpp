@@ -1,15 +1,18 @@
 #include <catch2/catch_test_macros.hpp>
 #include "agent.hpp"
 #include "plugin.hpp"
+#include "tool_manager.hpp"
+#include "event_bus.hpp"
 #include "test_helpers.hpp"
 
 using namespace ptrclaw;
 
 struct SkillActivateFixture {
     HomeGuard home;
-    std::unique_ptr<Tool> standalone_tool_;
+    EventBus bus;
+    std::unique_ptr<ToolManager> tool_mgr;
     Agent agent;
-    AgentAwareTool* skill_tool;
+    Tool* skill_tool;
 
     SkillActivateFixture()
         : agent(std::make_unique<StubProvider>(),
@@ -23,32 +26,37 @@ struct SkillActivateFixture {
             "---\nname: debug\n---\nDebug.\n");
 
         auto tools = create_builtin_tools();
-        for (auto& t : tools) {
+        for (const auto& t : tools) {
             if (t->tool_name() == "skill_activate") {
-                skill_tool = static_cast<AgentAwareTool*>(t.get());
-                skill_tool->set_agent(&agent);
-                standalone_tool_ = std::move(t);
-                break;
+                skill_tool = t.get();
             }
         }
+
+        Config c;
+        c.agent.max_tool_iterations = 5;
+        c.memory.backend = "none";
+        tool_mgr = std::make_unique<ToolManager>(std::move(tools), c, bus);
+        agent.set_event_bus(&bus);
+        tool_mgr->wire_memory(agent.memory());
+        tool_mgr->publish_tool_specs();
     }
 };
 
 // ── Tests ────────────────────────────────────────────────────────
 
-TEST_CASE("skill_activate: no agent returns error", "[skill_activate]") {
+TEST_CASE("skill_activate: no event bus returns error", "[skill_activate]") {
     auto tools = create_builtin_tools();
-    AgentAwareTool* tool = nullptr;
-    for (auto& t : tools) {
+    Tool* tool = nullptr;
+    for (const auto& t : tools) {
         if (t->tool_name() == "skill_activate") {
-            tool = static_cast<AgentAwareTool*>(t.get());
+            tool = t.get();
             break;
         }
     }
     REQUIRE(tool != nullptr);
     auto result = tool->execute(R"({"name": "test"})");
     REQUIRE_FALSE(result.success);
-    REQUIRE(result.output.find("Agent not available") != std::string::npos);
+    REQUIRE(result.output.find("EventBus not available") != std::string::npos);
 }
 
 TEST_CASE("skill_activate: invalid JSON", "[skill_activate]") {

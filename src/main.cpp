@@ -282,7 +282,6 @@ int main(int argc, char* argv[]) try {
     agent.set_event_bus(&cli_bus);
     agent.set_binary_path(binary_path);
 
-    tool_mgr.wire_agent(&agent);
     tool_mgr.wire_memory(agent.memory());
     tool_mgr.publish_tool_specs();
 

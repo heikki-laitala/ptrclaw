@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <condition_variable>
+#include <chrono>
 #include <cstdint>
 #include <future>
 
@@ -24,11 +25,17 @@ public:
     // Called by EventBus handler when a ToolCallResultEvent arrives.
     void on_result(const ToolCallResultEvent& ev);
 
-    // Block until all expected results have arrived.
-    void wait();
+    // Block until all expected results arrive. Returns true if all
+    // results arrived, false if the timeout expired first.
+    // A zero timeout means wait indefinitely.
+    bool wait(std::chrono::seconds timeout = std::chrono::seconds{0});
 
     // Retrieve collected results (valid after wait() returns).
+    // On timeout, contains only the results received so far.
     std::vector<ToolCallResultEvent> results() const;
+
+    // Number of results still missing after wait() returns.
+    size_t missing() const;
 
 private:
     std::string batch_id_;
@@ -53,7 +60,6 @@ public:
 
     // Tool wiring (delegates to individual tools)
     void wire_memory(Memory* memory);
-    void wire_agent(Agent* agent);
     void reset_all();
 
     // Access tools (e.g. for system prompt building by non-native providers)
@@ -62,7 +68,6 @@ public:
 private:
     void on_tool_call_request(const ToolCallRequestEvent& ev);
     void execute_and_publish(const ToolCallRequestEvent& ev);
-    Tool* find_tool(const std::string& name);
     ToolResult execute_tool(const std::string& name, const std::string& args_json);
     std::string apply_filters(const std::string& tool_name,
                               const std::string& args_json,
