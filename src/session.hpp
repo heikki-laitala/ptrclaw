@@ -3,7 +3,9 @@
 #include "tool_manager.hpp"
 #include "config.hpp"
 #include "http.hpp"
+#ifdef PTRCLAW_HAS_OPENAI
 #include "oauth.hpp"
+#endif
 #include <string>
 #include <memory>
 #include <unordered_map>
@@ -59,14 +61,25 @@ private:
     std::string binary_path_;
     EventBus* event_bus_ = nullptr;
     Embedder* embedder_ = nullptr;
+
+    // Create a new session with provider, tools, event bus, embedder
+    Session create_session(const std::string& session_id);
+
+    // Dispatch a slash command or regular message
+    void handle_message(const MessageReceivedEvent& ev);
+
+    // Handle /auth commands (API key setting + OAuth if available)
+    bool handle_auth_command(const MessageReceivedEvent& ev,
+                             Agent& agent,
+                             const std::function<void(const std::string&)>& send_reply);
+
+#ifdef PTRCLAW_HAS_OPENAI
     std::unordered_map<std::string, PendingOAuth> pending_oauth_;
 
     std::optional<PendingOAuth> get_pending_oauth(const std::string& session_id);
     void set_pending_oauth(const std::string& session_id, PendingOAuth pending);
     void clear_pending_oauth(const std::string& session_id);
-    bool handle_auth_command(const MessageReceivedEvent& ev,
-                             Agent& agent,
-                             const std::function<void(const std::string&)>& send_reply);
+#endif
 };
 
 } // namespace ptrclaw

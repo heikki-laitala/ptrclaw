@@ -156,28 +156,35 @@ std::string cmd_skill(const std::string& args, Agent& agent) {
     return "Unknown skill: " + trimmed;
 }
 
-std::string cmd_help(bool dev) {
+std::string cmd_help(bool dev, bool channel) {
     std::string result =
         "Commands:\n"
+        "  /new             Clear conversation history\n"
         "  /status          Show current status\n"
         "  /model X         Switch to model X\n"
         "  /models          List configured providers\n"
         "  /provider X [M]  Switch to provider X, optional model M\n"
-        "  /clear           Clear conversation history\n"
         "  /skill [name]    List or activate skills\n"
-        "  /memory          Show memory status\n"
-        "  /memory export   Export memories as JSON\n"
-        "  /memory import P Import memories from JSON file\n"
+        "  /memory          Show memory status\n";
+    if (!channel) {
+        result +=
+            "  /memory export   Export memories as JSON\n"
+            "  /memory import P Import memories from JSON file\n";
+    }
+    result +=
         "  /auth            Show auth status for all providers\n"
-        "  /auth <provider> Set credentials for a provider\n";
+        "  /auth <prov> <key>  Set API key\n"
+        "  /auth openai start  Begin OAuth flow\n";
     if (dev) {
         result += "  /soul            Show current soul/identity data\n";
     }
-    result +=
-        "  /hatch           Create or re-create assistant identity\n"
-        "  /onboard         Run setup wizard\n"
-        "  /exit, /quit     Exit\n"
-        "  /help            Show this help\n";
+    result += "  /hatch           Create or re-create assistant identity\n";
+    if (!channel) {
+        result +=
+            "  /onboard         Run setup wizard\n"
+            "  /exit, /quit     Exit\n";
+    }
+    result += "  /help            Show this help\n";
     return result;
 }
 
