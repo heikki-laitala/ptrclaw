@@ -52,7 +52,6 @@ int run_repl(Agent& agent, Config& config, HttpClient& http,
                              const std::string& code) {
         auto r = apply_oauth_result(code, pending, config, http);
         if (!r.success) { std::cout << r.error << "\n"; return; }
-        setup_oauth_refresh(r.provider.get(), config);
         agent.set_provider(std::move(r.provider));
         agent.set_model(kDefaultOAuthModel);
         pending_oauth.reset();
@@ -133,9 +132,6 @@ int run_repl(Agent& agent, Config& config, HttpClient& http,
                     if (!sr.error.empty()) {
                         std::cout << sr.error << "\n";
                     } else {
-#ifdef PTRCLAW_HAS_OPENAI
-                        setup_oauth_refresh(sr.provider.get(), config);
-#endif
                         agent.set_provider(std::move(sr.provider));
                         if (!sr.model.empty()) agent.set_model(sr.model);
                         std::cout << "Provider: " << agent.provider_name()
@@ -277,9 +273,6 @@ int run_repl(Agent& agent, Config& config, HttpClient& http,
                     if (!sr.error.empty()) {
                         std::cout << sr.error << "\n";
                     } else {
-#ifdef PTRCLAW_HAS_OPENAI
-                        setup_oauth_refresh(sr.provider.get(), config);
-#endif
                         agent.set_provider(std::move(sr.provider));
                         if (!sr.model.empty()) agent.set_model(sr.model);
                     }

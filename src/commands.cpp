@@ -7,9 +7,6 @@
 #include "prompt.hpp"
 #include "provider.hpp"
 #include "util.hpp"
-#ifdef PTRCLAW_HAS_OPENAI
-#include "providers/oauth_openai.hpp"
-#endif
 
 #include <fstream>
 
@@ -83,7 +80,6 @@ std::string cmd_model(const std::string& new_model, Agent& agent,
             auto sr = switch_provider("openai", new_model, agent.model(),
                                        config, http);
             if (!sr.error.empty()) return sr.error;
-            setup_oauth_refresh(sr.provider.get(), config);
             agent.set_provider(std::move(sr.provider));
             if (!sr.model.empty()) agent.set_model(sr.model);
             config.model = agent.model();
@@ -110,9 +106,6 @@ std::string cmd_provider(const std::string& args_str, Agent& agent,
     auto sr = switch_provider(prov_name, model_arg, agent.model(), config, http);
     if (!sr.error.empty()) return sr.error;
 
-#ifdef PTRCLAW_HAS_OPENAI
-    setup_oauth_refresh(sr.provider.get(), config);
-#endif
     agent.set_provider(std::move(sr.provider));
     if (!sr.model.empty()) agent.set_model(sr.model);
     config.provider = prov_name;

@@ -10,9 +10,6 @@
 #include "session.hpp"
 #include "stream_relay.hpp"
 #include "onboard.hpp"
-#ifdef PTRCLAW_HAS_OPENAI
-#include "providers/oauth_openai.hpp"
-#endif
 #include "repl.hpp"
 #include "util.hpp"
 #ifdef PTRCLAW_HAS_EMBEDDINGS
@@ -242,9 +239,6 @@ int main(int argc, char* argv[]) try {
         std::cerr << "Error creating provider: " << e.what() << "\n";
         return 1;
     }
-#ifdef PTRCLAW_HAS_OPENAI
-    ptrclaw::setup_oauth_refresh(provider.get(), config);
-#endif
 
     ptrclaw::EventBus cli_bus;
     auto tools = ptrclaw::create_builtin_tools();

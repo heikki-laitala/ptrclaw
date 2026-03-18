@@ -34,9 +34,6 @@ Agent& SessionManager::get_session(const std::string& session_id) {
         throw std::runtime_error("Cannot create provider: " + sr.error);
     }
     auto provider = std::move(sr.provider);
-#ifdef PTRCLAW_HAS_OPENAI
-    setup_oauth_refresh(provider.get(), config_);
-#endif
 
     Session session;
     session.id = session_id;
@@ -271,7 +268,6 @@ bool SessionManager::handle_auth_command(
                              const std::string& code) {
         auto r = apply_oauth_result(code, pending, config_, http_);
         if (!r.success) { send_reply(r.error); return; }
-        setup_oauth_refresh(r.provider.get(), config_);
         agent.set_provider(std::move(r.provider));
         agent.set_model(kDefaultOAuthModel);
         clear_pending_oauth(ev.session_id);
