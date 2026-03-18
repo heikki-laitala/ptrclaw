@@ -13,15 +13,14 @@ struct SkillActivateFixture {
 
     SkillActivateFixture()
         : agent(std::make_unique<StubProvider>(),
-                std::vector<std::unique_ptr<Tool>>{},
                 []{ Config c; c.agent.max_tool_iterations = 5;
                     c.memory.backend = "none"; return c; }())
         , skill_tool(nullptr)
     {
         home.add_skill("review.md",
-            "---\nname: review\ntools: [file_read]\n---\nReview.\n");
+            "---\nname: review\n---\nReview.\n");
         home.add_skill("debug.md",
-            "---\nname: debug\ntools: [shell]\n---\nDebug.\n");
+            "---\nname: debug\n---\nDebug.\n");
 
         auto tools = create_builtin_tools();
         for (auto& t : tools) {

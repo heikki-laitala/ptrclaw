@@ -1,7 +1,9 @@
 #pragma once
+#include "tool.hpp"
 #include "provider.hpp"
 #include "channel.hpp"
 #include <string>
+#include <vector>
 #include <cstdint>
 
 namespace ptrclaw {
@@ -26,6 +28,7 @@ namespace event_tags {
     constexpr const char* SessionEvicted   = "SessionEvicted";
     constexpr const char* StreamStart      = "StreamStart";
     constexpr const char* StreamChunk      = "StreamChunk";
+    constexpr const char* ToolsAvailable   = "ToolsAvailable";
     constexpr const char* StreamEnd        = "StreamEnd";
 } // namespace event_tags
 
@@ -71,8 +74,10 @@ struct ProviderResponseEvent : Event {
 struct ToolCallRequestEvent : Event {
     static constexpr const char* TAG = event_tags::ToolCallRequest;
     std::string session_id;
+    std::string batch_id;
     std::string tool_name;
     std::string tool_call_id;
+    std::string arguments_json;
 
     ToolCallRequestEvent() { type_tag = TAG; }
 };
@@ -80,12 +85,23 @@ struct ToolCallRequestEvent : Event {
 struct ToolCallResultEvent : Event {
     static constexpr const char* TAG = event_tags::ToolCallResult;
     std::string session_id;
+    std::string batch_id;
+    std::string tool_call_id;
     std::string tool_name;
     bool success = false;
+    std::string output;
     uint32_t raw_tokens = 0;
     uint32_t filtered_tokens = 0;
 
     ToolCallResultEvent() { type_tag = TAG; }
+};
+
+struct ToolsAvailableEvent : Event {
+    static constexpr const char* TAG = event_tags::ToolsAvailable;
+    std::string session_id;
+    std::vector<ToolSpec> specs;
+
+    ToolsAvailableEvent() { type_tag = TAG; }
 };
 
 struct SessionCreatedEvent : Event {

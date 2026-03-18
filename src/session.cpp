@@ -5,6 +5,7 @@
 #include "onboard.hpp"
 #include "event.hpp"
 #include "event_bus.hpp"
+#include "tool_manager.hpp"
 #include "plugin.hpp"
 #include "util.hpp"
 #include <nlohmann/json.hpp>
@@ -33,11 +34,9 @@ Agent& SessionManager::get_session(const std::string& session_id) {
     auto provider = std::move(sr.provider);
     setup_oauth_refresh(provider.get(), config_);
 
-    auto tools = create_builtin_tools();
-
     Session session;
     session.id = session_id;
-    session.agent = std::make_unique<Agent>(std::move(provider), std::move(tools), config_);
+    session.agent = std::make_unique<Agent>(std::move(provider), config_);
     session.last_active = epoch_seconds();
 
     // Propagate binary path to new agent
@@ -45,10 +44,17 @@ Agent& SessionManager::get_session(const std::string& session_id) {
         session.agent->set_binary_path(binary_path_);
     }
 
-    // Propagate event bus to new agent
+    // Propagate event bus and create ToolManager
     if (event_bus_) {
         session.agent->set_event_bus(event_bus_);
         session.agent->set_session_id(session_id);
+
+        auto tools = create_builtin_tools();
+        session.tool_manager = std::make_unique<ToolManager>(
+            std::move(tools), config_, *event_bus_);
+        session.tool_manager->wire_agent(session.agent.get());
+        session.tool_manager->wire_memory(session.agent->memory());
+        session.tool_manager->publish_tool_specs(session_id);
 
         SessionCreatedEvent ev;
         ev.session_id = session_id;

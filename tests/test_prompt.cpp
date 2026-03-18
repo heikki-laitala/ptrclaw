@@ -13,24 +13,30 @@ public:
     std::string parameters_json() const override { return R"({"type":"object"})"; }
 };
 
+// Helper to get specs from tools
+static std::vector<ToolSpec> specs_from(const std::vector<std::unique_ptr<Tool>>& tools) {
+    std::vector<ToolSpec> specs;
+    specs.reserve(tools.size());
+    for (const auto& t : tools) specs.push_back(t->spec());
+    return specs;
+}
+
 // ── build_system_prompt ─────────────────────────────────────────
 
 TEST_CASE("build_system_prompt: contains PtrClaw identity", "[prompt]") {
-    std::vector<std::unique_ptr<Tool>> tools;
-    auto result = build_system_prompt(tools, false);
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false);
     REQUIRE(result.find("PtrClaw") != std::string::npos);
 }
 
 TEST_CASE("build_system_prompt: contains working directory", "[prompt]") {
-    std::vector<std::unique_ptr<Tool>> tools;
-    auto result = build_system_prompt(tools, false);
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false);
     REQUIRE(result.find("Working directory:") != std::string::npos);
 }
 
 TEST_CASE("build_system_prompt: native provider shows tool summary", "[prompt]") {
     std::vector<std::unique_ptr<Tool>> tools;
     tools.push_back(std::make_unique<PromptMockTool>());
-    auto result = build_system_prompt(tools, false);
+    auto result = build_system_prompt(specs_from(tools), false);
     REQUIRE(result.find("Available tools:") == std::string::npos);
     REQUIRE(result.find("test_tool") != std::string::npos);
     REQUIRE(result.find("A test tool") != std::string::npos);
@@ -41,7 +47,7 @@ TEST_CASE("build_system_prompt: native provider shows tool summary", "[prompt]")
 TEST_CASE("build_system_prompt: XML provider shows full tool schemas", "[prompt]") {
     std::vector<std::unique_ptr<Tool>> tools;
     tools.push_back(std::make_unique<PromptMockTool>());
-    auto result = build_system_prompt(tools, true);
+    auto result = build_system_prompt(specs_from(tools), true);
     REQUIRE(result.find("Available tools:") != std::string::npos);
     REQUIRE(result.find("test_tool") != std::string::npos);
     REQUIRE(result.find("A test tool") != std::string::npos);
@@ -49,8 +55,7 @@ TEST_CASE("build_system_prompt: XML provider shows full tool schemas", "[prompt]
 }
 
 TEST_CASE("build_system_prompt: empty tool list omits tool section", "[prompt]") {
-    std::vector<std::unique_ptr<Tool>> tools;
-    auto result = build_system_prompt(tools, true);
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, true);
     REQUIRE(result.find("tools") == std::string::npos);
     REQUIRE(result.find("tool_call") == std::string::npos);
 }
@@ -59,7 +64,7 @@ TEST_CASE("build_system_prompt: multiple tools listed", "[prompt]") {
     std::vector<std::unique_ptr<Tool>> tools;
     tools.push_back(std::make_unique<PromptMockTool>());
     tools.push_back(std::make_unique<PromptMockTool>());
-    auto result = build_system_prompt(tools, true);
+    auto result = build_system_prompt(specs_from(tools), true);
     // "test_tool" should appear twice (once per tool)
     auto first = result.find("- test_tool");
     REQUIRE(first != std::string::npos);
@@ -68,30 +73,27 @@ TEST_CASE("build_system_prompt: multiple tools listed", "[prompt]") {
 }
 
 TEST_CASE("build_system_prompt: includes style adaptation instruction", "[prompt]") {
-    std::vector<std::unique_ptr<Tool>> tools;
-    auto result = build_system_prompt(tools, false);
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false);
     REQUIRE(result.find("Adapt your communication style") != std::string::npos);
 }
 
 TEST_CASE("build_system_prompt: includes tool call style section", "[prompt]") {
     std::vector<std::unique_ptr<Tool>> tools;
     tools.push_back(std::make_unique<PromptMockTool>());
-    auto result = build_system_prompt(tools, false);
+    auto result = build_system_prompt(specs_from(tools), false);
     REQUIRE(result.find("Tool Call Style") != std::string::npos);
     REQUIRE(result.find("Do not narrate routine") != std::string::npos);
 }
 
 TEST_CASE("build_system_prompt: includes safety section", "[prompt]") {
-    std::vector<std::unique_ptr<Tool>> tools;
-    auto result = build_system_prompt(tools, false);
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false);
     REQUIRE(result.find("## Safety") != std::string::npos);
     REQUIRE(result.find("self-preservation") != std::string::npos);
 }
 
 TEST_CASE("build_system_prompt: includes runtime info", "[prompt]") {
-    std::vector<std::unique_ptr<Tool>> tools;
     RuntimeInfo runtime{"claude-sonnet-4", "anthropic", "telegram", "", ""};
-    auto result = build_system_prompt(tools, false, false, nullptr, runtime);
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr, runtime);
     REQUIRE(result.find("## Runtime") != std::string::npos);
     REQUIRE(result.find("claude-sonnet-4") != std::string::npos);
     REQUIRE(result.find("anthropic") != std::string::npos);
@@ -99,28 +101,25 @@ TEST_CASE("build_system_prompt: includes runtime info", "[prompt]") {
 }
 
 TEST_CASE("build_system_prompt: silent replies only with channel", "[prompt]") {
-    std::vector<std::unique_ptr<Tool>> tools;
     // No channel — no silent replies
-    auto result = build_system_prompt(tools, false);
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false);
     REQUIRE(result.find("[SILENT]") == std::string::npos);
 
     // With channel — has silent replies
     RuntimeInfo runtime{"", "", "telegram", "", ""};
-    auto result2 = build_system_prompt(tools, false, false, nullptr, runtime);
+    auto result2 = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr, runtime);
     REQUIRE(result2.find("[SILENT]") != std::string::npos);
 }
 
 TEST_CASE("build_system_prompt: workspace section present", "[prompt]") {
-    std::vector<std::unique_ptr<Tool>> tools;
-    auto result = build_system_prompt(tools, false);
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false);
     REQUIRE(result.find("## Workspace") != std::string::npos);
 }
 
 TEST_CASE("build_system_prompt: includes binary path and session", "[prompt]") {
-    std::vector<std::unique_ptr<Tool>> tools;
     RuntimeInfo runtime{"model", "provider", "telegram",
                         "/usr/local/bin/ptrclaw", "123456789"};
-    auto result = build_system_prompt(tools, false, false, nullptr, runtime);
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr, runtime);
     REQUIRE(result.find("Binary: /usr/local/bin/ptrclaw") != std::string::npos);
     REQUIRE(result.find("Session: 123456789") != std::string::npos);
 }
@@ -139,7 +138,7 @@ TEST_CASE("build_system_prompt: scheduling hint with cron tool", "[prompt]") {
     tools.push_back(std::make_unique<MockCronTool>());
     RuntimeInfo runtime{"model", "provider", "telegram",
                         "/usr/local/bin/ptrclaw", "123456789"};
-    auto result = build_system_prompt(tools, false, false, nullptr, runtime);
+    auto result = build_system_prompt(specs_from(tools), false, false, nullptr, runtime);
     REQUIRE(result.find("## Scheduled Tasks") != std::string::npos);
     REQUIRE(result.find("/usr/local/bin/ptrclaw -m") != std::string::npos);
     REQUIRE(result.find("--notify telegram:123456789") != std::string::npos);
@@ -149,94 +148,6 @@ TEST_CASE("build_system_prompt: no scheduling hint without binary path", "[promp
     std::vector<std::unique_ptr<Tool>> tools;
     tools.push_back(std::make_unique<MockCronTool>());
     RuntimeInfo runtime{"model", "provider", "telegram", "", ""};
-    auto result = build_system_prompt(tools, false, false, nullptr, runtime);
+    auto result = build_system_prompt(specs_from(tools), false, false, nullptr, runtime);
     REQUIRE(result.find("## Scheduled Tasks") == std::string::npos);
-}
-
-// ── Mock tool with custom name for skill whitelist tests ────────
-
-class NamedMockTool : public Tool {
-public:
-    explicit NamedMockTool(std::string name) : name_(std::move(name)) {}
-    ToolResult execute(const std::string&) override { return {true, ""}; }
-    std::string tool_name() const override { return name_; }
-    std::string description() const override { return "Mock " + name_; }
-    std::string parameters_json() const override { return R"({"type":"object"})"; }
-private:
-    std::string name_;
-};
-
-TEST_CASE("build_system_prompt: skill tool whitelist filters non-native tools", "[prompt]") {
-    std::vector<std::unique_ptr<Tool>> tools;
-    tools.push_back(std::make_unique<NamedMockTool>("file_read"));
-    tools.push_back(std::make_unique<NamedMockTool>("shell"));
-    tools.push_back(std::make_unique<NamedMockTool>("file_write"));
-
-    // Non-native provider (include_tool_descriptions=true) with whitelist
-    std::vector<std::string> allowed = {"file_read", "shell"};
-    auto result = build_system_prompt(tools, true, false, nullptr, {}, allowed);
-
-    REQUIRE(result.find("file_read") != std::string::npos);
-    REQUIRE(result.find("shell") != std::string::npos);
-    REQUIRE(result.find("file_write") == std::string::npos);
-}
-
-TEST_CASE("build_system_prompt: skill tool whitelist filters native tool summary", "[prompt]") {
-    std::vector<std::unique_ptr<Tool>> tools;
-    tools.push_back(std::make_unique<NamedMockTool>("file_read"));
-    tools.push_back(std::make_unique<NamedMockTool>("shell"));
-    tools.push_back(std::make_unique<NamedMockTool>("file_write"));
-
-    // Native provider (include_tool_descriptions=false) with whitelist
-    std::vector<std::string> allowed = {"shell"};
-    auto result = build_system_prompt(tools, false, false, nullptr, {}, allowed);
-
-    REQUIRE(result.find("shell") != std::string::npos);
-    REQUIRE(result.find("file_read") == std::string::npos);
-    REQUIRE(result.find("file_write") == std::string::npos);
-}
-
-TEST_CASE("build_system_prompt: empty whitelist shows all tools", "[prompt]") {
-    std::vector<std::unique_ptr<Tool>> tools;
-    tools.push_back(std::make_unique<NamedMockTool>("file_read"));
-    tools.push_back(std::make_unique<NamedMockTool>("shell"));
-
-    std::vector<std::string> allowed; // empty = all tools
-    auto result = build_system_prompt(tools, true, false, nullptr, {}, allowed);
-
-    REQUIRE(result.find("file_read") != std::string::npos);
-    REQUIRE(result.find("shell") != std::string::npos);
-}
-
-// ── tool_allowed unit tests ─────────────────────────────────────
-
-TEST_CASE("tool_allowed: no whitelist allows all tools", "[prompt]") {
-    REQUIRE(tool_allowed("file_read", true, {}));
-    REQUIRE(tool_allowed("shell", true, {}));
-    REQUIRE(tool_allowed("skill_activate", true, {}));
-}
-
-TEST_CASE("tool_allowed: whitelist allows listed tools", "[prompt]") {
-    std::vector<std::string> allowed = {"file_read", "shell"};
-    REQUIRE(tool_allowed("file_read", true, allowed));
-    REQUIRE(tool_allowed("shell", true, allowed));
-}
-
-TEST_CASE("tool_allowed: whitelist blocks unlisted tools", "[prompt]") {
-    std::vector<std::string> allowed = {"file_read"};
-    REQUIRE_FALSE(tool_allowed("shell", true, allowed));
-    REQUIRE_FALSE(tool_allowed("file_write", true, allowed));
-}
-
-TEST_CASE("tool_allowed: skill_activate always allowed with whitelist", "[prompt]") {
-    std::vector<std::string> allowed = {"file_read"};
-    REQUIRE(tool_allowed("skill_activate", true, allowed));
-}
-
-TEST_CASE("tool_allowed: memory tools blocked when memory inactive", "[prompt]") {
-    // memory_recall is a memory tool; blocked when memory is not active
-    REQUIRE_FALSE(tool_allowed("memory_recall", false, {}));
-    REQUIRE_FALSE(tool_allowed("memory_store", false, {}));
-    // non-memory tools still allowed
-    REQUIRE(tool_allowed("shell", false, {}));
 }

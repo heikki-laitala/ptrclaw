@@ -4,12 +4,11 @@
 #include "memory/response_cache.hpp"
 #include "event.hpp"
 #include "event_bus.hpp"
+#include "tool_manager.hpp"
 #include "dispatcher.hpp"
-#include "output_filter.hpp"
 #include "prompt.hpp"
 #include "skill.hpp"
 #include "util.hpp"
-#include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <nlohmann/json.hpp>
@@ -33,10 +32,8 @@ bool Agent::has_active_memory() const {
 }
 
 Agent::Agent(std::unique_ptr<Provider> provider,
-             std::vector<std::unique_ptr<Tool>> tools,
              const Config& config)
     : provider_(std::move(provider))
-    , tools_(std::move(tools))
     , config_(config)
     , model_(config.model)
 {
@@ -45,8 +42,6 @@ Agent::Agent(std::unique_ptr<Provider> provider,
     if (memory_) {
         memory_->apply_config(config_.memory);
     }
-    wire_memory_tools();
-    wire_skill_tools();
 
     // Load skills from default directory
     load_skills();
@@ -67,11 +62,9 @@ void Agent::inject_system_prompt() {
         bool include_tool_desc = !provider_->supports_native_tools();
         RuntimeInfo runtime{model_, provider_->provider_name(), channel_,
                            binary_path_, session_id_};
-        // Resolve active skill once for both tool whitelist and prompt injection.
         const auto* active = find_skill(active_skill_name_);
-        const auto& skill_tools = active ? active->tools : std::vector<std::string>{};
-        prompt = build_system_prompt(tools_, include_tool_desc, has_active_memory(),
-                                     memory_.get(), runtime, skill_tools);
+        prompt = build_system_prompt(cached_tool_specs_, include_tool_desc,
+                                     has_active_memory(), memory_.get(), runtime);
 
         // Inject available skills list
         if (!available_skills_.empty()) {
@@ -122,19 +115,10 @@ std::string Agent::process(const std::string& user_message) {
     }
     history_.push_back(ChatMessage{Role::User, enriched_message, {}, {}});
 
-    // Build tool specs (skip during hatching — no tools needed for interview)
-    // Contextual selection: omit memory tools when memory backend is inactive,
-    // and filter to skill-allowed tools when a skill is active.
+    // Use cached tool specs from ToolsAvailableEvent (skip during hatching)
     std::vector<ToolSpec> tool_specs;
     if (!hatching_ && provider_->supports_native_tools()) {
-        bool memory_active = has_active_memory();
-        const auto* active = find_skill(active_skill_name_);
-        const auto& skill_tools = active ? active->tools : std::vector<std::string>{};
-        tool_specs.reserve(tools_.size());
-        for (const auto& tool : tools_) {
-            if (!tool_allowed(tool->tool_name(), memory_active, skill_tools)) continue;
-            tool_specs.push_back(tool->spec());
-        }
+        tool_specs = cached_tool_specs_;
     }
 
     std::string final_content;
@@ -254,102 +238,40 @@ std::string Agent::process(const std::string& user_message) {
             }
         }
 
-        // Execute tool calls
+        // Dispatch tool calls via EventBus → ToolManager
         std::string xml_results;
-        for (const auto& call : response.tool_calls) {
-            std::cerr << "[tool] " << call.name << '\n';
+        if (event_bus_) {
+            std::string batch_id = generate_id();
+            BatchCollector collector(batch_id, response.tool_calls.size());
+            uint64_t sub_id = subscribe<ToolCallResultEvent>(*event_bus_,
+                std::function<void(const ToolCallResultEvent&)>(
+                    [&collector](const ToolCallResultEvent& ev) {
+                        collector.on_result(ev);
+                    }));
 
-            // Emit ToolCallRequest event
-            if (event_bus_) {
+            for (const auto& call : response.tool_calls) {
                 ToolCallRequestEvent ev;
                 ev.session_id = session_id_;
+                ev.batch_id = batch_id;
                 ev.tool_name = call.name;
                 ev.tool_call_id = call.id;
+                ev.arguments_json = call.arguments;
                 event_bus_->publish(ev);
             }
 
-            // Block tools not in the active skill's whitelist.
-            ToolResult result;
-            const auto* active_skill_ptr = find_skill(active_skill_name_);
-            bool blocked = false;
-            if (active_skill_ptr && !active_skill_ptr->tools.empty()
-                && call.name != "skill_activate") {
-                const auto& wl = active_skill_ptr->tools;
-                if (std::find(wl.begin(), wl.end(), call.name) == wl.end()) {
-                    std::string msg = "Tool '" + call.name
-                        + "' is not available with the active skill '"
-                        + active_skill_name_ + "'. Allowed: ";
-                    for (size_t wi = 0; wi < wl.size(); ++wi) {
-                        if (wi > 0) msg += ", ";
-                        msg += wl[wi];
-                    }
-                    msg += ", skill_activate."
-                           " Use /skill off or skill_activate(name=\"off\")"
-                           " to deactivate.";
-                    result = {false, msg};
-                    blocked = true;
+            collector.wait();
+            event_bus_->unsubscribe(sub_id);
+
+            for (const auto& r : collector.results()) {
+                if (provider_->supports_native_tools()) {
+                    history_.push_back(
+                        format_tool_result_message(r.tool_call_id, r.tool_name,
+                                                    r.success, r.output));
+                } else {
+                    xml_results += format_tool_results_xml(r.tool_name,
+                                                            r.success, r.output);
+                    xml_results += "\n";
                 }
-            }
-            if (!blocked) {
-                result = dispatch_tool(call, tools_);
-            }
-
-            // Filter tool output to reduce token consumption
-            uint32_t raw_tokens = estimate_tokens(result.output);
-            if (call.name == "shell") {
-                // Extract command for smart filtering
-                std::string command;
-                try {
-                    auto args = nlohmann::json::parse(call.arguments);
-                    command = args.value("command", "");
-                } catch (...) {} // NOLINT(bugprone-empty-catch)
-
-                // Tee output to disk before filtering (opt-in via config)
-                std::string tee_path;
-                if (!command.empty() && config_.agent.tee_mode != "off") {
-                    bool should_tee = (config_.agent.tee_mode == "always") ||
-                                      (config_.agent.tee_mode == "failures" && !result.success);
-                    if (should_tee) {
-                        tee_path = tee_shell_output(command, result.output);
-                    }
-                }
-
-                // Deduplicate repetitive log lines before command-specific filter
-                result.output = deduplicate_log_lines(result.output);
-                result.output = filter_shell_output(command, result.output);
-
-                if (!tee_path.empty()) {
-                    result.output += "\n[Full output saved to " + tee_path + "]";
-                }
-            } else {
-                result.output = filter_tool_output(result.output);
-            }
-            uint32_t filtered_tokens = estimate_tokens(result.output);
-
-            // Log token savings for non-trivial reductions
-            if (raw_tokens > filtered_tokens + 10) {
-                std::cerr << "[filter] " << call.name << ": "
-                          << raw_tokens << " -> " << filtered_tokens << " tokens ("
-                          << (raw_tokens - filtered_tokens) << " saved)\n";
-            }
-
-            // Emit ToolCallResult event
-            if (event_bus_) {
-                ToolCallResultEvent ev;
-                ev.session_id = session_id_;
-                ev.tool_name = call.name;
-                ev.success = result.success;
-                ev.raw_tokens = raw_tokens;
-                ev.filtered_tokens = filtered_tokens;
-                event_bus_->publish(ev);
-            }
-
-            if (provider_->supports_native_tools()) {
-                history_.push_back(
-                    format_tool_result_message(call.id, call.name, result.success, result.output));
-            } else {
-                xml_results += format_tool_results_xml(call.name, result.success, result.output);
-                xml_results += "\n";
             }
         }
 
@@ -440,9 +362,6 @@ uint32_t Agent::estimated_tokens() const {
 }
 
 void Agent::clear_history() {
-    for (auto& tool : tools_) {
-        tool->reset();
-    }
     history_.clear();
     system_prompt_injected_ = false;
     last_prompt_tokens_.reset();
@@ -476,7 +395,6 @@ void Agent::set_memory(std::unique_ptr<Memory> memory) {
     if (memory_) {
         memory_->apply_config(config_.memory);
     }
-    wire_memory_tools();
     if (memory_ && embedder_) {
         memory_->set_embedder(embedder_,
                               config_.memory.embeddings.text_weight,
@@ -484,20 +402,18 @@ void Agent::set_memory(std::unique_ptr<Memory> memory) {
     }
 }
 
-void Agent::wire_memory_tools() {
-    if (!memory_) return;
-    for (auto& tool : tools_) {
-        if (is_memory_tool(tool->tool_name())) {
-            static_cast<MemoryAwareTool*>(tool.get())->set_memory(memory_.get());
-        }
-    }
+void Agent::on_tools_available(const std::vector<ToolSpec>& specs) {
+    cached_tool_specs_ = specs;
 }
 
-void Agent::wire_skill_tools() {
-    for (auto& tool : tools_) {
-        if (tool->tool_name() == "skill_activate") {
-            static_cast<AgentAwareTool*>(tool.get())->set_agent(this);
-        }
+void Agent::set_event_bus(EventBus* bus) {
+    event_bus_ = bus;
+    if (event_bus_) {
+        subscribe<ToolsAvailableEvent>(*event_bus_,
+            std::function<void(const ToolsAvailableEvent&)>(
+                [this](const ToolsAvailableEvent& ev) {
+                    on_tools_available(ev.specs);
+                }));
     }
 }
 

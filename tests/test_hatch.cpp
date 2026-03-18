@@ -2,10 +2,31 @@
 #include "agent.hpp"
 #include "prompt.hpp"
 #include "memory/json_memory.hpp"
+#include "tool_manager.hpp"
+#include "event_bus.hpp"
 #include <filesystem>
 #include <unistd.h>
 
 using namespace ptrclaw;
+
+// Helper: wires up Agent + ToolManager + EventBus for tests.
+struct TestAgentSetup {
+    EventBus bus;
+    std::unique_ptr<ToolManager> tool_mgr;
+    Agent agent;
+
+    TestAgentSetup(std::unique_ptr<Provider> provider,
+                   std::vector<std::unique_ptr<Tool>> tools,
+                   const Config& config)
+        : tool_mgr(std::make_unique<ToolManager>(std::move(tools), config, bus))
+        , agent(std::move(provider), config)
+    {
+        agent.set_event_bus(&bus);
+        tool_mgr->wire_agent(&agent);
+        tool_mgr->wire_memory(agent.memory());
+        tool_mgr->publish_tool_specs();
+    }
+};
 
 // ── Mock provider for hatch tests ───────────────────────────────
 
@@ -150,7 +171,8 @@ TEST_CASE("Agent: is_hatched returns false on fresh memory", "[hatch]") {
     auto provider = std::make_unique<HatchMockProvider>();
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     std::string path = temp_memory_path("is_hatched_fresh");
     agent.set_memory(std::make_unique<JsonMemory>(path));
@@ -164,7 +186,8 @@ TEST_CASE("Agent: is_hatched returns true after storing soul:identity", "[hatch]
     auto provider = std::make_unique<HatchMockProvider>();
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     std::string path = temp_memory_path("is_hatched_stored");
     auto mem = std::make_unique<JsonMemory>(path);
@@ -182,7 +205,8 @@ TEST_CASE("Agent: start_hatch enables hatching mode", "[hatch]") {
     auto provider = std::make_unique<HatchMockProvider>();
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     REQUIRE_FALSE(agent.hatching());
     agent.start_hatch();
@@ -199,7 +223,8 @@ TEST_CASE("Agent: hatching mode uses hatch system prompt", "[hatch]") {
 
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     agent.start_hatch();
     agent.process("hi");
@@ -226,7 +251,8 @@ TEST_CASE("Agent: soul extraction stores three-section entries and exits hatchin
 
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     std::string path = temp_memory_path("soul_extract");
     agent.set_memory(std::make_unique<JsonMemory>(path));
@@ -268,7 +294,8 @@ TEST_CASE("Agent: re-hatch overwrites existing soul entries", "[hatch]") {
 
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     std::string path = temp_memory_path("soul_rehatch");
     auto mem = std::make_unique<JsonMemory>(path);
@@ -306,7 +333,8 @@ TEST_CASE("Agent: hatching synthesizes user knowledge from conversation", "[hatc
     Config cfg;
     cfg.memory.synthesis = true;
     cfg.memory.synthesis_interval = 1;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     std::string path = temp_memory_path("soul_synth");
     agent.set_memory(std::make_unique<JsonMemory>(path));
@@ -332,7 +360,8 @@ TEST_CASE("Agent: hatching continues when no soul block in response", "[hatch]")
 
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     std::string path = temp_memory_path("soul_continue");
     agent.set_memory(std::make_unique<JsonMemory>(path));
@@ -352,8 +381,8 @@ TEST_CASE("build_system_prompt: includes soul block when soul entries exist", "[
     auto mem = std::make_unique<JsonMemory>(path);
     mem->store("soul:identity", "Name: Aria.", MemoryCategory::Core, "");
 
-    std::vector<std::unique_ptr<Tool>> tools;
-    auto result = build_system_prompt(tools, false, false, mem.get());
+    std::vector<ToolSpec> specs;
+    auto result = build_system_prompt(specs, false, false, mem.get());
     REQUIRE(result.find("Your Identity") != std::string::npos);
     REQUIRE(result.find("Name: Aria.") != std::string::npos);
 
@@ -361,8 +390,8 @@ TEST_CASE("build_system_prompt: includes soul block when soul entries exist", "[
 }
 
 TEST_CASE("build_system_prompt: no soul block when memory is null", "[hatch]") {
-    std::vector<std::unique_ptr<Tool>> tools;
-    auto result = build_system_prompt(tools, false, false, nullptr);
+    std::vector<ToolSpec> specs;
+    auto result = build_system_prompt(specs, false, false, nullptr);
     REQUIRE(result.find("Your Identity") == std::string::npos);
 }
 
@@ -468,7 +497,8 @@ TEST_CASE("Agent: start_hatch + process produces response while staying in hatch
 
     std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
 
     std::string path = temp_memory_path("auto_hatch");
     agent.set_memory(std::make_unique<JsonMemory>(path));

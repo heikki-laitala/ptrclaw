@@ -13,11 +13,11 @@ namespace ptrclaw {
 
 class Embedder; // forward declaration
 class EventBus; // forward declaration
+class ToolManager; // forward declaration
 
 class Agent {
 public:
     Agent(std::unique_ptr<Provider> provider,
-          std::vector<std::unique_ptr<Tool>> tools,
           const Config& config);
 
     // Process a user message and return the assistant's final text reply
@@ -41,7 +41,7 @@ public:
     std::string provider_name() const;
 
     // Optional event bus integration (nullptr = disabled)
-    void set_event_bus(EventBus* bus) { event_bus_ = bus; }
+    void set_event_bus(EventBus* bus);
     void set_session_id(const std::string& id) { session_id_ = id; }
     void set_channel(const std::string& ch) { channel_ = ch; }
     void set_binary_path(const std::string& path) { binary_path_ = path; }
@@ -74,14 +74,13 @@ private:
     void inject_system_prompt();
     void invalidate_system_prompt();
     const SkillDef* find_skill(const std::string& name) const;
-    void wire_memory_tools();
-    void wire_skill_tools();
     void run_synthesis();
     void maybe_synthesize();
+    void on_tools_available(const std::vector<ToolSpec>& specs);
 
     std::unique_ptr<Provider> provider_;
-    std::vector<std::unique_ptr<Tool>> tools_;
     std::vector<ChatMessage> history_;
+    std::vector<ToolSpec> cached_tool_specs_;
     Config config_;
     std::string model_;
     bool system_prompt_injected_ = false;

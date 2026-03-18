@@ -9,11 +9,10 @@ using namespace ptrclaw;
 
 static Agent make_cmd_agent() {
     auto provider = std::make_unique<StubProvider>();
-    std::vector<std::unique_ptr<Tool>> tools;
     Config cfg;
     cfg.agent.max_tool_iterations = 5;
     cfg.memory.backend = "none";
-    return Agent(std::move(provider), std::move(tools), cfg);
+    return Agent(std::move(provider), cfg);
 }
 
 // ── cmd_status ───────────────────────────────────────────────────
@@ -124,10 +123,10 @@ TEST_CASE("cmd_skill: lists skills with off tag", "[commands]") {
     REQUIRE(result.find("Deactivate:") != std::string::npos);
 }
 
-TEST_CASE("cmd_skill: activate shows active tag and tools", "[commands]") {
+TEST_CASE("cmd_skill: activate shows active tag", "[commands]") {
     HomeGuard home;
     home.add_skill("debug.md",
-        "---\nname: debug\ntools: [shell, file_read]\n---\nDebug.\n");
+        "---\nname: debug\n---\nDebug.\n");
     auto agent = make_cmd_agent();
     agent.load_skills();
     REQUIRE(agent.activate_skill("debug"));
@@ -135,7 +134,6 @@ TEST_CASE("cmd_skill: activate shows active tag and tools", "[commands]") {
     auto result = cmd_skill("", agent);
     REQUIRE(result.find("* debug") != std::string::npos);
     REQUIRE(result.find("[active]") != std::string::npos);
-    REQUIRE(result.find("tools: shell, file_read, skill_activate") != std::string::npos);
 }
 
 TEST_CASE("cmd_skill: activate and deactivate by name", "[commands]") {

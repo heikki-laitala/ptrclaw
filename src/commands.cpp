@@ -131,14 +131,6 @@ std::string cmd_skill(const std::string& args, Agent& agent) {
             if (!s.description.empty()) result += " \xe2\x80\x94 " + s.description;
             if (active) {
                 result += " [active]";
-                if (!s.tools.empty()) {
-                    result += "\n    tools: ";
-                    for (size_t i = 0; i < s.tools.size(); ++i) {
-                        if (i > 0) result += ", ";
-                        result += s.tools[i];
-                    }
-                    result += ", skill_activate";
-                }
             } else {
                 result += " [off]";
             }

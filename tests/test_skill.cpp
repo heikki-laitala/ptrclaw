@@ -37,9 +37,6 @@ You are reviewing code. Focus on:
     const SkillDef& s1 = skill.value_or(SkillDef{});
     REQUIRE(s1.name == "code_review");
     REQUIRE(s1.description == "Review code for bugs and security issues");
-    REQUIRE(s1.tools.size() == 2);
-    REQUIRE(s1.tools[0] == "file_read");
-    REQUIRE(s1.tools[1] == "shell");
     REQUIRE(s1.prompt.find("Security vulnerabilities") != std::string::npos);
     REQUIRE(s1.path == "/test/code_review.md");
 }
@@ -51,7 +48,6 @@ TEST_CASE("parse_skill_file: name only (minimal)", "[skill]") {
     const SkillDef& s2 = skill.value_or(SkillDef{});
     REQUIRE(s2.name == "simple");
     REQUIRE(s2.description.empty());
-    REQUIRE(s2.tools.empty());
     REQUIRE(s2.prompt == "Do something.");
 }
 
@@ -64,11 +60,11 @@ TEST_CASE("parse_skill_file: no frontmatter returns nullopt", "[skill]") {
     REQUIRE_FALSE(parse_skill_file("just some text").has_value());
 }
 
-TEST_CASE("parse_skill_file: empty tools list", "[skill]") {
+TEST_CASE("parse_skill_file: ignores unknown frontmatter keys", "[skill]") {
     std::string content = "---\nname: test\ntools: []\n---\nbody";
     auto skill = parse_skill_file(content);
     REQUIRE(skill.has_value());
-    REQUIRE(skill.value_or(SkillDef{}).tools.empty());
+    REQUIRE(skill.value_or(SkillDef{}).name == "test");
 }
 
 TEST_CASE("parse_skill_file: handles CRLF line endings", "[skill]") {
