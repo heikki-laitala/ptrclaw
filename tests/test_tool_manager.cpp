@@ -3,6 +3,7 @@
 #include "event_bus.hpp"
 #include <chrono>
 #include <thread>
+#include <atomic>
 
 using namespace ptrclaw;
 
@@ -34,6 +35,29 @@ public:
     std::string parameters_json() const override { return R"({"type":"object"})"; }
 private:
     std::string name_;
+};
+
+class CancellableMockTool : public Tool {
+public:
+    std::atomic<bool> was_cancelled{false};
+
+    ToolResult execute(const std::string&) override {
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+        return {true, "should-not-reach"};
+    }
+    ToolResult execute(const std::string&, const CancellationToken& token) override {
+        for (int i = 0; i < 50; ++i) {
+            if (is_cancelled(token)) {
+                was_cancelled.store(true);
+                return {false, "cancelled"};
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return {true, "completed"};
+    }
+    std::string tool_name() const override { return "cancellable"; }
+    std::string description() const override { return "cancellable tool"; }
+    std::string parameters_json() const override { return R"({"type":"object"})"; }
 };
 
 // Helper to build a minimal Config
@@ -223,4 +247,56 @@ TEST_CASE("BatchCollector: wait returns true when results arrive before timeout"
     REQUIRE(completed);
     REQUIRE(collector.missing() == 0);
     REQUIRE(collector.results().size() == 1);
+}
+
+TEST_CASE("ToolManager: ToolCallCancelEvent cancels running tools", "[tool_manager]") {
+    EventBus bus;
+
+    auto* raw_ptr = new CancellableMockTool();
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::unique_ptr<Tool>(raw_ptr));
+    ToolManager mgr(std::move(tools), make_config(), bus);
+
+    BatchCollector collector("cancel-batch", 1);
+    auto sub = subscribe<ToolCallResultEvent>(bus,
+        std::function<void(const ToolCallResultEvent&)>(
+            [&collector](const ToolCallResultEvent& ev) {
+                collector.on_result(ev);
+            }));
+
+    ToolCallRequestEvent req;
+    req.batch_id = "cancel-batch";
+    req.tool_name = "cancellable";
+    req.tool_call_id = "call-cancel";
+    req.arguments_json = "{}";
+    bus.publish(req);
+
+    // Give the tool time to start executing
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    // Publish cancel event
+    ToolCallCancelEvent cancel_ev;
+    cancel_ev.batch_id = "cancel-batch";
+    bus.publish(cancel_ev);
+
+    bool completed = collector.wait(std::chrono::seconds{2});
+    bus.unsubscribe(sub);
+
+    REQUIRE(completed);
+    auto results = collector.results();
+    REQUIRE(results.size() == 1);
+    REQUIRE_FALSE(results[0].success);
+    REQUIRE(raw_ptr->was_cancelled.load());
+}
+
+TEST_CASE("CancellationToken: basic operations", "[tool_manager]") {
+    auto token = make_cancellation_token();
+    REQUIRE_FALSE(is_cancelled(token));
+    cancel(token);
+    REQUIRE(is_cancelled(token));
+}
+
+TEST_CASE("CancellationToken: null token is not cancelled", "[tool_manager]") {
+    CancellationToken null_token;
+    REQUIRE_FALSE(is_cancelled(null_token));
 }

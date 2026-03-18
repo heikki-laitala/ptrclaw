@@ -268,6 +268,10 @@ std::string Agent::process(const std::string& user_message) {
                 std::cerr << "[tool] timeout: " << collector.missing()
                           << " tool call(s) did not complete within "
                           << config_.agent.tool_timeout << "s\n";
+                // Signal cancellation to running tools
+                ToolCallCancelEvent cancel_ev;
+                cancel_ev.batch_id = batch_id;
+                event_bus_->publish(cancel_ev);
                 // Synthesize timeout results for missing calls
                 std::unordered_set<std::string> received_ids;
                 for (const auto& r : collector.results())

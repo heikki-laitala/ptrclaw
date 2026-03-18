@@ -48,9 +48,12 @@ ToolManager::ToolManager(std::vector<std::unique_ptr<Tool>> tools,
                          const Config& config,
                          EventBus& bus)
     : tools_(std::move(tools)), config_(config), bus_(bus) {
-    subscription_id_ = subscribe<ToolCallRequestEvent>(bus_,
+    request_sub_id_ = subscribe<ToolCallRequestEvent>(bus_,
         std::function<void(const ToolCallRequestEvent&)>(
             [this](const ToolCallRequestEvent& ev) { on_tool_call_request(ev); }));
+    cancel_sub_id_ = subscribe<ToolCallCancelEvent>(bus_,
+        std::function<void(const ToolCallCancelEvent&)>(
+            [this](const ToolCallCancelEvent& ev) { on_tool_call_cancel(ev); }));
 
     // Wire EventBus into tools that need it
     for (auto& tool : tools_) {
@@ -90,6 +93,13 @@ void ToolManager::reset_all() {
 }
 
 ToolManager::~ToolManager() {
+    // Cancel all active tool calls so they exit promptly
+    {
+        std::lock_guard<std::mutex> lock(calls_mutex_);
+        for (auto& [id, call] : active_calls_) {
+            cancel(call.token);
+        }
+    }
     std::lock_guard<std::mutex> lock(futures_mutex_);
     for (auto& f : pending_futures_) {
         if (f.valid()) f.wait();
@@ -99,19 +109,43 @@ ToolManager::~ToolManager() {
 void ToolManager::on_tool_call_request(const ToolCallRequestEvent& ev) {
     std::cerr << "[tool] " << ev.tool_name << '\n';
 
+    auto token = make_cancellation_token();
+    {
+        std::lock_guard<std::mutex> lock(calls_mutex_);
+        active_calls_[ev.tool_call_id] = {token, ev.batch_id};
+    }
+
     cleanup_futures();
     std::lock_guard<std::mutex> lock(futures_mutex_);
     pending_futures_.push_back(
         std::async(std::launch::async,
-            [this, ev]() noexcept { // NOLINT(bugprone-exception-escape)
+            [this, ev, token]() noexcept { // NOLINT(bugprone-exception-escape)
                 try {
-                    execute_and_publish(ev);
+                    execute_and_publish(ev, token);
                 } catch (...) {} // NOLINT(bugprone-empty-catch)
+                std::lock_guard<std::mutex> clock(calls_mutex_);
+                active_calls_.erase(ev.tool_call_id);
             }));
 }
 
-void ToolManager::execute_and_publish(const ToolCallRequestEvent& ev) {
-    auto result = execute_tool(ev.tool_name, ev.arguments_json);
+void ToolManager::on_tool_call_cancel(const ToolCallCancelEvent& ev) {
+    size_t cancelled = 0;
+    std::lock_guard<std::mutex> lock(calls_mutex_);
+    for (auto& [id, call] : active_calls_) {
+        if (call.batch_id == ev.batch_id) {
+            cancel(call.token);
+            ++cancelled;
+        }
+    }
+    if (cancelled > 0) {
+        std::cerr << "[tool] cancel: signalled " << cancelled
+                  << " active tool call(s) in batch " << ev.batch_id << '\n';
+    }
+}
+
+void ToolManager::execute_and_publish(const ToolCallRequestEvent& ev,
+                                      const CancellationToken& token) {
+    auto result = execute_tool(ev.tool_name, ev.arguments_json, token);
 
     uint32_t raw_tokens = estimate_tokens(result.output);
     result.output = apply_filters(ev.tool_name, ev.arguments_json,
@@ -137,9 +171,10 @@ void ToolManager::execute_and_publish(const ToolCallRequestEvent& ev) {
 }
 
 ToolResult ToolManager::execute_tool(const std::string& name,
-                                     const std::string& args_json) {
+                                     const std::string& args_json,
+                                     const CancellationToken& token) {
     for (const auto& tool : tools_) {
-        if (tool->tool_name() == name) return tool->execute(args_json);
+        if (tool->tool_name() == name) return tool->execute(args_json, token);
     }
     return ToolResult{false, "Unknown tool: " + name};
 }
