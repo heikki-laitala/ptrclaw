@@ -14,6 +14,7 @@ namespace ptrclaw {
 class Embedder; // forward declaration
 class EventBus; // forward declaration
 class ToolManager; // forward declaration
+struct SkillRequestEvent; // forward declaration
 
 class Agent {
 public:
@@ -77,6 +78,7 @@ private:
     void run_synthesis();
     void maybe_synthesize();
     void on_tools_available(const std::vector<ToolSpec>& specs);
+    void on_skill_request(const SkillRequestEvent& req);
 
     std::unique_ptr<Provider> provider_;
     std::vector<ChatMessage> history_;

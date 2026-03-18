@@ -1,15 +1,18 @@
-#include "../agent.hpp"
+#include "../tool.hpp"
+#include "../event.hpp"
+#include "../event_bus.hpp"
 #include "../plugin.hpp"
+#include "../util.hpp"
 #include <nlohmann/json.hpp>
+#include <mutex>
+#include <condition_variable>
 
 namespace ptrclaw {
 
-class SkillActivateTool : public AgentAwareTool {
+class SkillActivateTool : public EventBusAwareTool {
 public:
     ToolResult execute(const std::string& args_json) override {
-        if (!agent_) return {false, "Agent not available"};
-
-        agent_->load_skills(); // re-scan directory for new/changed skills
+        if (!event_bus_) return {false, "EventBus not available"};
 
         nlohmann::json args;
         try {
@@ -23,23 +26,49 @@ public:
             return {false, "Missing required parameter: name"};
         }
 
-        // Special: deactivate
+        // Determine action
+        std::string action = "activate";
         if (name == "off" || name == "none") {
-            agent_->deactivate_skill();
-            return {true, "Skill deactivated"};
+            action = "deactivate";
         }
 
-        if (agent_->activate_skill(name)) {
-            return {true, "Skill '" + name + "' activated"};
+        // Publish request and wait for response
+        std::string request_id = generate_id();
+
+        std::mutex mtx;
+        std::condition_variable cv;
+        bool received = false;
+        SkillResponseEvent response;
+
+        uint64_t sub_id = subscribe<SkillResponseEvent>(*event_bus_,
+            std::function<void(const SkillResponseEvent&)>(
+                [&](const SkillResponseEvent& ev) {
+                    if (ev.request_id != request_id) return;
+                    std::lock_guard<std::mutex> lock(mtx);
+                    response = ev;
+                    received = true;
+                    cv.notify_one();
+                }));
+
+        SkillRequestEvent req;
+        req.request_id = request_id;
+        req.action = action;
+        req.name = name;
+        event_bus_->publish(req);
+
+        {
+            std::unique_lock<std::mutex> lock(mtx);
+            cv.wait_for(lock, std::chrono::seconds(5),
+                [&] { return received; });
         }
 
-        // List available skills in error message
-        std::string available;
-        for (const auto& s : agent_->available_skills()) {
-            if (!available.empty()) available += ", ";
-            available += s.name;
+        event_bus_->unsubscribe(sub_id);
+
+        if (!received) {
+            return {false, "Skill request timed out"};
         }
-        return {false, "Unknown skill: " + name + ". Available: " + available};
+
+        return {response.success, response.message};
     }
 
     std::string tool_name() const override { return "skill_activate"; }

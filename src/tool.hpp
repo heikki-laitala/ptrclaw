@@ -24,7 +24,6 @@ public:
     virtual std::string description() const = 0;
     virtual std::string parameters_json() const = 0;
     virtual void reset() {}
-    virtual bool is_parallel_safe() const { return false; }
 
     ToolSpec spec() const {
         return ToolSpec{tool_name(), description(), parameters_json()};
@@ -40,16 +39,15 @@ inline bool is_memory_tool(const std::string& name) {
 // Create all built-in tools
 std::vector<std::unique_ptr<Tool>> create_builtin_tools();
 
-class Agent; // forward declaration
+class EventBus; // forward declaration
 
-// Base class for tools that need an Agent* pointer.
-// Agent wires this up after construction.
-class AgentAwareTool : public Tool {
+// Base class for tools that need EventBus access for request/response patterns.
+class EventBusAwareTool : public Tool {
 public:
-    void set_agent(Agent* agent) { agent_ = agent; }
+    void set_event_bus(EventBus* bus) { event_bus_ = bus; }
 
 protected:
-    Agent* agent_ = nullptr;
+    EventBus* event_bus_ = nullptr;
 };
 
 } // namespace ptrclaw

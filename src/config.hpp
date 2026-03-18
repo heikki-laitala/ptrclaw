@@ -27,6 +27,7 @@ struct AgentConfig {
     uint32_t token_limit = 128000;
     bool disable_streaming = false;
     std::string tee_mode = "off";  // "off", "failures", "always"
+    uint32_t tool_timeout = 120;   // seconds, 0 = no timeout
 };
 
 struct EmbeddingConfig {

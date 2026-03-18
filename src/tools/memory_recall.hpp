@@ -9,7 +9,6 @@ public:
     std::string tool_name() const override { return "memory_recall"; }
     std::string description() const override;
     std::string parameters_json() const override;
-    bool is_parallel_safe() const override { return true; }
 };
 
 } // namespace ptrclaw

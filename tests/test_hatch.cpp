@@ -22,7 +22,6 @@ struct TestAgentSetup {
         , agent(std::move(provider), config)
     {
         agent.set_event_bus(&bus);
-        tool_mgr->wire_agent(&agent);
         tool_mgr->wire_memory(agent.memory());
         tool_mgr->publish_tool_specs();
     }

@@ -29,6 +29,8 @@ namespace event_tags {
     constexpr const char* StreamStart      = "StreamStart";
     constexpr const char* StreamChunk      = "StreamChunk";
     constexpr const char* ToolsAvailable   = "ToolsAvailable";
+    constexpr const char* SkillRequest     = "SkillRequest";
+    constexpr const char* SkillResponse    = "SkillResponse";
     constexpr const char* StreamEnd        = "StreamEnd";
 } // namespace event_tags
 
@@ -132,6 +134,26 @@ struct StreamChunkEvent : Event {
     std::string delta;
 
     StreamChunkEvent() { type_tag = TAG; }
+};
+
+struct SkillRequestEvent : Event {
+    static constexpr const char* TAG = event_tags::SkillRequest;
+    std::string session_id;
+    std::string request_id;  // correlate with response
+    std::string action;      // "activate", "deactivate", "list"
+    std::string name;        // skill name (for activate)
+
+    SkillRequestEvent() { type_tag = TAG; }
+};
+
+struct SkillResponseEvent : Event {
+    static constexpr const char* TAG = event_tags::SkillResponse;
+    std::string request_id;
+    bool success = false;
+    std::string message;
+    std::vector<std::string> available_skills;
+
+    SkillResponseEvent() { type_tag = TAG; }
 };
 
 struct StreamEndEvent : Event {

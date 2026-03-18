@@ -11,6 +11,7 @@
 #include "util.hpp"
 #include <iostream>
 #include <sstream>
+#include <unordered_set>
 #include <nlohmann/json.hpp>
 
 namespace ptrclaw {
@@ -259,8 +260,31 @@ std::string Agent::process(const std::string& user_message) {
                 event_bus_->publish(ev);
             }
 
-            collector.wait();
+            auto timeout = std::chrono::seconds(config_.agent.tool_timeout);
+            bool completed = collector.wait(timeout);
             event_bus_->unsubscribe(sub_id);
+
+            if (!completed) {
+                std::cerr << "[tool] timeout: " << collector.missing()
+                          << " tool call(s) did not complete within "
+                          << config_.agent.tool_timeout << "s\n";
+                // Synthesize timeout results for missing calls
+                std::unordered_set<std::string> received_ids;
+                for (const auto& r : collector.results())
+                    received_ids.insert(r.tool_call_id);
+                for (const auto& call : response.tool_calls) {
+                    if (received_ids.count(call.id) == 0) {
+                        ToolCallResultEvent timeout_ev;
+                        timeout_ev.batch_id = batch_id;
+                        timeout_ev.tool_call_id = call.id;
+                        timeout_ev.tool_name = call.name;
+                        timeout_ev.success = false;
+                        timeout_ev.output = "Tool call timed out after "
+                            + std::to_string(config_.agent.tool_timeout) + "s";
+                        collector.on_result(timeout_ev);
+                    }
+                }
+            }
 
             for (const auto& r : collector.results()) {
                 if (provider_->supports_native_tools()) {
@@ -414,7 +438,42 @@ void Agent::set_event_bus(EventBus* bus) {
                 [this](const ToolsAvailableEvent& ev) {
                     on_tools_available(ev.specs);
                 }));
+        subscribe<SkillRequestEvent>(*event_bus_,
+            std::function<void(const SkillRequestEvent&)>(
+                [this](const SkillRequestEvent& ev) {
+                    on_skill_request(ev);
+                }));
     }
+}
+
+void Agent::on_skill_request(const SkillRequestEvent& req) {
+    if (!event_bus_) return;
+
+    load_skills(); // re-scan for new/changed skills
+
+    SkillResponseEvent resp;
+    resp.request_id = req.request_id;
+
+    if (req.action == "deactivate") {
+        deactivate_skill();
+        resp.success = true;
+        resp.message = "Skill deactivated";
+    } else if (req.action == "activate") {
+        if (activate_skill(req.name)) {
+            resp.success = true;
+            resp.message = "Skill '" + req.name + "' activated";
+        } else {
+            resp.success = false;
+            std::string available;
+            for (const auto& s : available_skills_) {
+                if (!available.empty()) available += ", ";
+                available += s.name;
+            }
+            resp.message = "Unknown skill: " + req.name + ". Available: " + available;
+        }
+    }
+
+    event_bus_->publish(resp);
 }
 
 void Agent::set_response_cache(std::unique_ptr<ResponseCache> cache) {

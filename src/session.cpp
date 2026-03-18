@@ -52,7 +52,6 @@ Agent& SessionManager::get_session(const std::string& session_id) {
         auto tools = create_builtin_tools();
         session.tool_manager = std::make_unique<ToolManager>(
             std::move(tools), config_, *event_bus_);
-        session.tool_manager->wire_agent(session.agent.get());
         session.tool_manager->wire_memory(session.agent->memory());
         session.tool_manager->publish_tool_specs(session_id);
 
