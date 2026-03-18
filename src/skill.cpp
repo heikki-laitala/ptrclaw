@@ -15,20 +15,6 @@ static std::string trim_ws(const std::string& s) {
     return s.substr(start, end - start + 1);
 }
 
-// Parse a simple [a, b, c] list from a string value
-static std::vector<std::string> parse_list(const std::string& value) {
-    std::vector<std::string> result;
-    std::string v = trim_ws(value);
-    if (v.size() < 2 || v.front() != '[' || v.back() != ']') return result;
-    v = v.substr(1, v.size() - 2);
-    std::istringstream ss(v);
-    std::string item;
-    while (std::getline(ss, item, ',')) {
-        auto trimmed = trim_ws(item);
-        if (!trimmed.empty()) result.push_back(trimmed);
-    }
-    return result;
-}
 
 std::optional<SkillDef> parse_skill_file(const std::string& content,
                                           const std::string& path) {
