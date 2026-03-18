@@ -10,7 +10,6 @@
 #ifdef PTRCLAW_HAS_OPENAI
 #include "providers/oauth_openai.hpp"
 #endif
-#include <nlohmann/json.hpp>
 
 namespace ptrclaw {
 
@@ -18,34 +17,22 @@ SessionManager::SessionManager(const Config& config, HttpClient& http)
     : config_(config), http_(http)
 {}
 
-Agent& SessionManager::get_session(const std::string& session_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto it = sessions_.find(session_id);
-    if (it != sessions_.end()) {
-        it->second.last_active = epoch_seconds();
-        return *(it->second.agent);
-    }
-
-    // Create new session
+Session SessionManager::create_session(const std::string& session_id) {
     auto sr = switch_provider(
         config_.provider, config_.model, config_.model, config_, http_);
     if (!sr.provider) {
         throw std::runtime_error("Cannot create provider: " + sr.error);
     }
-    auto provider = std::move(sr.provider);
 
     Session session;
     session.id = session_id;
-    session.agent = std::make_unique<Agent>(std::move(provider), config_);
+    session.agent = std::make_unique<Agent>(std::move(sr.provider), config_);
     session.last_active = epoch_seconds();
 
-    // Propagate binary path to new agent
     if (!binary_path_.empty()) {
         session.agent->set_binary_path(binary_path_);
     }
 
-    // Propagate event bus and create ToolManager
     if (event_bus_) {
         session.agent->set_event_bus(event_bus_);
         session.agent->set_session_id(session_id);
@@ -61,12 +48,23 @@ Agent& SessionManager::get_session(const std::string& session_id) {
         event_bus_->publish(ev);
     }
 
-    // Propagate embedder to new agent (shared, non-owning)
     if (embedder_) {
         session.agent->set_embedder(embedder_);
     }
 
-    auto [inserted, _] = sessions_.emplace(session_id, std::move(session));
+    return session;
+}
+
+Agent& SessionManager::get_session(const std::string& session_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = sessions_.find(session_id);
+    if (it != sessions_.end()) {
+        it->second.last_active = epoch_seconds();
+        return *(it->second.agent);
+    }
+
+    auto [inserted, _] = sessions_.emplace(session_id, create_session(session_id));
     return *(inserted->second.agent);
 }
 
@@ -103,6 +101,7 @@ std::vector<std::string> SessionManager::list_sessions() const {
     return ids;
 }
 
+#ifdef PTRCLAW_HAS_OPENAI
 std::optional<PendingOAuth> SessionManager::get_pending_oauth(const std::string& session_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = pending_oauth_.find(session_id);
@@ -124,137 +123,131 @@ void SessionManager::clear_pending_oauth(const std::string& session_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pending_oauth_.erase(session_id);
 }
+#endif
 
+void SessionManager::handle_message(const MessageReceivedEvent& ev) {
+    auto& agent = get_session(ev.session_id);
+    if (!ev.message.channel.empty()) {
+        agent.set_channel(ev.message.channel);
+    }
+    std::string chat_id = ev.message.reply_target.value_or("");
+
+    auto send_reply = [&](const std::string& content) {
+        MessageReadyEvent reply;
+        reply.session_id = ev.session_id;
+        reply.reply_target = chat_id;
+        reply.content = content;
+        event_bus_->publish(reply);
+    };
+
+    auto begin_hatch = [&]() {
+        agent.start_hatch();
+        send_reply(agent.process("Begin the hatching interview."));
+    };
+
+    // Handle /start command
+    if (ev.message.content == "/start") {
+        if (agent.memory() && !agent.is_hatched()) {
+            begin_hatch();
+        } else {
+            std::string greeting = "Hello";
+            if (ev.message.first_name) greeting += " " + *ev.message.first_name;
+            greeting += "! I'm PtrClaw, an AI assistant. How can I help you?";
+            send_reply(greeting);
+        }
+        return;
+    }
+
+    // Handle /new command
+    if (ev.message.content == "/new") {
+        agent.clear_history();
+        send_reply("Conversation history cleared. What would you like to discuss?");
+        return;
+    }
+
+    // Handle /soul command — developer-only
+    if (ev.message.content == "/soul") {
+        send_reply(cmd_soul(agent, config_.dev));
+        return;
+    }
+
+    // Handle /hatch command
+    if (ev.message.content == "/hatch") {
+        send_reply(cmd_hatch(agent));
+        return;
+    }
+
+    // Handle /status command
+    if (ev.message.content == "/status") {
+        send_reply(cmd_status(agent));
+        return;
+    }
+
+    // Handle /model command
+    if (ev.message.content.rfind("/model ", 0) == 0) {
+        send_reply(cmd_model(trim(ev.message.content.substr(7)),
+                             agent, config_, http_));
+        return;
+    }
+
+    // Handle /memory command
+    if (ev.message.content == "/memory") {
+        send_reply(cmd_memory(agent));
+        return;
+    }
+
+    // Handle /skill command
+    if (ev.message.content == "/skill" ||
+        ev.message.content.rfind("/skill ", 0) == 0) {
+        std::string args = (ev.message.content.size() > 7)
+            ? ev.message.content.substr(7) : "";
+        send_reply(cmd_skill(args, agent));
+        return;
+    }
+
+    // Handle /help command
+    if (ev.message.content == "/help") {
+        send_reply(cmd_help(config_.dev, /*channel=*/true));
+        return;
+    }
+
+    // Handle /models command
+    if (ev.message.content == "/models") {
+        send_reply(cmd_models(agent, config_));
+        return;
+    }
+
+    // Handle /provider command
+    if (ev.message.content.rfind("/provider ", 0) == 0) {
+        send_reply(cmd_provider(ev.message.content.substr(10),
+                                agent, config_, http_));
+        return;
+    }
+
+    // Handle auth commands + raw OAuth paste
+    if (ev.message.content.rfind("/auth", 0) == 0
+#ifdef PTRCLAW_HAS_OPENAI
+        || get_pending_oauth(ev.session_id).has_value()
+#endif
+    ) {
+        if (handle_auth_command(ev, agent, send_reply)) return;
+    }
+
+    // Auto-hatch: if memory exists but no soul, enter hatching
+    // so the user's first message kicks off the interview
+    if (agent.memory() && !agent.is_hatched() && !agent.hatching()) {
+        agent.start_hatch();
+    }
+
+    send_reply(agent.process(ev.message.content));
+}
 
 void SessionManager::subscribe_events() {
     if (!event_bus_) return;
 
     ptrclaw::subscribe<MessageReceivedEvent>(*event_bus_,
         [this](const MessageReceivedEvent& ev) {
-            auto& agent = get_session(ev.session_id);
-            if (!ev.message.channel.empty()) {
-                agent.set_channel(ev.message.channel);
-            }
-            std::string chat_id = ev.message.reply_target.value_or("");
-
-            auto send_reply = [&](const std::string& content) {
-                MessageReadyEvent reply;
-                reply.session_id = ev.session_id;
-                reply.reply_target = chat_id;
-                reply.content = content;
-                event_bus_->publish(reply);
-            };
-
-            auto begin_hatch = [&]() {
-                agent.start_hatch();
-                send_reply(agent.process("Begin the hatching interview."));
-            };
-
-            // Handle /start command
-            if (ev.message.content == "/start") {
-                if (agent.memory() && !agent.is_hatched()) {
-                    begin_hatch();
-                } else {
-                    std::string greeting = "Hello";
-                    if (ev.message.first_name) greeting += " " + *ev.message.first_name;
-                    greeting += "! I'm PtrClaw, an AI assistant. How can I help you?";
-                    send_reply(greeting);
-                }
-                return;
-            }
-
-            // Handle /new command
-            if (ev.message.content == "/new") {
-                agent.clear_history();
-                send_reply("Conversation history cleared. What would you like to discuss?");
-                return;
-            }
-
-            // Handle /soul command — developer-only
-            if (ev.message.content == "/soul") {
-                send_reply(cmd_soul(agent, config_.dev));
-                return;
-            }
-
-            // Handle /hatch command
-            if (ev.message.content == "/hatch") {
-                send_reply(cmd_hatch(agent));
-                return;
-            }
-
-            // Handle /status command
-            if (ev.message.content == "/status") {
-                send_reply(cmd_status(agent));
-                return;
-            }
-
-            // Handle /model command
-            if (ev.message.content.rfind("/model ", 0) == 0) {
-                send_reply(cmd_model(trim(ev.message.content.substr(7)),
-                                     agent, config_, http_));
-                return;
-            }
-
-            // Handle /memory command
-            if (ev.message.content == "/memory") {
-                send_reply(cmd_memory(agent));
-                return;
-            }
-
-            // Handle /skill command
-            if (ev.message.content == "/skill" ||
-                ev.message.content.rfind("/skill ", 0) == 0) {
-                std::string args = (ev.message.content.size() > 7)
-                    ? ev.message.content.substr(7) : "";
-                send_reply(cmd_skill(args, agent));
-                return;
-            }
-
-            // Handle /help command
-            if (ev.message.content == "/help") {
-                std::string help = "Commands:\n"
-                    "  /new             Clear conversation history\n"
-                    "  /status          Show current status\n"
-                    "  /model X         Switch to model X\n"
-                    "  /models          List configured providers\n"
-                    "  /provider X [M]  Switch to provider X, optional model M\n"
-                    "  /memory          Show memory status\n"
-                    "  /skill [name]    List or activate skills\n"
-                    "  /auth            Show auth status for all providers\n"
-                    "  /auth <prov> <key>  Set API key\n"
-                    "  /auth openai start  Begin OAuth flow\n"
-                    "  /hatch           Create or re-create assistant identity\n"
-                    "  /help            Show this help\n";
-                send_reply(help);
-                return;
-            }
-
-            // Handle /models command
-            if (ev.message.content == "/models") {
-                send_reply(cmd_models(agent, config_));
-                return;
-            }
-
-            // Handle /provider command
-            if (ev.message.content.rfind("/provider ", 0) == 0) {
-                send_reply(cmd_provider(ev.message.content.substr(10),
-                                        agent, config_, http_));
-                return;
-            }
-
-            // Handle auth commands + raw OAuth paste
-            if (ev.message.content.rfind("/auth", 0) == 0 ||
-                get_pending_oauth(ev.session_id).has_value()) {
-                if (handle_auth_command(ev, agent, send_reply)) return;
-            }
-
-            // Auto-hatch: if memory exists but no soul, enter hatching
-            // so the user's first message kicks off the interview
-            if (agent.memory() && !agent.is_hatched() && !agent.hatching()) {
-                agent.start_hatch();
-            }
-
-            send_reply(agent.process(ev.message.content));
+            handle_message(ev);
         });
 }
 

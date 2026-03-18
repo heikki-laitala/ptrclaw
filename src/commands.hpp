@@ -24,8 +24,8 @@ std::string cmd_model(const std::string& new_model, Agent& agent,
 std::string cmd_provider(const std::string& args, Agent& agent,
                           Config& config, HttpClient& http);
 
-// Help text for interactive REPL
-std::string cmd_help(bool dev);
+// Help text (channel=true omits REPL-only commands like /exit, /onboard)
+std::string cmd_help(bool dev, bool channel = false);
 
 // Memory export/import
 std::string cmd_memory_export(const Agent& agent);
