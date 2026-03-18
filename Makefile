@@ -81,7 +81,7 @@ run: build
 	./$(BUILDDIR)/ptrclaw
 
 test: build
-	meson test -C $(BUILDDIR)
+	meson test -C $(BUILDDIR) --print-errorlogs
 
 coverage:
 	@if [ ! -d $(COVDIR) ]; then meson setup $(COVDIR) $(NATIVE_ARGS) -Db_coverage=true -Dcatch2:tests=false; fi
