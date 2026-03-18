@@ -46,8 +46,9 @@ size_t BatchCollector::missing() const {
 
 ToolManager::ToolManager(std::vector<std::unique_ptr<Tool>> tools,
                          const Config& config,
-                         EventBus& bus)
-    : tools_(std::move(tools)), config_(config), bus_(bus) {
+                         EventBus& bus,
+                         const std::string& session_id)
+    : tools_(std::move(tools)), config_(config), bus_(bus), session_id_(session_id) {
     request_sub_id_ = subscribe<ToolCallRequestEvent>(bus_,
         std::function<void(const ToolCallRequestEvent&)>(
             [this](const ToolCallRequestEvent& ev) { on_tool_call_request(ev); }));
@@ -55,10 +56,13 @@ ToolManager::ToolManager(std::vector<std::unique_ptr<Tool>> tools,
         std::function<void(const ToolCallCancelEvent&)>(
             [this](const ToolCallCancelEvent& ev) { on_tool_call_cancel(ev); }));
 
-    // Wire EventBus into tools that need it
+    // Wire EventBus and session identity into tools that need it
     for (auto& tool : tools_) {
         auto* ebt = dynamic_cast<EventBusAwareTool*>(tool.get());
-        if (ebt) ebt->set_event_bus(&bus_);
+        if (ebt) {
+            ebt->set_event_bus(&bus_);
+            ebt->set_session_id(session_id_);
+        }
     }
 }
 
@@ -93,6 +97,10 @@ void ToolManager::reset_all() {
 }
 
 ToolManager::~ToolManager() {
+    // Unsubscribe from bus before cancelling (prevent new requests)
+    bus_.unsubscribe(request_sub_id_);
+    bus_.unsubscribe(cancel_sub_id_);
+
     // Cancel all active tool calls so they exit promptly
     {
         std::lock_guard<std::mutex> lock(calls_mutex_);
@@ -107,6 +115,9 @@ ToolManager::~ToolManager() {
 }
 
 void ToolManager::on_tool_call_request(const ToolCallRequestEvent& ev) {
+    // In multi-session mode, only handle requests for our session
+    if (!session_id_.empty() && ev.session_id != session_id_) return;
+
     std::cerr << "[tool] " << ev.tool_name << '\n';
 
     auto token = make_cancellation_token();

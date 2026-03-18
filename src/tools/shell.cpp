@@ -138,6 +138,7 @@ ToolResult ShellTool::run_new_command(const std::string& command,
     }
 
     // Process is stalled — waiting for input
+    std::lock_guard<std::mutex> proc_lock(mutex_);
     // Evict oldest process if at capacity
     while (processes_.size() >= kMaxProcesses) {
         auto oldest = processes_.begin();
@@ -155,12 +156,15 @@ ToolResult ShellTool::run_new_command(const std::string& command,
 ToolResult ShellTool::resume_process(const std::string& proc_id,
                                      const std::string& stdin_data,
                                      const CancellationToken& token) {
+    std::unique_lock<std::mutex> proc_lock(mutex_);
     auto it = processes_.find(proc_id);
     if (it == processes_.end()) {
         return ToolResult{false, "No such process: " + proc_id};
     }
 
-    auto& proc = it->second;
+    // Copy state so we can release the lock during I/O
+    auto proc = it->second;
+    proc_lock.unlock();
 
     // Write stdin data
     if (!stdin_data.empty() && proc.stdin_fd >= 0) {
@@ -187,6 +191,7 @@ ToolResult ShellTool::resume_process(const std::string& proc_id,
     }
 
     if (result.cancelled) {
+        std::lock_guard<std::mutex> lock(mutex_);
         cleanup_process(proc_id);
         return ToolResult{false, result.output + "\n[cancelled]"};
     }
@@ -198,7 +203,8 @@ ToolResult ShellTool::resume_process(const std::string& proc_id,
         if (!result.reaped) {
             waitpid(proc.pid, &status, 0);
         }
-        processes_.erase(it);
+        std::lock_guard<std::mutex> lock(mutex_);
+        processes_.erase(proc_id);
         bool success = WIFEXITED(status) && WEXITSTATUS(status) == 0;
         return ToolResult{success, result.output};
     }
@@ -290,6 +296,7 @@ void ShellTool::cleanup_process(const std::string& id) {
 }
 
 void ShellTool::kill_all_processes() {
+    std::lock_guard<std::mutex> lock(mutex_);
     for (auto& [id, proc] : processes_) {
         kill(proc.pid, SIGKILL);
         if (proc.stdin_fd >= 0) close(proc.stdin_fd);

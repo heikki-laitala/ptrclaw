@@ -51,6 +51,7 @@ public:
                 }));
 
         SkillRequestEvent req;
+        req.session_id = session_id_;
         req.request_id = request_id;
         req.action = action;
         req.name = name;

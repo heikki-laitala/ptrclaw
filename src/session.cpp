@@ -39,7 +39,7 @@ Session SessionManager::create_session(const std::string& session_id) {
 
         auto tools = create_builtin_tools();
         session.tool_manager = std::make_unique<ToolManager>(
-            std::move(tools), config_, *event_bus_);
+            std::move(tools), config_, *event_bus_, session_id);
         session.tool_manager->wire_memory(session.agent->memory());
         session.tool_manager->publish_tool_specs(session_id);
 

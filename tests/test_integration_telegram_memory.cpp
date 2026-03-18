@@ -56,8 +56,8 @@ TEST_CASE("Integration: Telegram message reaches provider with memory context bl
     cfg.memory.auto_save = false;
     cfg.agent.max_tool_iterations = 3;
 
-    SessionManager mgr(cfg, provider_http);
     EventBus bus;
+    SessionManager mgr(cfg, provider_http);
     mgr.set_event_bus(&bus);
     mgr.subscribe_events();
 
