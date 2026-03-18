@@ -1,6 +1,7 @@
 #pragma once
 #include "../tool.hpp"
 #include <string>
+#include <mutex>
 #include <unordered_map>
 #include <sys/types.h>
 
@@ -47,6 +48,7 @@ private:
     void cleanup_process(const std::string& id);
     void kill_all_processes();
 
+    std::mutex mutex_;  // guards processes_ and next_id_
     std::unordered_map<std::string, ProcessState> processes_;
     uint32_t next_id_ = 0;
 };

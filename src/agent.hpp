@@ -20,6 +20,7 @@ class Agent {
 public:
     Agent(std::unique_ptr<Provider> provider,
           const Config& config);
+    ~Agent();
 
     // Process a user message and return the assistant's final text reply
     std::string process(const std::string& user_message);
@@ -87,6 +88,8 @@ private:
     std::string model_;
     bool system_prompt_injected_ = false;
     EventBus* event_bus_ = nullptr;
+    uint64_t tools_sub_id_ = 0;
+    uint64_t skill_sub_id_ = 0;
     std::string session_id_;
     std::string channel_;
     std::string binary_path_;

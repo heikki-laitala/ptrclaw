@@ -55,6 +55,13 @@ Agent::Agent(std::unique_ptr<Provider> provider,
     }
 }
 
+Agent::~Agent() {
+    if (event_bus_) {
+        if (tools_sub_id_) event_bus_->unsubscribe(tools_sub_id_);
+        if (skill_sub_id_) event_bus_->unsubscribe(skill_sub_id_);
+    }
+}
+
 void Agent::inject_system_prompt() {
     std::string prompt;
     if (hatching_) {
@@ -435,16 +442,29 @@ void Agent::on_tools_available(const std::vector<ToolSpec>& specs) {
 }
 
 void Agent::set_event_bus(EventBus* bus) {
+    // Unsubscribe from previous bus if any
+    if (event_bus_) {
+        if (tools_sub_id_) event_bus_->unsubscribe(tools_sub_id_);
+        if (skill_sub_id_) event_bus_->unsubscribe(skill_sub_id_);
+        tools_sub_id_ = 0;
+        skill_sub_id_ = 0;
+    }
     event_bus_ = bus;
     if (event_bus_) {
-        subscribe<ToolsAvailableEvent>(*event_bus_,
+        tools_sub_id_ = subscribe<ToolsAvailableEvent>(*event_bus_,
             std::function<void(const ToolsAvailableEvent&)>(
                 [this](const ToolsAvailableEvent& ev) {
+                    // In multi-session mode, only accept specs for our session
+                    if (!session_id_.empty() && !ev.session_id.empty() &&
+                        ev.session_id != session_id_) return;
                     on_tools_available(ev.specs);
                 }));
-        subscribe<SkillRequestEvent>(*event_bus_,
+        skill_sub_id_ = subscribe<SkillRequestEvent>(*event_bus_,
             std::function<void(const SkillRequestEvent&)>(
                 [this](const SkillRequestEvent& ev) {
+                    // In multi-session mode, only handle our session's requests
+                    if (!session_id_.empty() && !ev.session_id.empty() &&
+                        ev.session_id != session_id_) return;
                     on_skill_request(ev);
                 }));
     }

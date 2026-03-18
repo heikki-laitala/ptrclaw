@@ -66,9 +66,11 @@ class EventBus; // forward declaration
 class EventBusAwareTool : public Tool {
 public:
     void set_event_bus(EventBus* bus) { event_bus_ = bus; }
+    void set_session_id(const std::string& id) { session_id_ = id; }
 
 protected:
     EventBus* event_bus_ = nullptr;
+    std::string session_id_;
 };
 
 } // namespace ptrclaw

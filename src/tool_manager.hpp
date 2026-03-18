@@ -53,7 +53,8 @@ class ToolManager {
 public:
     ToolManager(std::vector<std::unique_ptr<Tool>> tools,
                 const Config& config,
-                EventBus& bus);
+                EventBus& bus,
+                const std::string& session_id = "");
     ~ToolManager();
 
     // Publish current tool specs as ToolsAvailableEvent.
@@ -82,6 +83,7 @@ private:
     std::vector<std::unique_ptr<Tool>> tools_;
     Config config_;
     EventBus& bus_;
+    std::string session_id_;  // empty = accept all sessions (CLI mode)
     uint64_t request_sub_id_ = 0;
     uint64_t cancel_sub_id_ = 0;
     bool memory_active_ = false;
