@@ -79,28 +79,22 @@ std::vector<MemoryEntry> collect_neighbors(Memory* memory,
 std::string memory_enrich(Memory* memory, const std::string& user_message,
                           uint32_t recall_limit, uint32_t enrich_depth,
                           const std::string& episode_context) {
-    // Compute per-tier budgets based on query intent (PER-395).
-    // Chronological queries boost observations; stable-fact queries boost concepts;
-    // unknown queries split evenly. Budgets always sum to recall_limit.
+    // Compute concept budget hint based on query intent (PER-395).
+    // Chronological queries favor observations; stable-fact queries favor concepts;
+    // unknown queries split evenly. Dynamic reallocation below ensures no slots
+    // are wasted when one tier is underpopulated.
     uint32_t concept_budget = 0;
-    uint32_t obs_budget = 0;
     if (recall_limit > 0) {
         QueryIntent intent = classify_query_intent(user_message);
         switch (intent) {
             case QueryIntent::Chronological:
-                // Recent observations are more relevant for temporal queries
                 concept_budget = recall_limit / 3;
-                obs_budget     = recall_limit - concept_budget;
                 break;
             case QueryIntent::Stable:
-                // Cross-session concepts are more relevant for preference/fact queries
-                obs_budget     = recall_limit / 3;
-                concept_budget = recall_limit - obs_budget;
+                concept_budget = recall_limit - recall_limit / 3;
                 break;
             default:
-                // Even split; observations get the extra slot when recall_limit is odd
                 concept_budget = recall_limit / 2;
-                obs_budget     = recall_limit - concept_budget;
                 break;
         }
     }
@@ -142,10 +136,18 @@ std::string memory_enrich(Memory* memory, const std::string& user_message,
     std::sort(observations.begin(), observations.end(), by_score_desc);
     // NOLINTEND(bugprone-nondeterministic-pointer-iteration-order)
 
-    // Apply tier budgets to keep context bounded and prevent one type from
-    // crowding out the other (e.g. a flood of observations hiding all concepts).
-    if (concepts.size() > concept_budget)     concepts.resize(concept_budget);
-    if (observations.size() > obs_budget) observations.resize(obs_budget);
+    // Apply tier budgets with dynamic reallocation: if one tier is
+    // underpopulated, give its unused slots to the other tier so we
+    // always use up to recall_limit entries when available.
+    auto concept_count = static_cast<uint32_t>(concepts.size());
+    auto obs_count     = static_cast<uint32_t>(observations.size());
+    uint32_t concepts_shown = std::min(concept_count, concept_budget);
+    uint32_t remaining      = recall_limit - concepts_shown;
+    uint32_t obs_shown      = std::min(obs_count, remaining);
+    // Give back unused observation slots to concepts
+    uint32_t final_concept  = std::min(concept_count, recall_limit - obs_shown);
+    concepts.resize(final_concept);
+    observations.resize(obs_shown);
 
     bool has_content = !concepts.empty() || !observations.empty() || !episode_context.empty();
     if (!has_content) return user_message;

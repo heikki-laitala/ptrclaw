@@ -1244,9 +1244,9 @@ TEST_CASE("Agent: synthesis stores observation-type entries with session_id", "[
     (void)mock;
 }
 
-TEST_CASE("Agent: synthesis without type field defaults to observation (backward compat)", "[agent][synthesis]") {
-    // Entries without a type field must be stored with session_id (observation default)
-    // to ensure backward compatibility with pre-PER-389 synthesis responses.
+TEST_CASE("Agent: synthesis without type field defaults to concept (cross-session)", "[agent][synthesis]") {
+    // Entries without a type field default to concept (cross-session, no session_id)
+    // so that factual knowledge isn't accidentally scoped to a single session.
     auto provider = std::make_unique<MockProvider>();
     auto* mock = provider.get();
     mock->next_response.content = "I understand.";
@@ -1269,7 +1269,7 @@ TEST_CASE("Agent: synthesis without type field defaults to observation (backward
 
     auto entry = agent.memory()->get("user-likes-go");
     REQUIRE(entry.has_value());
-    REQUIRE(entry.value_or(MemoryEntry{}).session_id == "test-session-compat");
+    REQUIRE(entry.value_or(MemoryEntry{}).session_id.empty());
 
     std::filesystem::remove(mem_path);
     (void)mock;
