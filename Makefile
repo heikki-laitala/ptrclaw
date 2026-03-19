@@ -98,6 +98,7 @@ lint: build
 
 clear-memory:
 	rm -f ~/.ptrclaw/memory.json ~/.ptrclaw/memory.db ~/.ptrclaw/memory.db-shm ~/.ptrclaw/memory.db-wal
+	rm -rf ~/.ptrclaw/tee
 	@echo "Memory cleared"
 
 memory-clean: clear-memory
