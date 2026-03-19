@@ -31,7 +31,7 @@ nlohmann::json Config::defaults_json() {
             {"compatible", {{"base_url", ""}}}
         }},
         {"agent", {
-            {"max_tool_iterations", 10},
+            {"max_tool_iterations", 50},
             {"max_history_messages", 50},
             {"token_limit", 128000},
             {"disable_streaming", false},
