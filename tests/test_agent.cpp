@@ -1325,7 +1325,8 @@ TEST_CASE("Agent: synthesis prompt includes deduplication guidance", "[agent][sy
 
     std::string mem_path = "/tmp/ptrclaw_test_synth_dedup_prompt_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     agent.process("I prefer C++ over Rust");
@@ -1354,7 +1355,8 @@ TEST_CASE("Agent: synthesis replaces field removes old concept and stores new on
     auto memory = std::make_unique<JsonMemory>(mem_path);
     // Pre-seed the old concept that will be replaced
     memory->store("pref:rust", "User prefers Rust", MemoryCategory::Knowledge, "");
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     agent.process("Actually I switched to C++");
@@ -1393,7 +1395,8 @@ TEST_CASE("Agent: synthesis replaces field migrates links to new concept", "[age
     memory->store("decision:use-cargo", "Uses Cargo for builds", MemoryCategory::Knowledge, "");
     memory->link("pref:rust", "decision:use-cargo");
 
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     agent.process("Switched from Rust to C++");
@@ -1430,7 +1433,8 @@ TEST_CASE("Agent: synthesis replaces pointing to same key is a no-op", "[agent][
 
     std::string mem_path = "/tmp/ptrclaw_test_synth_replaces_self_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     agent.process("I like C++");
@@ -1458,7 +1462,8 @@ TEST_CASE("Agent: synthesis replaces pointing to nonexistent key is silently ign
 
     std::string mem_path = "/tmp/ptrclaw_test_synth_replaces_ghost_" + std::to_string(getpid()) + ".json";
     auto memory = std::make_unique<JsonMemory>(mem_path);
-    Agent agent(std::move(provider), std::move(tools), cfg);
+    TestAgentSetup setup(std::move(provider), std::move(tools), cfg);
+    auto& agent = setup.agent;
     agent.set_memory(std::move(memory));
 
     // Should not throw; new entry should still be stored
