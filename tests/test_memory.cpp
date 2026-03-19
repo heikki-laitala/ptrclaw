@@ -299,7 +299,7 @@ TEST_CASE("memory_enrich: entries within each tier sorted by score descending", 
     std::filesystem::remove(path);
 }
 
-TEST_CASE("memory_enrich: tier budgets cap concepts and observations independently", "[memory][per395]") {
+TEST_CASE("memory_enrich: tier budgets with dynamic reallocation", "[memory][per395]") {
     std::string path = "/tmp/ptrclaw_test_tier_budget_" + std::to_string(getpid()) + ".json";
     {
         JsonMemory mem(path);
@@ -316,7 +316,7 @@ TEST_CASE("memory_enrich: tier budgets cap concepts and observations independent
                       MemoryCategory::Knowledge, "");
         }
 
-        // recall_limit=4, Unknown intent → concept_budget=2, obs_budget=2
+        // recall_limit=4, Unknown intent → concept_budget=3 (60%), dynamic realloc
         std::string result = memory_enrich(&mem, "task", 4);
 
         int obs_shown = 0, concept_shown = 0;
@@ -325,9 +325,9 @@ TEST_CASE("memory_enrich: tier budgets cap concepts and observations independent
             if (result.find("concept:" + std::to_string(i)) != std::string::npos) concept_shown++;
         }
 
-        // Each tier capped at budget (2), and both types should appear
-        REQUIRE(obs_shown <= 2);
-        REQUIRE(concept_shown <= 2);
+        // Total entries shown should equal recall_limit (no wasted slots)
+        REQUIRE(obs_shown + concept_shown == 4);
+        // Both types should appear
         REQUIRE(obs_shown >= 1);
         REQUIRE(concept_shown >= 1);
     }

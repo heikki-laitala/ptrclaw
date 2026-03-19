@@ -94,7 +94,10 @@ std::string memory_enrich(Memory* memory, const std::string& user_message,
                 concept_budget = recall_limit - recall_limit / 3;
                 break;
             default:
-                concept_budget = recall_limit / 2;
+                // Unknown intent: favor concepts (3/5) over observations (2/5).
+                // Most benchmark queries ask about facts/decisions which are stored
+                // as concepts; a 50/50 split underweights them.
+                concept_budget = (recall_limit * 3 + 4) / 5;
                 break;
         }
     }
@@ -107,47 +110,65 @@ std::string memory_enrich(Memory* memory, const std::string& user_message,
         entries.erase(std::remove_if(entries.begin(), entries.end(),
             [](const MemoryEntry& e) { return e.category == MemoryCategory::Core; }),
             entries.end());
-        // Do not truncate here — tier budgets below handle the limits independently.
     }
 
-    std::vector<MemoryEntry> neighbor_entries;
-    if (enrich_depth > 0 && memory && !entries.empty()) {
-        neighbor_entries = collect_neighbors(memory, entries, recall_limit);
-    }
+    // Sort all direct recall results by relevance score descending.
+    auto by_score_desc = [](const MemoryEntry& a, const MemoryEntry& b) {
+        return a.score > b.score;
+    };
+    std::sort(entries.begin(), entries.end(), by_score_desc);
 
     // Split into concepts (cross-session, session_id empty) and
-    // observations (session-specific, session_id set). Neighbors follow the same rule.
+    // observations (session-specific, session_id set).
+    // Direct recall results are budgeted first; neighbors fill remaining slots.
     std::vector<const MemoryEntry*> concepts, observations;
     for (const auto& e : entries) {
         (e.session_id.empty() ? concepts : observations).push_back(&e);
     }
-    for (const auto& e : neighbor_entries) {
-        (e.session_id.empty() ? concepts : observations).push_back(&e);
-    }
-
-    // Sort each tier by relevance score descending so the highest-value entries
-    // appear first and low-relevance items are dropped when the budget is tight.
-    auto by_score_desc = [](const MemoryEntry* a, const MemoryEntry* b) {
-        return a->score > b->score;
-    };
-    // NOLINTBEGIN(bugprone-nondeterministic-pointer-iteration-order)
-    // Comparator uses score, not pointer values — order is deterministic.
-    std::sort(concepts.begin(), concepts.end(), by_score_desc);
-    std::sort(observations.begin(), observations.end(), by_score_desc);
-    // NOLINTEND(bugprone-nondeterministic-pointer-iteration-order)
 
     // Apply tier budgets with dynamic reallocation: if one tier is
     // underpopulated, give its unused slots to the other tier so we
     // always use up to recall_limit entries when available.
-    auto concept_count = static_cast<uint32_t>(concepts.size());
-    auto obs_count     = static_cast<uint32_t>(observations.size());
-    uint32_t concepts_shown = std::min(concept_count, concept_budget);
-    uint32_t remaining      = recall_limit - concepts_shown;
-    uint32_t obs_shown      = std::min(obs_count, remaining);
-    // Give back unused observation slots to concepts
-    uint32_t final_concept  = std::min(concept_count, recall_limit - obs_shown);
-    concepts.resize(final_concept);
-    observations.resize(obs_shown);
+    auto apply_budgets = [recall_limit, concept_budget](
+            std::vector<const MemoryEntry*>& cons,
+            std::vector<const MemoryEntry*>& obs) {
+        auto con_count = static_cast<uint32_t>(cons.size());
+        auto obs_count = static_cast<uint32_t>(obs.size());
+        uint32_t con_shown  = std::min(con_count, concept_budget);
+        uint32_t remaining  = recall_limit - con_shown;
+        uint32_t obs_shown  = std::min(obs_count, remaining);
+        uint32_t final_con  = std::min(con_count, recall_limit - obs_shown);
+        cons.resize(final_con);
+        obs.resize(obs_shown);
+    };
+    apply_budgets(concepts, observations);
+
+    // Neighbors fill remaining slots after direct results are budgeted.
+    // This prevents low-relevance neighbors from displacing high-relevance
+    // direct recall results.
+    auto total_shown = static_cast<uint32_t>(concepts.size() + observations.size());
+    if (enrich_depth > 0 && memory && total_shown < recall_limit && !entries.empty()) {
+        uint32_t neighbor_budget = recall_limit - total_shown;
+        auto neighbor_entries = collect_neighbors(memory, entries, neighbor_budget);
+
+        std::unordered_set<std::string> shown_keys;
+        for (const auto* e : concepts)    shown_keys.insert(e->key);
+        for (const auto* e : observations) shown_keys.insert(e->key);
+
+        // Add neighbors that aren't already shown, up to remaining budget
+        // Store them so pointers remain valid through formatting.
+        static thread_local std::vector<MemoryEntry> neighbor_storage;
+        neighbor_storage.clear();
+        for (auto& n : neighbor_entries) {
+            if (n.category == MemoryCategory::Core) continue;
+            if (shown_keys.count(n.key)) continue;
+            neighbor_storage.push_back(std::move(n));
+            if (neighbor_storage.size() >= neighbor_budget) break;
+        }
+        for (const auto& n : neighbor_storage) {
+            (n.session_id.empty() ? concepts : observations).push_back(&n);
+        }
+    }
 
     bool has_content = !concepts.empty() || !observations.empty() || !episode_context.empty();
     if (!has_content) return user_message;
