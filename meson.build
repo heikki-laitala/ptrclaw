@@ -126,7 +126,7 @@ core_sources = files(
   'src/agent.cpp', 'src/channel.cpp', 'src/commands.cpp', 'src/config.cpp',
   'src/dispatcher.cpp', 'src/event_bus.cpp', 'src/oauth.cpp',
   'src/onboard.cpp', 'src/output_filter.cpp', 'src/plugin.cpp',
-  'src/prompt.cpp', 'src/provider.cpp', 'src/repl.cpp',
+  'src/prompt.cpp', 'src/provider.cpp',
   'src/session.cpp', 'src/skill.cpp', 'src/stream_relay.cpp', 'src/tool.cpp',
   'src/tool_manager.cpp', 'src/util.cpp',
 ) + http_impl_source

@@ -13,7 +13,7 @@
 
 namespace ptrclaw {
 
-SessionManager::SessionManager(const Config& config, HttpClient& http)
+SessionManager::SessionManager(Config& config, HttpClient& http)
     : config_(config), http_(http)
 {}
 
@@ -158,8 +158,8 @@ void SessionManager::handle_message(const MessageReceivedEvent& ev) {
         return;
     }
 
-    // Handle /new command
-    if (ev.message.content == "/new") {
+    // Handle /new and /clear commands
+    if (ev.message.content == "/new" || ev.message.content == "/clear") {
         agent.clear_history();
         send_reply("Conversation history cleared. What would you like to discuss?");
         return;
@@ -190,9 +190,17 @@ void SessionManager::handle_message(const MessageReceivedEvent& ev) {
         return;
     }
 
-    // Handle /memory command
+    // Handle /memory commands
     if (ev.message.content == "/memory") {
         send_reply(cmd_memory(agent));
+        return;
+    }
+    if (ev.message.content == "/memory export") {
+        send_reply(cmd_memory_export(agent));
+        return;
+    }
+    if (ev.message.content.rfind("/memory import ", 0) == 0) {
+        send_reply(cmd_memory_import(agent, trim(ev.message.content.substr(15))));
         return;
     }
 
@@ -207,7 +215,8 @@ void SessionManager::handle_message(const MessageReceivedEvent& ev) {
 
     // Handle /help command
     if (ev.message.content == "/help") {
-        send_reply(cmd_help(config_.dev, /*channel=*/true));
+        bool is_channel = (ev.session_id != kCliSessionId);
+        send_reply(cmd_help(config_.dev, is_channel));
         return;
     }
 

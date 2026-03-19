@@ -27,7 +27,9 @@ struct Session {
 
 class SessionManager {
 public:
-    SessionManager(const Config& config, HttpClient& http);
+    static constexpr const char* kCliSessionId = "cli";
+
+    SessionManager(Config& config, HttpClient& http);
 
     // Get or create a session
     Agent& get_session(const std::string& session_id);
@@ -54,7 +56,7 @@ public:
     void subscribe_events();
 
 private:
-    Config config_;
+    Config& config_;
     HttpClient& http_;
     std::unordered_map<std::string, Session> sessions_;
     mutable std::mutex mutex_;
