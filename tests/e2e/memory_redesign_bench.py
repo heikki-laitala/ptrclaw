@@ -15,28 +15,15 @@ the structural improvements in the memory redesign: structured episode
 summaries, recoverable archives, and concept vs observation classification.
 
 Usage:
-    # Build with pipe channel:
-    make build-pipe
+    # Interactive mode (no args — walks you through options):
+    uv run tests/e2e/memory_redesign_bench.py
 
-    # Run all scenarios:
+    # CLI mode — run all scenarios:
     uv run tests/e2e/memory_redesign_bench.py ./builddir-pipe/ptrclaw
 
-    # Run a single scenario:
-    uv run tests/e2e/memory_redesign_bench.py ./builddir-pipe/ptrclaw --scenario long_planning
-
-    # Run multiple specific scenarios:
+    # CLI mode — single scenario, save results, preserve state:
     uv run tests/e2e/memory_redesign_bench.py ./builddir-pipe/ptrclaw \
-        --scenario long_planning --scenario preference_refinement
-
-    # Save results for later comparison:
-    uv run tests/e2e/memory_redesign_bench.py ./builddir-pipe/ptrclaw --output main.json
-
-    # Compare against a baseline:
-    uv run tests/e2e/memory_redesign_bench.py ./builddir-pipe/ptrclaw \
-        --output redesign.json --compare main.json
-
-    # Use JSON memory backend instead of SQLite:
-    uv run tests/e2e/memory_redesign_bench.py ./builddir-pipe/ptrclaw --backend json
+        --scenario long_planning --output results.json --keep-state ./bench-state
 
 Available scenarios:
     long_planning              Long planning session — compaction quality
@@ -690,7 +677,7 @@ def llm_judge_signals(client, response, expected_signals,
 # ── Benchmark runner ─────────────────────────────────────────────────────
 
 
-def run_scenario(binary, backend, scenario, limiters):
+def run_scenario(binary, backend, scenario, limiters, keep_state=None):
     """Run a single scenario. Returns a dict of metrics."""
     seed = scenario["seed"]
     followups = scenario["followups"]
@@ -829,7 +816,14 @@ def run_scenario(binary, backend, scenario, limiters):
             ),
         }
     finally:
-        shutil.rmtree(home, ignore_errors=True)
+        if keep_state:
+            dest = os.path.join(keep_state, scenario["name"])
+            if os.path.exists(dest):
+                shutil.rmtree(dest)
+            shutil.move(home, dest)
+            print(f"  State preserved: {dest}", file=sys.stderr)
+        else:
+            shutil.rmtree(home, ignore_errors=True)
 
 
 # ── Reporting ────────────────────────────────────────────────────────────
@@ -937,14 +931,248 @@ def print_summary(scenario_results, backend, baseline=None):
     return overall, passed
 
 
-def main():
-    scenario_names = [s["name"] for s in SCENARIOS]
+def run_benchmark(binary, backend, selected_scenarios, output_file=None,
+                   compare_file=None, keep_state=None):
+    """Core benchmark runner used by both CLI and interactive modes."""
+    if not os.path.isfile(binary):
+        print(f"Error: binary not found: {binary}")
+        return False
 
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("Error: ANTHROPIC_API_KEY environment variable required")
+        return False
+
+    baseline = None
+    if compare_file:
+        with open(compare_file) as f:
+            baseline = json.load(f)
+        print(f"Comparing against baseline: {compare_file}", file=sys.stderr)
+
+    if keep_state:
+        os.makedirs(keep_state, exist_ok=True)
+
+    has_embeddings = bool(os.environ.get("OPENAI_API_KEY"))
+    print("Running memory redesign benchmark...", file=sys.stderr)
+    print(
+        f"  Backend: {backend}, Model: {MODEL}, "
+        f"Embeddings: {'on' if has_embeddings else 'off'}",
+        file=sys.stderr,
+    )
+
+    limiters = (
+        TokenRateLimiter(INPUT_TOKEN_BUDGET_PER_MINUTE),
+        TokenRateLimiter(OUTPUT_TOKEN_BUDGET_PER_MINUTE),
+        TokenRateLimiter(REQUEST_BUDGET_PER_MINUTE),
+    )
+
+    run_scenarios = SCENARIOS
+    if selected_scenarios:
+        run_scenarios = [
+            s for s in SCENARIOS if s["name"] in selected_scenarios
+        ]
+
+    scenario_results = []
+    for scenario in run_scenarios:
+        print(f"\n{'─' * 50}", file=sys.stderr)
+        print(f"  Scenario: {scenario['description']}", file=sys.stderr)
+        print(f"{'─' * 50}", file=sys.stderr)
+
+        result = run_scenario(binary, backend, scenario, limiters, keep_state)
+        scenario_results.append(result)
+
+        base_scenario = None
+        if baseline:
+            for bs in baseline.get("scenarios", []):
+                if bs["scenario"] == scenario["name"]:
+                    base_scenario = bs
+                    break
+        print_scenario_report(result, base_scenario)
+
+    overall, passed = print_summary(scenario_results, backend, baseline)
+
+    if output_file:
+        output = {
+            "backend": backend,
+            "model": MODEL,
+            "judge_model": JUDGE_MODEL,
+            "overall_mean": round(overall, 3),
+            "passed": passed,
+            "scenarios": scenario_results,
+        }
+        with open(output_file, "w") as f:
+            json.dump(output, f, indent=2)
+        print(f"Results saved to {output_file}", file=sys.stderr)
+
+    return passed
+
+
+def prompt_choice(prompt, options):
+    """Prompt user to pick from a numbered list. Returns the chosen value."""
+    for i, (label, _) in enumerate(options, 1):
+        print(f"  {i}) {label}")
+    while True:
+        try:
+            raw = input(f"\n{prompt} ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            sys.exit(0)
+        try:
+            idx = int(raw)
+            if 1 <= idx <= len(options):
+                return options[idx - 1][1]
+        except ValueError:
+            pass
+        print(f"  Enter a number between 1 and {len(options)}")
+
+
+def prompt_yn(prompt, default=True):
+    """Prompt for yes/no. Returns bool."""
+    suffix = "[Y/n]" if default else "[y/N]"
+    try:
+        raw = input(f"{prompt} {suffix} ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        sys.exit(0)
+    if not raw:
+        return default
+    return raw in ("y", "yes")
+
+
+def prompt_str(prompt, default=""):
+    """Prompt for a string value."""
+    suffix = f" [{default}]" if default else ""
+    try:
+        raw = input(f"{prompt}{suffix}: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        sys.exit(0)
+    return raw or default
+
+
+def find_binary():
+    """Try to find ptrclaw pipe binary automatically."""
+    candidates = ["./builddir-pipe/ptrclaw", "./builddir/ptrclaw"]
+    for c in candidates:
+        if os.path.isfile(c):
+            return os.path.abspath(c)
+    return None
+
+
+def interactive_menu():
+    """Interactive TUI for running benchmarks."""
+    print()
+    print("=" * 50)
+    print("  PtrClaw Memory Benchmark")
+    print("=" * 50)
+
+    # Find binary
+    binary = find_binary()
+    if binary:
+        print(f"\n  Binary: {binary}")
+        if not prompt_yn("  Use this binary?"):
+            binary = prompt_str("  Path to ptrclaw binary")
+            binary = os.path.abspath(binary)
+    else:
+        binary = prompt_str("  Path to ptrclaw binary")
+        binary = os.path.abspath(binary)
+
+    # Environment check
+    has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    has_openai = bool(os.environ.get("OPENAI_API_KEY"))
+    print(f"\n  ANTHROPIC_API_KEY: {'set' if has_anthropic else 'MISSING'}")
+    print(f"  OPENAI_API_KEY:   {'set (embeddings on)' if has_openai else 'not set (embeddings off)'}")
+    if not has_anthropic:
+        print("\n  Error: ANTHROPIC_API_KEY is required")
+        sys.exit(1)
+
+    # What to run
+    print(f"\n{'─' * 50}")
+    print("  What would you like to run?\n")
+    actions = [
+        ("Run all scenarios", "all"),
+        ("Run a single scenario", "single"),
+    ]
+    action = prompt_choice("Select:", actions)
+
+    selected = None
+    if action == "single":
+        print()
+        scenario_opts = [
+            (f"{s['name']:.<35} {s['description']}", s["name"])
+            for s in SCENARIOS
+        ]
+        selected = [prompt_choice("Select scenario:", scenario_opts)]
+
+    # Backend
+    print()
+    backend = prompt_choice("Memory backend:", [
+        ("SQLite (FTS5)", "sqlite"),
+        ("JSON (file-based)", "json"),
+    ])
+
+    # Output file
+    print()
+    save = prompt_yn("Save results to file?", default=True)
+    output_file = None
+    if save:
+        default_name = "results.json"
+        output_file = prompt_str("  Output file", default_name)
+
+    # Compare baseline
+    compare_file = None
+    if save:
+        compare = prompt_yn("Compare against a baseline file?", default=False)
+        if compare:
+            compare_file = prompt_str("  Baseline file path")
+
+    # Keep state
+    print()
+    keep = prompt_yn("Preserve state after run (config, memory db)?",
+                     default=False)
+    keep_state = None
+    if keep:
+        keep_state = prompt_str("  Directory to save state",
+                                "./bench-state")
+
+    # Confirm
+    print(f"\n{'─' * 50}")
+    print("  Summary:")
+    print(f"    Binary:     {binary}")
+    print(f"    Backend:    {backend}")
+    print(f"    Scenarios:  {', '.join(selected) if selected else 'all'}")
+    print(f"    Embeddings: {'on' if has_openai else 'off'}")
+    if output_file:
+        print(f"    Output:     {output_file}")
+    if compare_file:
+        print(f"    Baseline:   {compare_file}")
+    if keep_state:
+        print(f"    Keep state: {keep_state}")
+    print(f"{'─' * 50}")
+
+    if not prompt_yn("\nProceed?"):
+        print("Aborted.")
+        sys.exit(0)
+
+    print()
+    passed = run_benchmark(
+        binary, backend, selected, output_file, compare_file, keep_state,
+    )
+    sys.exit(0 if passed else 1)
+
+
+def main():
+    """Entry point — interactive menu when no args, CLI mode with args."""
+    if len(sys.argv) <= 1:
+        interactive_menu()
+        return
+
+    scenario_names = [s["name"] for s in SCENARIOS]
     binary = None
     backend = "sqlite"
     output_file = None
     compare_file = None
-    selected_scenarios = None  # None = all
+    keep_state = None
+    selected_scenarios = None
 
     args = sys.argv[1:]
     i = 0
@@ -957,6 +1185,9 @@ def main():
             i += 2
         elif args[i] == "--compare" and i + 1 < len(args):
             compare_file = args[i + 1]
+            i += 2
+        elif args[i] == "--keep-state" and i + 1 < len(args):
+            keep_state = args[i + 1]
             i += 2
         elif args[i] == "--scenario" and i + 1 < len(args):
             name = args[i + 1]
@@ -980,84 +1211,19 @@ def main():
 
     if not binary:
         print(
-            f"Usage: {sys.argv[0]} <path-to-ptrclaw-binary> "
-            f"[--backend sqlite|json] [--output FILE] [--compare FILE] "
-            f"[--scenario NAME]\n"
+            f"Usage: {sys.argv[0]} [<binary>] [options]\n"
+            f"  No arguments: interactive mode\n"
+            f"  <binary> [--backend sqlite|json] [--output FILE] "
+            f"[--compare FILE] [--scenario NAME] [--keep-state DIR]\n"
             f"Available scenarios: {', '.join(scenario_names)}",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    if not os.path.isfile(binary):
-        print(f"Error: binary not found: {binary}", file=sys.stderr)
-        sys.exit(1)
-
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print(
-            "Error: ANTHROPIC_API_KEY environment variable required",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # Load baseline
-    baseline = None
-    if compare_file:
-        with open(compare_file) as f:
-            baseline = json.load(f)
-        print(f"Comparing against baseline: {compare_file}", file=sys.stderr)
-
-    has_embeddings = bool(os.environ.get("OPENAI_API_KEY"))
-    print("Running memory redesign benchmark...", file=sys.stderr)
-    print(f"  Backend: {backend}, Model: {MODEL}, Embeddings: {'on' if has_embeddings else 'off'}", file=sys.stderr)
-    print(f"  Backend: {backend}, Model: {MODEL}", file=sys.stderr)
-
-    # Shared rate limiters
-    limiters = (
-        TokenRateLimiter(INPUT_TOKEN_BUDGET_PER_MINUTE),
-        TokenRateLimiter(OUTPUT_TOKEN_BUDGET_PER_MINUTE),
-        TokenRateLimiter(REQUEST_BUDGET_PER_MINUTE),
+    passed = run_benchmark(
+        binary, backend, selected_scenarios, output_file,
+        compare_file, keep_state,
     )
-
-    # Run scenarios
-    run_scenarios = SCENARIOS
-    if selected_scenarios:
-        run_scenarios = [s for s in SCENARIOS if s["name"] in selected_scenarios]
-
-    scenario_results = []
-    for scenario in run_scenarios:
-        print(f"\n{'─' * 50}", file=sys.stderr)
-        print(f"  Scenario: {scenario['description']}", file=sys.stderr)
-        print(f"{'─' * 50}", file=sys.stderr)
-
-        result = run_scenario(binary, backend, scenario, limiters)
-        scenario_results.append(result)
-
-        # Print per-scenario report
-        base_scenario = None
-        if baseline:
-            for bs in baseline.get("scenarios", []):
-                if bs["scenario"] == scenario["name"]:
-                    base_scenario = bs
-                    break
-        print_scenario_report(result, base_scenario)
-
-    # Overall summary
-    overall, passed = print_summary(scenario_results, backend, baseline)
-
-    # Save results
-    if output_file:
-        output = {
-            "backend": backend,
-            "model": MODEL,
-            "judge_model": JUDGE_MODEL,
-            "overall_mean": round(overall, 3),
-            "passed": passed,
-            "scenarios": scenario_results,
-        }
-        with open(output_file, "w") as f:
-            json.dump(output, f, indent=2)
-        print(f"Results saved to {output_file}", file=sys.stderr)
-
     sys.exit(0 if passed else 1)
 
 
