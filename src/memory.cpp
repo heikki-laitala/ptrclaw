@@ -136,8 +136,11 @@ std::string memory_enrich(Memory* memory, const std::string& user_message,
     auto by_score_desc = [](const MemoryEntry* a, const MemoryEntry* b) {
         return a->score > b->score;
     };
+    // NOLINTBEGIN(bugprone-nondeterministic-pointer-iteration-order)
+    // Comparator uses score, not pointer values — order is deterministic.
     std::sort(concepts.begin(), concepts.end(), by_score_desc);
     std::sort(observations.begin(), observations.end(), by_score_desc);
+    // NOLINTEND(bugprone-nondeterministic-pointer-iteration-order)
 
     // Apply tier budgets to keep context bounded and prevent one type from
     // crowding out the other (e.g. a flood of observations hiding all concepts).
