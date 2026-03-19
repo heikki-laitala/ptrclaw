@@ -108,80 +108,6 @@ static void print_usage() {
               << "  WHATSAPP_VERIFY_TOKEN  WhatsApp webhook verify token\n";
 }
 
-static int run_channel(const std::string& channel_name,
-                       ptrclaw::Config& config,
-                       ptrclaw::HttpClient& http_client,
-                       const std::string& binary_path) {
-    // Create channel via plugin registry
-    std::unique_ptr<ptrclaw::Channel> channel;
-    try {
-        channel = ptrclaw::PluginRegistry::instance().create_channel(
-            channel_name, config, http_client);
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << "\n";
-        return 1;
-    }
-
-    if (!channel->health_check()) {
-        std::cerr << "Error: " << channel_name << " health check failed.\n";
-        return 1;
-    }
-
-    if (!channel->supports_polling()) {
-        std::cerr << channel_name << " channel requires an external webhook gateway.\n"
-                  << "For whatsapp: set webhook_listen (e.g. \"127.0.0.1:8080\") in\n"
-                  << "~/.ptrclaw/config.json under channels.whatsapp, or via the\n"
-                  << "WHATSAPP_WEBHOOK_LISTEN env var, to start the built-in webhook\n"
-                  << "server. Place a reverse proxy (nginx, Caddy) in front for TLS\n"
-                  << "and rate-limiting. See docs/reverse-proxy.md for details.\n";
-        return 1;
-    }
-
-    channel->initialize();
-
-    // Set up event bus
-    ptrclaw::EventBus bus;
-    ptrclaw::SessionManager sessions(config, http_client);
-    sessions.set_binary_path(binary_path);
-    sessions.set_event_bus(&bus);
-
-#ifdef PTRCLAW_HAS_EMBEDDINGS
-    auto channel_embedder = ptrclaw::create_embedder(config, http_client);
-    if (channel_embedder) {
-        sessions.set_embedder(channel_embedder.get());
-    }
-#endif
-
-    // Wire up channel display (typing, streaming, message delivery)
-    ptrclaw::StreamRelay relay(*channel, bus);
-    relay.subscribe_events();
-
-    // SessionManager subscribes last — runs after channel handler sets up
-    // typing + stream state
-    sessions.subscribe_events();
-
-    uint32_t poll_count = 0;
-    std::cerr << "[" << channel_name << "] Bot started. Polling for messages...\n";
-
-    while (!g_shutdown.load()) {
-        auto messages = channel->poll_updates();
-        for (auto& msg : messages) {
-            ptrclaw::MessageReceivedEvent ev;
-            ev.session_id = msg.sender;
-            ev.message = std::move(msg);
-            bus.publish(ev);
-        }
-
-        // Periodic session eviction
-        if (++poll_count % 100 == 0) {
-            sessions.evict_idle(3600);
-        }
-    }
-
-    std::cerr << "[" << channel_name << "] Shutting down.\n";
-    return 0;
-}
-
 // Publish a message event for the CLI session
 static void publish_cli_message(ptrclaw::EventBus& bus, const std::string& content) {
     ptrclaw::MessageReceivedEvent ev;
@@ -255,19 +181,6 @@ int main(int argc, char* argv[]) try {
 
     ptrclaw::PlatformHttpClient http_client;
 
-    // Channel mode (except pipe, which uses SessionManager below)
-    if (!channel_name.empty()) {
-#ifdef PTRCLAW_HAS_PIPE
-        if (channel_name != "pipe")
-#endif
-        {
-            std::signal(SIGINT, signal_handler);
-            std::signal(SIGTERM, signal_handler);
-            ptrclaw::http_set_abort_flag(&g_shutdown);
-            return run_channel(channel_name, config, http_client, binary_path);
-        }
-    }
-
     // Auto-onboard if no provider has credentials (first run, REPL only)
     bool onboard_ran = false;
     bool onboard_hatch = false;
@@ -275,7 +188,7 @@ int main(int argc, char* argv[]) try {
         onboard_ran = ptrclaw::run_onboard(config, http_client, onboard_hatch);
     }
 
-    // All CLI modes (REPL, -m, pipe) use SessionManager
+    // ── Shared infrastructure for all modes ─────────────────────────
     ptrclaw::EventBus bus;
     ptrclaw::SessionManager sessions(config, http_client);
     sessions.set_binary_path(binary_path);
@@ -288,6 +201,73 @@ int main(int argc, char* argv[]) try {
     }
 #endif
 
+    // ── Channel mode ────────────────────────────────────────────────
+    if (!channel_name.empty()
+#ifdef PTRCLAW_HAS_PIPE
+        && channel_name != "pipe"
+#endif
+    ) {
+        std::unique_ptr<ptrclaw::Channel> channel;
+        try {
+            channel = ptrclaw::PluginRegistry::instance().create_channel(
+                channel_name, config, http_client);
+        } catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << "\n";
+            return 1;
+        }
+
+        if (!channel->health_check()) {
+            std::cerr << "Error: " << channel_name << " health check failed.\n";
+            return 1;
+        }
+
+        if (!channel->supports_polling()) {
+            std::cerr << channel_name << " channel requires an external webhook gateway.\n"
+                      << "For whatsapp: set webhook_listen (e.g. \"127.0.0.1:8080\") in\n"
+                      << "~/.ptrclaw/config.json under channels.whatsapp, or via the\n"
+                      << "WHATSAPP_WEBHOOK_LISTEN env var, to start the built-in webhook\n"
+                      << "server. Place a reverse proxy (nginx, Caddy) in front for TLS\n"
+                      << "and rate-limiting. See docs/reverse-proxy.md for details.\n";
+            return 1;
+        }
+
+        channel->initialize();
+
+        std::signal(SIGINT, signal_handler);
+        std::signal(SIGTERM, signal_handler);
+        ptrclaw::http_set_abort_flag(&g_shutdown);
+
+        // Wire up channel display (typing, streaming, message delivery)
+        ptrclaw::StreamRelay relay(*channel, bus);
+        relay.subscribe_events();
+
+        // SessionManager subscribes last — runs after channel handler sets up
+        // typing + stream state
+        sessions.subscribe_events();
+
+        uint32_t poll_count = 0;
+        std::cerr << "[" << channel_name << "] Bot started. Polling for messages...\n";
+
+        while (!g_shutdown.load()) {
+            auto messages = channel->poll_updates();
+            for (auto& msg : messages) {
+                ptrclaw::MessageReceivedEvent ev;
+                ev.session_id = msg.sender;
+                ev.message = std::move(msg);
+                bus.publish(ev);
+            }
+
+            // Periodic session eviction
+            if (++poll_count % 100 == 0) {
+                sessions.evict_idle(3600);
+            }
+        }
+
+        std::cerr << "[" << channel_name << "] Shutting down.\n";
+        return 0;
+    }
+
+    // ── CLI modes (REPL, -m, pipe) ──────────────────────────────────
     sessions.subscribe_events();
 
 #ifdef PTRCLAW_HAS_PIPE
@@ -339,7 +319,7 @@ int main(int argc, char* argv[]) try {
         return 0;
     }
 
-    // Interactive REPL
+    // ── Interactive REPL ────────────────────────────────────────────
     CliRelay cli_relay;
     cli_relay.subscribe(bus);
 
