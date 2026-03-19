@@ -498,18 +498,25 @@ def make_config(home, backend="sqlite", agent_overrides=None):
     }
     if agent_overrides:
         agent_config.update(agent_overrides)
+    memory_config = {
+        "backend": backend,
+        "synthesis": True,
+        "synthesis_interval": 5,
+        "recall_limit": 5,
+        "enrich_depth": 1,
+        "auto_save": True,
+    }
+    # Enable vector search when an OpenAI key is available
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    if openai_key:
+        memory_config["embeddings"] = {
+            "provider": "openai",
+        }
     config = {
         "provider": "anthropic",
         "model": MODEL,
         "agent": agent_config,
-        "memory": {
-            "backend": backend,
-            "synthesis": True,
-            "synthesis_interval": 5,
-            "recall_limit": 5,
-            "enrich_depth": 1,
-            "auto_save": True,
-        },
+        "memory": memory_config,
     }
     with open(os.path.join(config_dir, "config.json"), "w") as f:
         json.dump(config, f)
@@ -999,7 +1006,9 @@ def main():
             baseline = json.load(f)
         print(f"Comparing against baseline: {compare_file}", file=sys.stderr)
 
+    has_embeddings = bool(os.environ.get("OPENAI_API_KEY"))
     print("Running memory redesign benchmark...", file=sys.stderr)
+    print(f"  Backend: {backend}, Model: {MODEL}, Embeddings: {'on' if has_embeddings else 'off'}", file=sys.stderr)
     print(f"  Backend: {backend}, Model: {MODEL}", file=sys.stderr)
 
     # Shared rate limiters
