@@ -25,9 +25,20 @@ private:
 
 class SlowMockTool : public Tool {
 public:
-    explicit SlowMockTool(std::string name) : name_(std::move(name)) {}
+    // Shared counter tracks concurrent executions
+    explicit SlowMockTool(std::string name,
+                          std::atomic<int>& concurrency,
+                          std::atomic<int>& max_concurrency)
+        : name_(std::move(name)), concurrency_(concurrency),
+          max_concurrency_(max_concurrency) {}
+
     ToolResult execute(const std::string&) override {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        int cur = ++concurrency_;
+        // Update peak concurrency
+        int prev = max_concurrency_.load();
+        while (cur > prev && !max_concurrency_.compare_exchange_weak(prev, cur)) {}
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        --concurrency_;
         return {true, "slow-result"};
     }
     std::string tool_name() const override { return name_; }
@@ -35,6 +46,8 @@ public:
     std::string parameters_json() const override { return R"({"type":"object"})"; }
 private:
     std::string name_;
+    std::atomic<int>& concurrency_;
+    std::atomic<int>& max_concurrency_;
 };
 
 class CancellableMockTool : public Tool {
@@ -101,9 +114,12 @@ TEST_CASE("ToolManager: executes tool and publishes result", "[tool_manager]") {
 TEST_CASE("ToolManager: multiple tools run concurrently", "[tool_manager]") {
     EventBus bus;
 
+    std::atomic<int> concurrency{0};
+    std::atomic<int> max_concurrency{0};
+
     std::vector<std::unique_ptr<Tool>> tools;
-    tools.push_back(std::make_unique<SlowMockTool>("slow_a"));
-    tools.push_back(std::make_unique<SlowMockTool>("slow_b"));
+    tools.push_back(std::make_unique<SlowMockTool>("slow_a", concurrency, max_concurrency));
+    tools.push_back(std::make_unique<SlowMockTool>("slow_b", concurrency, max_concurrency));
     ToolManager mgr(std::move(tools), make_config(), bus);
 
     BatchCollector collector("batch-2", 2);
@@ -112,8 +128,6 @@ TEST_CASE("ToolManager: multiple tools run concurrently", "[tool_manager]") {
             [&collector](const ToolCallResultEvent& ev) {
                 collector.on_result(ev);
             }));
-
-    auto start = std::chrono::steady_clock::now();
 
     ToolCallRequestEvent req1;
     req1.batch_id = "batch-2";
@@ -133,14 +147,11 @@ TEST_CASE("ToolManager: multiple tools run concurrently", "[tool_manager]") {
     collector.wait();
     bus.unsubscribe(sub);
 
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - start).count();
-
     auto results = collector.results();
     REQUIRE(results.size() == 2);
 
-    // If truly parallel, total time should be ~100ms, not ~200ms
-    REQUIRE(elapsed < 180);
+    // Both tools should have been executing at the same time
+    REQUIRE(max_concurrency.load() == 2);
 }
 
 TEST_CASE("ToolManager: unknown tool returns error", "[tool_manager]") {
