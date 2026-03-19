@@ -5,12 +5,12 @@
 #include "http.hpp"
 #include "channel.hpp"
 #include "plugin.hpp"
+#include "event.hpp"
 #include "event_bus.hpp"
 #include "tool_manager.hpp"
 #include "session.hpp"
 #include "stream_relay.hpp"
 #include "onboard.hpp"
-#include "repl.hpp"
 #include "util.hpp"
 #ifdef PTRCLAW_HAS_EMBEDDINGS
 #include "embedder.hpp"
@@ -28,6 +28,45 @@ struct HttpGuard {
     ~HttpGuard() { ptrclaw::http_cleanup(); }
     HttpGuard(const HttpGuard&) = delete;
     HttpGuard& operator=(const HttpGuard&) = delete;
+};
+
+// CLI output relay — prints stream deltas and final messages to stdout.
+// Analogous to StreamRelay for channels, but writes to the terminal.
+struct CliRelay {
+    bool stream_active = false;
+
+    void subscribe(ptrclaw::EventBus& bus) {
+        ptrclaw::subscribe<ptrclaw::StreamChunkEvent>(bus,
+            [this](const ptrclaw::StreamChunkEvent& ev) {
+                if (ev.session_id != ptrclaw::SessionManager::kCliSessionId)
+                    return;
+                if (!stream_active) {
+                    stream_active = true;
+                }
+                std::cout << ev.delta << std::flush;
+            });
+
+        ptrclaw::subscribe<ptrclaw::StreamEndEvent>(bus,
+            [this](const ptrclaw::StreamEndEvent& ev) {
+                if (ev.session_id != ptrclaw::SessionManager::kCliSessionId)
+                    return;
+                if (stream_active) {
+                    std::cout << "\n\n" << std::flush;
+                }
+            });
+
+        ptrclaw::subscribe<ptrclaw::MessageReadyEvent>(bus,
+            [this](const ptrclaw::MessageReadyEvent& ev) {
+                if (ev.session_id != ptrclaw::SessionManager::kCliSessionId)
+                    return;
+                if (stream_active) {
+                    // Already delivered via streaming
+                    stream_active = false;
+                    return;
+                }
+                std::cout << "\n" << ev.content << "\n\n" << std::flush;
+            });
+    }
 };
 
 } // namespace
@@ -143,6 +182,14 @@ static int run_channel(const std::string& channel_name,
     return 0;
 }
 
+// Publish a message event for the CLI session
+static void publish_cli_message(ptrclaw::EventBus& bus, const std::string& content) {
+    ptrclaw::MessageReceivedEvent ev;
+    ev.session_id = ptrclaw::SessionManager::kCliSessionId;
+    ev.message.sender = ptrclaw::SessionManager::kCliSessionId;
+    ev.message.content = content;
+    bus.publish(ev);
+}
 
 int main(int argc, char* argv[]) try {
     // Parse arguments
@@ -208,7 +255,7 @@ int main(int argc, char* argv[]) try {
 
     ptrclaw::PlatformHttpClient http_client;
 
-    // Channel mode (except pipe, which needs an agent below)
+    // Channel mode (except pipe, which uses SessionManager below)
     if (!channel_name.empty()) {
 #ifdef PTRCLAW_HAS_PIPE
         if (channel_name != "pipe")
@@ -228,44 +275,36 @@ int main(int argc, char* argv[]) try {
         onboard_ran = ptrclaw::run_onboard(config, http_client, onboard_hatch);
     }
 
-    // Create provider and agent (pipe, -m, REPL modes)
-    std::unique_ptr<ptrclaw::Provider> provider;
-    try {
-        auto sr = ptrclaw::switch_provider(
-            config.provider, config.model, config.model, config, http_client);
-        if (!sr.error.empty()) throw std::runtime_error(sr.error);
-        provider = std::move(sr.provider);
-    } catch (const std::exception& e) {
-        std::cerr << "Error creating provider: " << e.what() << "\n";
-        return 1;
-    }
-
-    ptrclaw::EventBus cli_bus;
-    auto tools = ptrclaw::create_builtin_tools();
-    ptrclaw::ToolManager tool_mgr(std::move(tools), config, cli_bus);
-
-    ptrclaw::Agent agent(std::move(provider), config);
-    agent.set_event_bus(&cli_bus);
-    agent.set_binary_path(binary_path);
-
-    tool_mgr.wire_memory(agent.memory());
-    tool_mgr.publish_tool_specs();
+    // All CLI modes (REPL, -m, pipe) use SessionManager
+    ptrclaw::EventBus bus;
+    ptrclaw::SessionManager sessions(config, http_client);
+    sessions.set_binary_path(binary_path);
+    sessions.set_event_bus(&bus);
 
 #ifdef PTRCLAW_HAS_EMBEDDINGS
     auto embedder = ptrclaw::create_embedder(config, http_client);
     if (embedder) {
-        agent.set_embedder(embedder.get());
+        sessions.set_embedder(embedder.get());
     }
 #endif
+
+    sessions.subscribe_events();
 
 #ifdef PTRCLAW_HAS_PIPE
     // Pipe mode: JSONL on stdin/stdout for scripted multi-turn conversations
     if (channel_name == "pipe") {
+        std::string result;
+        ptrclaw::subscribe<ptrclaw::MessageReadyEvent>(bus,
+            [&result](const ptrclaw::MessageReadyEvent& ev) {
+                result = ev.content;
+            });
+
         std::string line;
         while (std::getline(std::cin, line)) {
+            result.clear();
             auto j = nlohmann::json::parse(line);
-            std::string response = agent.process(j.value("content", ""));
-            nlohmann::json out = {{"content", response}};
+            publish_cli_message(bus, j.value("content", ""));
+            nlohmann::json out = {{"content", result}};
             std::cout << out.dump() << "\n" << std::flush;
         }
         return 0;
@@ -274,8 +313,14 @@ int main(int argc, char* argv[]) try {
 
     // Single message mode
     if (!message.empty()) {
-        std::string response = agent.process(message);
-        std::cout << response << '\n';
+        std::string result;
+        ptrclaw::subscribe<ptrclaw::MessageReadyEvent>(bus,
+            [&result](const ptrclaw::MessageReadyEvent& ev) {
+                result = ev.content;
+            });
+
+        publish_cli_message(bus, message);
+        std::cout << result << '\n';
 
         // Send notification if --notify was specified
         if (!notify_spec.empty()) {
@@ -285,7 +330,7 @@ int main(int argc, char* argv[]) try {
             try {
                 auto channel = ptrclaw::PluginRegistry::instance().create_channel(
                     chan_name, config, http_client);
-                channel->send_message(target, response);
+                channel->send_message(target, result);
             } catch (const std::exception& e) {
                 std::cerr << "Notification failed: " << e.what() << "\n";
             }
@@ -295,7 +340,65 @@ int main(int argc, char* argv[]) try {
     }
 
     // Interactive REPL
-    return ptrclaw::run_repl(agent, config, http_client, onboard_ran, onboard_hatch);
+    CliRelay cli_relay;
+    cli_relay.subscribe(bus);
+
+    // Force session creation to show banner
+    auto& agent = sessions.get_session(ptrclaw::SessionManager::kCliSessionId);
+    std::cout << "PtrClaw AI Assistant\n"
+              << "Provider: " << agent.provider_name()
+              << " | Model: " << agent.model() << "\n"
+              << "Type /help for commands, /exit to exit.\n\n";
+
+    // Auto-hatch on first run
+    if (agent.memory() && !agent.is_hatched()) {
+        bool do_hatch = false;
+        if (onboard_ran) {
+            if (onboard_hatch) {
+                std::cout << "Starting hatching...\n\n";
+                do_hatch = true;
+            }
+        } else {
+            std::cout << "Your assistant doesn't have an identity yet. Starting hatching...\n\n";
+            do_hatch = true;
+        }
+        if (do_hatch) {
+            publish_cli_message(bus, "/hatch");
+        }
+    }
+
+    std::string line;
+    while (true) {
+        std::cout << "ptrclaw> " << std::flush;
+
+        if (!std::getline(std::cin, line)) {
+            std::cout << "\n";
+            break;
+        }
+
+        if (line.empty()) continue;
+        if (line == "/exit" || line == "/quit") break;
+
+        // /onboard is interactive (stdin prompts) — handle before publishing
+        if (line == "/onboard") {
+            bool hatch_req = false;
+            if (ptrclaw::run_onboard(config, http_client, hatch_req)) {
+                sessions.remove_session(ptrclaw::SessionManager::kCliSessionId);
+                auto& new_agent = sessions.get_session(
+                    ptrclaw::SessionManager::kCliSessionId);
+                std::cout << "Provider: " << new_agent.provider_name()
+                          << " | Model: " << new_agent.model() << "\n";
+                if (hatch_req) {
+                    publish_cli_message(bus, "/hatch");
+                }
+            }
+            continue;
+        }
+
+        publish_cli_message(bus, line);
+    }
+
+    return 0;
 } catch (const std::exception& e) {
     std::cerr << "Fatal error: " << e.what() << '\n';
     return 1;
