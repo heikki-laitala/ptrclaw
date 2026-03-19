@@ -129,23 +129,18 @@ std::string memory_enrich(Memory* memory, const std::string& user_message,
     // Apply tier budgets with dynamic reallocation: if one tier is
     // underpopulated, give its unused slots to the other tier so we
     // always use up to recall_limit entries when available.
-    auto apply_budgets = [recall_limit, concept_budget](
-            std::vector<const MemoryEntry*>& cons,
-            std::vector<const MemoryEntry*>& obs) {
-        auto con_count = static_cast<uint32_t>(cons.size());
-        auto obs_count = static_cast<uint32_t>(obs.size());
-        uint32_t con_shown  = std::min(con_count, concept_budget);
-        uint32_t remaining  = recall_limit - con_shown;
-        uint32_t obs_shown  = std::min(obs_count, remaining);
-        uint32_t final_con  = std::min(con_count, recall_limit - obs_shown);
-        cons.resize(final_con);
-        obs.resize(obs_shown);
-    };
-    apply_budgets(concepts, observations);
+    auto con_count = static_cast<uint32_t>(concepts.size());
+    auto obs_count = static_cast<uint32_t>(observations.size());
+    uint32_t con_shown = std::min(con_count, concept_budget);
+    uint32_t remaining = recall_limit - con_shown;
+    uint32_t obs_shown = std::min(obs_count, remaining);
+    concepts.resize(std::min(con_count, recall_limit - obs_shown));
+    observations.resize(obs_shown);
 
     // Neighbors fill remaining slots after direct results are budgeted.
     // This prevents low-relevance neighbors from displacing high-relevance
     // direct recall results.
+    std::vector<MemoryEntry> neighbor_storage;
     auto total_shown = static_cast<uint32_t>(concepts.size() + observations.size());
     if (enrich_depth > 0 && memory && total_shown < recall_limit && !entries.empty()) {
         uint32_t neighbor_budget = recall_limit - total_shown;
@@ -155,10 +150,6 @@ std::string memory_enrich(Memory* memory, const std::string& user_message,
         for (const auto* e : concepts)    shown_keys.insert(e->key);
         for (const auto* e : observations) shown_keys.insert(e->key);
 
-        // Add neighbors that aren't already shown, up to remaining budget
-        // Store them so pointers remain valid through formatting.
-        static thread_local std::vector<MemoryEntry> neighbor_storage;
-        neighbor_storage.clear();
         for (auto& n : neighbor_entries) {
             if (n.category == MemoryCategory::Core) continue;
             if (shown_keys.count(n.key)) continue;
