@@ -529,7 +529,7 @@ def start_pipe(binary, home):
     )
 
 
-def send_message(proc, content, retries=1):
+def send_message(proc, content, retries=2):
     """Send a JSONL message and read the response."""
     attempts = retries + 1
     for i in range(attempts):
@@ -541,10 +541,13 @@ def send_message(proc, content, retries=1):
             raise RuntimeError("pipe: no response (check stderr output above)")
         resp = json.loads(resp_line).get("content", "")
         low = resp.lower()
-        if "http 429" in low or "rate limit" in low:
+        is_rate_limit = "http 429" in low or "rate limit" in low
+        is_overloaded = "overloaded_error" in low or "overloaded" in low
+        if is_rate_limit or is_overloaded:
             if i < attempts - 1:
+                label = "Rate limit" if is_rate_limit else "Overloaded"
                 print(
-                    f"    Rate limit hit; cooling down "
+                    f"    {label} hit; cooling down "
                     f"{RATE_LIMIT_COOLDOWN_SECONDS}s and retrying...",
                     file=sys.stderr,
                 )
