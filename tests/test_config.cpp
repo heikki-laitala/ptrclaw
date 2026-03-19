@@ -21,7 +21,7 @@ TEST_CASE("Config: default values are sensible", "[config]") {
 
 TEST_CASE("AgentConfig: default values", "[config]") {
     AgentConfig ac;
-    REQUIRE(ac.max_tool_iterations == 10);
+    REQUIRE(ac.max_tool_iterations == 50);
     REQUIRE(ac.max_history_messages == 50);
     REQUIRE(ac.token_limit == 128000);
 }
@@ -258,7 +258,7 @@ TEST_CASE("Config::load: migrates existing config with missing keys", "[config]"
     REQUIRE(j["memory"]["backend"] == "json");
 #endif
     REQUIRE(j.contains("agent"));
-    REQUIRE(j["agent"]["max_tool_iterations"] == 10);
+    REQUIRE(j["agent"]["max_tool_iterations"] == 50);
 }
 
 TEST_CASE("Config::load: does not rewrite complete config", "[config]") {
