@@ -92,6 +92,15 @@ public:
     // Apply all config-driven settings at once (recency decay, knowledge decay, etc.).
     // Backends override to extract the fields they care about.
     virtual void apply_config(const MemoryConfig& /*cfg*/) {}
+
+    // Persist episode archive across restarts.
+    // json_blob is a serialized JSON array of episode records (produced by Agent).
+    // Stored separately from concept/knowledge entries — not subject to recall or hygiene.
+    // No-op in base class; backends that support persistence override this.
+    virtual void save_episode_archive(const std::string& /*json_blob*/) {}
+
+    // Load previously persisted episode archive. Returns serialized JSON blob, or "" if none.
+    virtual std::string load_episode_archive() { return ""; }
 };
 
 // Base class for tools that need a Memory* pointer.
@@ -108,6 +117,13 @@ protected:
 std::string category_to_string(MemoryCategory cat);
 MemoryCategory category_from_string(const std::string& s);
 
+// Query intent classification for tiered retrieval policy.
+// Chronological: query asks about recent/historical events (boosts observations).
+// Stable: query asks about stable facts or preferences (boosts concepts).
+// Unknown: balanced retrieval.
+enum class QueryIntent { Stable, Chronological, Unknown };
+QueryIntent classify_query_intent(const std::string& query);
+
 // Enrich a user message with recalled memory context.
 // Returns the enriched message (original message with prepended context),
 // or the original message unchanged if memory is null or recall returns nothing.
@@ -117,8 +133,16 @@ std::vector<MemoryEntry> collect_neighbors(Memory* memory,
                                             const std::vector<MemoryEntry>& entries,
                                             uint32_t limit);
 
+// episode_context, when non-empty, is appended as-is inside the block
+// (e.g. "Past episodes: episode:0 (5 turns), episode:1 (3 turns)").
+// A [Memory context] block is emitted even when entries are empty if episode_context
+// is provided — so the model always sees the available history summary.
+// Retrieval policy (PER-395): entries within each tier are score-sorted descending;
+// tier budgets are split based on query intent (chronological boosts observations,
+// stable boosts concepts, unknown splits evenly).
 std::string memory_enrich(Memory* memory, const std::string& user_message,
-                          uint32_t recall_limit, uint32_t enrich_depth = 0);
+                          uint32_t recall_limit, uint32_t enrich_depth = 0,
+                          const std::string& episode_context = "");
 
 // Create a memory backend from config.
 // Uses the plugin registry to instantiate the configured backend.

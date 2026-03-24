@@ -16,6 +16,20 @@ class EventBus; // forward declaration
 class ToolManager; // forward declaration
 struct SkillRequestEvent; // forward declaration
 
+// Recoverable archive record for a compacted conversation episode.
+// Holds the full dropped message slice and structured metadata.
+// Kept separate from the knowledge/concept memory backend — episodes
+// are session-scoped internal state, not subject to normal recall or hygiene.
+struct EpisodeRecord {
+    std::string id;                     // stable reference, e.g. "episode:0"
+    uint64_t timestamp = 0;             // epoch seconds when archived
+    int user_turns = 0;
+    int assistant_turns = 0;
+    int tool_calls = 0;
+    std::vector<std::string> tools_used;
+    std::vector<ChatMessage> messages;  // full dropped message slice (copy)
+};
+
 class Agent {
 public:
     Agent(std::unique_ptr<Provider> provider,
@@ -70,10 +84,17 @@ public:
     void start_hatch();
     bool hatching() const { return hatching_; }
 
+    // Episode archive — within-session recoverability for compacted history slices.
+    // Populated by compact_history(); separate from the knowledge memory backend.
+    const std::vector<EpisodeRecord>& episodes() const { return episode_archives_; }
+    const EpisodeRecord* episode_by_id(const std::string& id) const;
+
 private:
     bool has_active_memory() const;
     void compact_history();
     void inject_system_prompt();
+    void persist_episode_archive();   // serialize + push to memory backend
+    void restore_episode_archive();   // pull from memory backend + deserialize
     void invalidate_system_prompt();
     const SkillDef* find_skill(const std::string& name) const;
     void run_synthesis();
@@ -101,6 +122,8 @@ private:
     std::vector<SkillDef> available_skills_;
     std::string active_skill_name_;
     std::optional<uint32_t> last_prompt_tokens_;
+    std::vector<EpisodeRecord> episode_archives_;
+    uint32_t episode_counter_ = 0;
 };
 
 } // namespace ptrclaw

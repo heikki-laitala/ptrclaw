@@ -148,6 +148,15 @@ void SqliteMemory::init_schema() {
         "  PRIMARY KEY (from_key, to_key)"
         ");";
     sqlite3_exec(db_, create_links, nullptr, nullptr, nullptr);
+
+    // Episode archive table — single-row key-value store for the JSON blob.
+    // Kept separate from the memories table: not subject to recall, hygiene, or FTS.
+    const char* create_episode_archive =
+        "CREATE TABLE IF NOT EXISTS episode_archive ("
+        "  id   INTEGER PRIMARY KEY,"
+        "  data TEXT NOT NULL"
+        ");";
+    sqlite3_exec(db_, create_episode_archive, nullptr, nullptr, nullptr);
 }
 
 // Helper: read a full MemoryEntry from a prepared statement that has selected
@@ -947,6 +956,31 @@ std::vector<MemoryEntry> SqliteMemory::neighbors(const std::string& key, uint32_
         results.push_back(std::move(entry));
     }
     return results;
+}
+
+void SqliteMemory::save_episode_archive(const std::string& json_blob) {
+    if (!db_) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Upsert into the single-row table (id=1 is the canonical episode archive slot)
+    const char* sql =
+        "INSERT INTO episode_archive (id, data) VALUES (1, ?)"
+        " ON CONFLICT(id) DO UPDATE SET data=excluded.data;";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return;
+    sqlite3_bind_text(g.stmt, 1, json_blob.c_str(), -1, SQLITE_STATIC);
+    sqlite3_step(g.stmt);
+}
+
+std::string SqliteMemory::load_episode_archive() {
+    if (!db_) return {};
+    std::lock_guard<std::mutex> lock(mutex_);
+    const char* sql = "SELECT data FROM episode_archive WHERE id=1;";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return {};
+    if (sqlite3_step(g.stmt) != SQLITE_ROW) return {};
+    const auto* text = sqlite3_column_text(g.stmt, 0);
+    if (!text) return {};
+    return reinterpret_cast<const char*>(text);
 }
 
 } // namespace ptrclaw

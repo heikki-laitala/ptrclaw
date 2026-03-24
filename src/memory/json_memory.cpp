@@ -56,6 +56,9 @@ void JsonMemory::load() {
                     embeddings_[key] = std::move(emb);
                 }
             }
+            if (j.contains("episode_archive") && j["episode_archive"].is_string()) {
+                episode_archive_json_ = j["episode_archive"].get<std::string>();
+            }
         }
         rebuild_index();
     } catch (...) { // NOLINT(bugprone-empty-catch)
@@ -64,7 +67,7 @@ void JsonMemory::load() {
 }
 
 void JsonMemory::save() {
-    if (embeddings_.empty()) {
+    if (embeddings_.empty() && episode_archive_json_.empty()) {
         // Legacy format: plain array (backwards compatible)
         nlohmann::json j = nlohmann::json::array();
         for (const auto& entry : entries_) {
@@ -72,24 +75,30 @@ void JsonMemory::save() {
         }
         atomic_write_file(path_, j.dump(2));
     } else {
-        // New format: object with entries + embeddings
+        // New format: object with entries + optional embeddings + optional episode_archive
         nlohmann::json entries_arr = nlohmann::json::array();
         for (const auto& entry : entries_) {
             entries_arr.push_back(entry_to_json(entry));
         }
 
-        nlohmann::json emb_obj = nlohmann::json::object();
-        for (const auto& [key, emb] : embeddings_) {
-            // Only save embeddings for keys that still exist
-            if (key_index_.count(key)) {
-                emb_obj[key] = emb;
+        nlohmann::json j = nlohmann::json::object();
+        j["entries"] = std::move(entries_arr);
+
+        if (!embeddings_.empty()) {
+            nlohmann::json emb_obj = nlohmann::json::object();
+            for (const auto& [key, emb] : embeddings_) {
+                // Only save embeddings for keys that still exist
+                if (key_index_.count(key)) {
+                    emb_obj[key] = emb;
+                }
             }
+            j["embeddings"] = std::move(emb_obj);
         }
 
-        nlohmann::json j = {
-            {"entries", entries_arr},
-            {"embeddings", emb_obj}
-        };
+        if (!episode_archive_json_.empty()) {
+            j["episode_archive"] = episode_archive_json_;
+        }
+
         atomic_write_file(path_, j.dump(2));
     }
 }
@@ -490,6 +499,17 @@ std::vector<MemoryEntry> JsonMemory::neighbors(const std::string& key, uint32_t 
         }
     }
     return result;
+}
+
+void JsonMemory::save_episode_archive(const std::string& json_blob) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    episode_archive_json_ = json_blob;
+    save();
+}
+
+std::string JsonMemory::load_episode_archive() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return episode_archive_json_;
 }
 
 } // namespace ptrclaw

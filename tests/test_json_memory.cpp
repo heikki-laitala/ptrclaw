@@ -606,3 +606,65 @@ TEST_CASE("JsonMemory: idle fade does not affect Core entries", "[json_memory]")
 
     std::filesystem::remove(path);
 }
+
+// ── Episode archive persistence ───────────────────────────────
+
+TEST_CASE("JsonMemory: save and load episode archive roundtrip", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    // Initially empty
+    REQUIRE(f.mem.load_episode_archive().empty());
+
+    const std::string blob = R"([{"id":"episode:0","timestamp":1000,"user_turns":3,"assistant_turns":3,"tool_calls":1,"tools_used":["shell"],"messages":[{"role":"user","content":"hello"}]}])";
+    f.mem.save_episode_archive(blob);
+    REQUIRE(f.mem.load_episode_archive() == blob);
+}
+
+TEST_CASE("JsonMemory: episode archive persists across instances", "[json_memory]") {
+    std::string path = test_path() + "_ep_persist";
+
+    const std::string blob = R"([{"id":"episode:0","timestamp":1234,"user_turns":2,"assistant_turns":2,"tool_calls":0,"tools_used":[],"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}])";
+    {
+        JsonMemory mem(path);
+        mem.store("key", "value", MemoryCategory::Knowledge, "");
+        mem.save_episode_archive(blob);
+    }
+    {
+        JsonMemory mem(path);
+        REQUIRE(mem.load_episode_archive() == blob);
+        // Normal entries still present
+        auto e = mem.get("key");
+        REQUIRE(e.has_value());
+    }
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(path + ".tmp", ec);
+}
+
+TEST_CASE("JsonMemory: episode archive overwrite replaces previous", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.save_episode_archive(R"([{"id":"episode:0","timestamp":1,"user_turns":1,"assistant_turns":1,"tool_calls":0,"tools_used":[],"messages":[]}])");
+    const std::string updated = R"([{"id":"episode:0","timestamp":1,"user_turns":1,"assistant_turns":1,"tool_calls":0,"tools_used":[],"messages":[]},{"id":"episode:1","timestamp":2,"user_turns":2,"assistant_turns":2,"tool_calls":0,"tools_used":[],"messages":[]}])";
+    f.mem.save_episode_archive(updated);
+    REQUIRE(f.mem.load_episode_archive() == updated);
+}
+
+TEST_CASE("JsonMemory: episode archive is separate from normal entries", "[json_memory]") {
+    JsonMemoryFixture f;
+
+    f.mem.store("concept", "content", MemoryCategory::Knowledge, "");
+    f.mem.save_episode_archive(R"([{"id":"episode:0","timestamp":1,"user_turns":1,"assistant_turns":1,"tool_calls":0,"tools_used":[],"messages":[]}])");
+
+    // Episode archive does NOT show up in recall or list
+    auto recalled = f.mem.recall("episode", 10, std::nullopt);
+    for (const auto& e : recalled) {
+        REQUIRE(e.key != "episode:0");
+    }
+    auto listed = f.mem.list(std::nullopt, 100);
+    for (const auto& e : listed) {
+        REQUIRE(e.key != "episode:0");
+    }
+    // Only the normal entry exists
+    REQUIRE(f.mem.count(std::nullopt) == 1);
+}

@@ -37,6 +37,9 @@ public:
     bool unlink(const std::string& from_key, const std::string& to_key) override;
     std::vector<MemoryEntry> neighbors(const std::string& key, uint32_t limit) override;
 
+    void save_episode_archive(const std::string& json_blob) override;
+    std::string load_episode_archive() override;
+
 private:
     void load();
     void save();
@@ -47,6 +50,7 @@ private:
     std::vector<MemoryEntry> entries_;
     std::unordered_map<std::string, size_t> key_index_; // key -> entries_ index
     std::unordered_map<std::string, Embedding> embeddings_; // key -> embedding
+    std::string episode_archive_json_; // raw JSON blob, persisted in memory file
 };
 
 } // namespace ptrclaw
