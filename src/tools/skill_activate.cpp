@@ -35,25 +35,32 @@ public:
         // Publish request and wait for response
         std::string request_id = generate_id();
 
-        std::mutex mtx;
-        std::condition_variable cv;
-        bool received = false;
-        SkillResponseEvent response;
+        // The handler's state lives in one object so the lambda captures a single
+        // reference. That is not cosmetic: libc++'s std::function only stores a
+        // callable inline when it fits in __buf_ (three pointers), and otherwise
+        // heap-allocates. A `[&]` capture of four separate locals exceeded that and
+        // allocated on every skill activation — which is also what the static
+        // analyser reported as a leak, since it cannot follow the allocation's
+        // ownership through subscribe<>'s re-wrap into the bus. One reference fits
+        // inline, so no allocation happens at all. session.cpp captures `[this]`
+        // for the same reason and has always been clean.
+        struct ResponseWaiter {
+            std::mutex mtx;
+            std::condition_variable cv;
+            bool received = false;
+            SkillResponseEvent response;
+            std::string request_id;
+        };
+        ResponseWaiter waiter;
+        waiter.request_id = request_id;
 
-        // The lambda is passed straight in: the explicit
-        // std::function<void(const SkillResponseEvent&)> wrapper this used to build
-        // was redundant, since naming the event type in subscribe<> already fixes
-        // the parameter type. Dropping it removes a heap-allocating temporary that
-        // was constructed only to be moved into the parameter — and which the
-        // static analyser reported as a leak because it could not follow the
-        // ownership handoff into the bus. Matches how session.cpp subscribes.
         uint64_t sub_id = subscribe<SkillResponseEvent>(*event_bus_,
-            [&](const SkillResponseEvent& ev) {
-                if (ev.request_id != request_id) return;
-                std::lock_guard<std::mutex> lock(mtx);
-                response = ev;
-                received = true;
-                cv.notify_one();
+            [&waiter](const SkillResponseEvent& ev) {
+                if (ev.request_id != waiter.request_id) return;
+                std::lock_guard<std::mutex> lock(waiter.mtx);
+                waiter.response = ev;
+                waiter.received = true;
+                waiter.cv.notify_one();
             });
 
         // Unsubscribe on every exit path, not only the happy one. The handler
@@ -75,16 +82,16 @@ public:
 
         // Copy the result out while holding the lock. Previously the unsubscribe
         // call sat here and acted as the barrier that made an unsynchronized read
-        // of `response` safe; now that unsubscribing happens at scope exit, a late
-        // event could otherwise be writing `response` while we read it.
+        // of the response safe; now that unsubscribing happens at scope exit, a late
+        // event could otherwise be writing it while we read.
         bool got_response = false;
         SkillResponseEvent result;
         {
-            std::unique_lock<std::mutex> lock(mtx);
-            cv.wait_for(lock, std::chrono::seconds(5),
-                [&] { return received; });
-            got_response = received;
-            result = response;
+            std::unique_lock<std::mutex> lock(waiter.mtx);
+            waiter.cv.wait_for(lock, std::chrono::seconds(5),
+                [&waiter] { return waiter.received; });
+            got_response = waiter.received;
+            result = waiter.response;
         }
 
         if (!got_response) {
