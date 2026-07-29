@@ -96,6 +96,10 @@ private:
     Config config_;
     std::string model_;
     bool system_prompt_injected_ = false;
+    // True when history_[0] is a system prompt the caller supplied via
+    // set_history() rather than one we generated. invalidate_system_prompt()
+    // must not erase it — see the comment there.
+    bool caller_system_prompt_ = false;
     EventBus* event_bus_ = nullptr;
     uint64_t tools_sub_id_ = 0;
     uint64_t skill_sub_id_ = 0;
