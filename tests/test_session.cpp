@@ -127,6 +127,12 @@ TEST_CASE("SessionManager: /auth openai finish is never stored as the API key", 
     REQUIRE_FALSE(reply.empty());
 }
 
+// Needs the OpenAI provider to be registered: "/auth <provider> <key>" checks the
+// name against PluginRegistry, so with -Dwith_openai=false (plus openrouter and
+// compatible, which imply it) this command answers "Unknown provider" and stores
+// nothing. The two tests above do not need the guard — they assert the key is
+// *unchanged*, and reach the refusal branch before any provider lookup.
+#ifdef PTRCLAW_HAS_OPENAI
 TEST_CASE("SessionManager: /auth openai <key> stores and persists the key", "[session]") {
     // The counterpart to the two tests above: the guard must refuse the
     // subcommands without breaking the legitimate form. This one reaches
@@ -146,3 +152,4 @@ TEST_CASE("SessionManager: /auth openai <key> stores and persists the key", "[se
     auto persisted = home.read_config();
     REQUIRE(persisted["providers"]["openai"]["api_key"] == "sk-test-12345");
 }
+#endif // PTRCLAW_HAS_OPENAI
