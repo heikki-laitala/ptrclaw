@@ -14,7 +14,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Swap providers freely** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Switch with a config change, no code modifications
 - **Real tool use** — file I/O, shell execution (with stdin piping), cron scheduling, and a persistent knowledge graph memory system. Providers with native function calling use it directly; others fall back to XML-based parsing
 - **Extend without forking** — providers, channels, tools, and memory backends self-register via a plugin system. Add a new one by implementing an interface and dropping in a `.cpp` file
-- **Build only what you need** — 12 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~764 KB)
+- **Build only what you need** — 15 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~764 KB)
 
 ## Features
 
@@ -242,7 +242,7 @@ Environment variables override the config file:
 | `OPENAI_OAUTH_ACCESS_TOKEN` | OpenAI OAuth access token |
 | `OPENAI_OAUTH_REFRESH_TOKEN` | OpenAI OAuth refresh token |
 | `OPENAI_OAUTH_EXPIRES_AT` | Access token expiry (epoch seconds) |
-| `OPENAI_OAUTH_CLIENT_ID` | OAuth client id (default `app_EMoamEEZ73f0CkXaXp7hrann`) |
+| `OPENAI_OAUTH_CLIENT_ID` | OAuth client id (default `app_EMoamEEZ73f0CkXaXp7hrann`; no default when built with `-Dwith_openai_oauth=false`, so set it explicitly there) |
 | `OPENAI_OAUTH_TOKEN_URL` | OAuth token endpoint (default `https://auth.openai.com/oauth/token`) |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 | `OLLAMA_BASE_URL` | Ollama server URL (default `http://localhost:11434`) |
@@ -292,6 +292,13 @@ https://auth.openai.com/oauth/authorize?...
 Paste the callback URL or code: http://localhost:1455/auth/callback?code=...
 OAuth connected. Model switched to gpt-5-codex-mini.
 ```
+
+This browser flow requires `with_openai_oauth` (default `true`). A build with
+`-Dwith_openai_oauth=false` omits it, so `/auth openai` offers the API key only —
+useful for unattended deployments, where a browser round-trip is not possible and
+shipping a default OAuth client id is unwanted. Such a build still *uses* OAuth
+tokens placed in config, and still refreshes and persists them; it just cannot
+obtain them interactively.
 
 For Ollama, `/auth ollama` prompts for the base URL.
 
@@ -482,6 +489,7 @@ Every provider, channel, and tool is a compile-time feature flag in `meson_optio
 | `with_openrouter` | OpenRouter provider (implies `with_openai`) | `true` |
 | `with_compatible` | OpenAI-compatible provider (implies `with_openai`) | `true` |
 | `with_ollama` | Ollama provider | `true` |
+| `with_openai_oauth` | OpenAI OAuth **flow** (`/auth openai` browser sign-in) and its default client id. Off still supports OAuth tokens supplied in config, including refresh — only the interactive flow is removed | `true` |
 | `with_telegram` | Telegram channel | `true` |
 | `with_whatsapp` | WhatsApp channel | `false` |
 | `with_pipe` | Pipe channel (JSONL stdin/stdout) | `false` |
