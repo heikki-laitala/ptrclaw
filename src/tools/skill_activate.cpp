@@ -40,15 +40,21 @@ public:
         bool received = false;
         SkillResponseEvent response;
 
+        // The lambda is passed straight in: the explicit
+        // std::function<void(const SkillResponseEvent&)> wrapper this used to build
+        // was redundant, since naming the event type in subscribe<> already fixes
+        // the parameter type. Dropping it removes a heap-allocating temporary that
+        // was constructed only to be moved into the parameter — and which the
+        // static analyser reported as a leak because it could not follow the
+        // ownership handoff into the bus. Matches how session.cpp subscribes.
         uint64_t sub_id = subscribe<SkillResponseEvent>(*event_bus_,
-            std::function<void(const SkillResponseEvent&)>(
-                [&](const SkillResponseEvent& ev) {
-                    if (ev.request_id != request_id) return;
-                    std::lock_guard<std::mutex> lock(mtx);
-                    response = ev;
-                    received = true;
-                    cv.notify_one();
-                }));
+            [&](const SkillResponseEvent& ev) {
+                if (ev.request_id != request_id) return;
+                std::lock_guard<std::mutex> lock(mtx);
+                response = ev;
+                received = true;
+                cv.notify_one();
+            });
 
         // Unsubscribe on every exit path, not only the happy one. The handler
         // captures the locals above by reference, so if publish() or wait_for()
