@@ -2,6 +2,8 @@
 #include "mock_http_client.hpp"
 #include "session.hpp"
 #include "plugin.hpp"
+#include "event.hpp"
+#include "event_bus.hpp"
 
 using namespace ptrclaw;
 
@@ -82,3 +84,50 @@ TEST_CASE("SessionManager: evict_idle keeps recent sessions", "[session]") {
     mgr.evict_idle(999999);
     REQUIRE(mgr.list_sessions().size() == 1);
 }
+
+// ── /auth argument handling ──────────────────────────────────────
+
+// "start" and "finish" are OAuth subcommands, never credentials. The generic
+// "/auth <provider> <api_key>" branch would otherwise store one of them as the
+// key and persist it to config.json, silently destroying a working credential.
+// The assertion holds in both build configurations: with the OAuth flow built the
+// subcommand starts the flow, and without it the command is refused — neither may
+// touch api_key.
+// Driven through the public route — bus in, reply event out — rather than the
+// private handler, so this exercises the path a real channel takes.
+static std::string run_auth_command(Config& cfg, const std::string& line) {
+    EventBus bus;
+    SessionManager mgr(cfg, test_http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    std::string reply;
+    subscribe<MessageReadyEvent>(
+        bus, [&reply](const MessageReadyEvent& e) { reply = e.content; });
+
+    MessageReceivedEvent ev;
+    ev.session_id = "auth_sess";
+    ev.message.content = line;
+    bus.publish(ev);
+    return reply;
+}
+
+TEST_CASE("SessionManager: /auth openai start is never stored as the API key", "[session]") {
+    auto cfg = make_test_config();
+    auto reply = run_auth_command(cfg, "/auth openai start");
+    REQUIRE(cfg.providers["openai"].api_key == "test-key");
+    REQUIRE_FALSE(reply.empty());
+}
+
+TEST_CASE("SessionManager: /auth openai finish is never stored as the API key", "[session]") {
+    auto cfg = make_test_config();
+    auto reply = run_auth_command(cfg, "/auth openai finish some-callback-url");
+    REQUIRE(cfg.providers["openai"].api_key == "test-key");
+    REQUIRE_FALSE(reply.empty());
+}
+
+// The positive case — "/auth openai <api_key>" actually storing the key — is
+// deliberately NOT tested here: that path calls persist_provider_key(), which goes
+// through modify_config_json() and rewrites the developer's real
+// ~/.ptrclaw/config.json. Running the suite must not overwrite someone's
+// credentials. Covering it needs an injectable config path first.

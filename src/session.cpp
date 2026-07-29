@@ -329,6 +329,17 @@ bool SessionManager::handle_auth_command(
             finish_oauth(*pending, parsed.code);
             return true;
         }
+#else
+        // Without the flow the two handlers above are gone, but "start"/"finish" are
+        // still documented subcommands — and the generic "/auth <provider> <api_key>"
+        // branch below would happily take "start" as the key and persist it to
+        // config.json, destroying a working credential. Refuse them explicitly.
+        if (parts.size() >= 3 && parts[1] == "openai" &&
+            (parts[2] == "start" || parts[2] == "finish")) {
+            send_reply("The OpenAI OAuth sign-in flow is not built into this binary. "
+                       "Set an API key instead: /auth openai <api_key>");
+            return true;
+        }
 #endif
 
         // /auth <provider> <key> — set API key for any provider
@@ -354,9 +365,12 @@ bool SessionManager::handle_auth_command(
         }
 
         // /auth — show status
-        send_reply(format_auth_status(config_) +
-                   "\nSet credentials: /auth <provider> <api_key>\n"
-                   "OAuth: /auth openai start");
+        std::string status = format_auth_status(config_) +
+                            "\nSet credentials: /auth <provider> <api_key>";
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
+        status += "\nOAuth: /auth openai start";
+#endif
+        send_reply(status);
         return true;
     }
 
