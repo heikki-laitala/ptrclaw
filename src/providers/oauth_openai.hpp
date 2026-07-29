@@ -34,9 +34,6 @@ std::string exchange_oauth_token(const std::string& code,
                                   HttpClient& http,
                                   ProviderEntry& out_entry);
 
-// ── Config persistence ───────────────────────────────────────────
-bool persist_openai_oauth(const ProviderEntry& entry);
-
 // ── Apply OAuth result (shared between REPL + channel) ──────────
 struct OAuthApplyResult {
     bool success = false;
@@ -49,11 +46,5 @@ OAuthApplyResult apply_oauth_result(const std::string& code,
                                      const PendingOAuth& pending,
                                      Config& config,
                                      HttpClient& http);
-
-// ── OAuth refresh callback wiring ────────────────────────────────
-// Sets up automatic token refresh on an OpenAI provider, persisting
-// new tokens to both the in-memory Config and config.json.
-// No-op if the provider is not an OpenAIProvider.
-void setup_oauth_refresh(Provider* provider, Config& config);
 
 } // namespace ptrclaw

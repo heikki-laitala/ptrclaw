@@ -67,8 +67,13 @@ std::string cmd_hatch(Agent& agent) {
 
 std::string cmd_model(const std::string& new_model, Agent& agent,
                        Config& config, HttpClient& http) {
-    // On openai, re-create provider if auth mode changes
-#ifdef PTRCLAW_HAS_OPENAI_OAUTH
+    // On openai, re-create provider if auth mode changes.
+    //
+    // Guarded on the provider, not the interactive flow: tokens can be supplied in
+    // config without the flow, so switching between a codex model (OAuth) and a
+    // non-codex one (API key) must still rebuild the provider. Otherwise
+    // use_oauth_ stays stale and the wrong credential is sent.
+#ifdef PTRCLAW_HAS_OPENAI
     if (agent.provider_name() == "openai") {
         auto oai_it = config.providers.find("openai");
         bool on_oauth = oai_it != config.providers.end() &&

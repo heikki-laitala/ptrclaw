@@ -148,7 +148,11 @@ if opt_anthropic
   optional_sources += files('src/providers/anthropic.cpp')
 endif
 if opt_openai
-  optional_sources += files('src/providers/openai.cpp')
+  # openai_token_persist.cpp belongs with the provider, not the flow: OpenAIProvider
+  # refreshes OAuth tokens whether or not the interactive flow is built, and the
+  # rotated refresh token has to be written back either way.
+  optional_sources += files('src/providers/openai.cpp',
+                            'src/providers/openai_token_persist.cpp')
 endif
 if opt_openai_oauth
   # src/oauth.cpp is the generic PKCE helper — only the OAuth flow uses it, so it

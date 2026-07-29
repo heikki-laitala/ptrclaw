@@ -1,8 +1,8 @@
 #include "provider.hpp"
 #include "plugin.hpp"
 #include "config.hpp"
-#ifdef PTRCLAW_HAS_OPENAI_OAUTH
-#include "providers/oauth_openai.hpp"
+#ifdef PTRCLAW_HAS_OPENAI
+#include "providers/openai_token_persist.hpp"
 #endif
 
 namespace ptrclaw {
@@ -97,7 +97,11 @@ SwitchProviderResult switch_provider(const std::string& name,
         result.provider = create_provider("openai", config.api_key_for("openai"), http,
             config.base_url_for("openai"), config.prompt_caching_for("openai"), &adjusted);
         result.model = model_arg.empty() ? effective : model_arg;
-#ifdef PTRCLAW_HAS_OPENAI_OAUTH
+#ifdef PTRCLAW_HAS_OPENAI
+        // Guarded on the provider, not the interactive flow: a build without the
+        // flow can still be given OAuth tokens in config, and OpenAIProvider still
+        // refreshes them. Skipping this would drop the rotated refresh token, so
+        // the next restart would load a stale one and fail to authenticate.
         setup_oauth_refresh(result.provider.get(), config);
 #endif
         return result;
