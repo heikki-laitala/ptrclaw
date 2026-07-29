@@ -1,5 +1,6 @@
 #pragma once
 #include "provider.hpp"
+#include "config.hpp"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -36,7 +37,10 @@ struct HomeGuard {
                  ("ptrclaw_test_home_" + std::to_string(getpid()) + "_" +
                   std::to_string(std::rand())))
     {
-        old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
+        // One getenv call, not two: the second could return null where the first
+        // did not, and assigning null to std::string is undefined behaviour.
+        const char* home = std::getenv("HOME");
+        old_home = home ? home : "";
         skills_dir = tmpdir / ".ptrclaw" / "skills";
         std::filesystem::create_directories(skills_dir);
         setenv("HOME", tmpdir.c_str(), 1);
@@ -45,6 +49,28 @@ struct HomeGuard {
     void add_skill(const std::string& filename, const std::string& content) {
         std::ofstream f(skills_dir / filename);
         f << content;
+    }
+
+    // Path config code resolves to while this guard is active.
+    std::filesystem::path config_path() const {
+        return tmpdir / ".ptrclaw" / "config.json";
+    }
+
+    // Seed a config file. modify_config_json() returns false when the file does
+    // not exist, so credential-writing paths need one present to be exercised.
+    void write_default_config() const {
+        std::ofstream f(config_path());
+        f << Config::defaults_json().dump(4) << "\n";
+    }
+
+    // Read the config file back — for asserting on what was persisted rather than
+    // only on the in-memory Config.
+    nlohmann::json read_config() const {
+        std::ifstream f(config_path());
+        if (!f.is_open()) return nlohmann::json::object();
+        nlohmann::json j;
+        try { f >> j; } catch (...) { return nlohmann::json::object(); }
+        return j;
     }
 
     ~HomeGuard() noexcept {
