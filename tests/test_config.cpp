@@ -83,7 +83,10 @@ struct ConfigTestGuard {
 
     ConfigTestGuard() {
         dir = make_temp_dir();
-        old_home = std::getenv("HOME") ? std::getenv("HOME") : "";
+        // One getenv call, not two: the second could return null where the first
+        // did not, and assigning null to std::string is undefined behaviour.
+        const char* home = std::getenv("HOME");
+        old_home = home ? home : "";
         setenv("HOME", dir.c_str(), 1);
         unsetenv("ANTHROPIC_API_KEY");
         unsetenv("OPENAI_API_KEY");
