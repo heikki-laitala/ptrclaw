@@ -3,7 +3,7 @@
 #include "tool_manager.hpp"
 #include "config.hpp"
 #include "http.hpp"
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
 #include "oauth.hpp"
 #endif
 #include <string>
@@ -75,7 +75,7 @@ private:
                              Agent& agent,
                              const std::function<void(const std::string&)>& send_reply);
 
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
     std::unordered_map<std::string, PendingOAuth> pending_oauth_;
 
     std::optional<PendingOAuth> get_pending_oauth(const std::string& session_id);

@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "oauth.hpp"
 #include "session.hpp"
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
 #include "providers/oauth_openai.hpp"
 #endif
 
@@ -9,7 +9,7 @@ using namespace ptrclaw;
 
 // ── Constants (OpenAI-specific) ──────────────────────────────────
 
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
 TEST_CASE("OAuth: default client_id matches Codex CLI", "[oauth]") {
     REQUIRE(std::string(kDefaultOAuthClientId) == "app_EMoamEEZ73f0CkXaXp7hrann");
 }
@@ -29,47 +29,8 @@ TEST_CASE("OAuth: default authorize base URL", "[oauth]") {
 }
 #endif
 
-// ── oauth_url_encode ─────────────────────────────────────────────
-
-TEST_CASE("oauth_url_encode: unreserved chars pass through", "[oauth]") {
-    REQUIRE(oauth_url_encode("abc123") == "abc123");
-    REQUIRE(oauth_url_encode("A-B_C.D~E") == "A-B_C.D~E");
-}
-
-TEST_CASE("oauth_url_encode: spaces encoded as %20", "[oauth]") {
-    REQUIRE(oauth_url_encode("hello world") == "hello%20world");
-}
-
-TEST_CASE("oauth_url_encode: special chars encoded", "[oauth]") {
-    auto encoded = oauth_url_encode("a=b&c");
-    REQUIRE(encoded.find("%3D") != std::string::npos);
-    REQUIRE(encoded.find("%26") != std::string::npos);
-}
-
-TEST_CASE("oauth_url_encode: empty string", "[oauth]") {
-    REQUIRE(oauth_url_encode("").empty());
-}
-
-// ── form_encode ──────────────────────────────────────────────────
-
-TEST_CASE("form_encode: builds key=value pairs", "[oauth]") {
-    auto result = form_encode({{"grant_type", "authorization_code"}, {"code", "abc123"}});
-    REQUIRE(result == "grant_type=authorization_code&code=abc123");
-}
-
-TEST_CASE("form_encode: encodes special characters in values", "[oauth]") {
-    auto result = form_encode({{"redirect_uri", "http://localhost:1455/auth/callback"}});
-    REQUIRE(result.find("http%3A%2F%2Flocalhost") != std::string::npos);
-}
-
-TEST_CASE("form_encode: empty params", "[oauth]") {
-    REQUIRE(form_encode({}).empty());
-}
-
-TEST_CASE("form_encode: single param", "[oauth]") {
-    auto result = form_encode({{"key", "value"}});
-    REQUIRE(result == "key=value");
-}
+// url_encode/form_encode tests moved to test_util.cpp along with the functions —
+// they are built in every configuration, so their tests must be too.
 
 // ── make_code_verifier ───────────────────────────────────────────
 
@@ -114,7 +75,7 @@ TEST_CASE("make_code_challenge_s256: different input gives different output", "[
 
 // ── build_authorize_url (OpenAI-specific) ────────────────────────
 
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
 TEST_CASE("build_authorize_url: contains all required params", "[oauth]") {
     auto url = build_authorize_url("test-client", "http://localhost:1455/auth/callback",
                                     "test-challenge", "test-state");

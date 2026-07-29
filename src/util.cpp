@@ -207,4 +207,27 @@ std::string resolve_binary_path(const char* argv0) {
     return path;
 }
 
+std::string url_encode(const std::string& s) {
+    std::ostringstream out;
+    out << std::hex << std::uppercase;
+    for (unsigned char c : s) {
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            out << c;
+        } else {
+            out << '%' << std::setw(2) << std::setfill('0') << static_cast<int>(c);
+        }
+    }
+    return out.str();
+}
+
+std::string form_encode(const std::vector<std::pair<std::string, std::string>>& params) {
+    std::string result;
+    for (const auto& [key, value] : params) {
+        if (!result.empty()) result += '&';
+        result += url_encode(key) + '=' + url_encode(value);
+    }
+    return result;
+}
+
 } // namespace ptrclaw

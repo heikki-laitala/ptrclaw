@@ -165,3 +165,45 @@ TEST_CASE("expand_home: tilde is expanded", "[util]") {
 TEST_CASE("expand_home: empty string unchanged", "[util]") {
     REQUIRE(expand_home("").empty());
 }
+
+// ── url_encode ───────────────────────────────────────────────────
+
+TEST_CASE("url_encode: unreserved chars pass through", "[util]") {
+    REQUIRE(url_encode("abc123") == "abc123");
+    REQUIRE(url_encode("A-B_C.D~E") == "A-B_C.D~E");
+}
+
+TEST_CASE("url_encode: spaces encoded as %20", "[util]") {
+    REQUIRE(url_encode("hello world") == "hello%20world");
+}
+
+TEST_CASE("url_encode: special chars encoded", "[util]") {
+    auto encoded = url_encode("a=b&c");
+    REQUIRE(encoded.find("%3D") != std::string::npos);
+    REQUIRE(encoded.find("%26") != std::string::npos);
+}
+
+TEST_CASE("url_encode: empty string", "[util]") {
+    REQUIRE(url_encode("").empty());
+}
+
+// ── form_encode ──────────────────────────────────────────────────
+
+TEST_CASE("form_encode: builds key=value pairs", "[util]") {
+    auto result = form_encode({{"grant_type", "authorization_code"}, {"code", "abc123"}});
+    REQUIRE(result == "grant_type=authorization_code&code=abc123");
+}
+
+TEST_CASE("form_encode: encodes special characters in values", "[util]") {
+    auto result = form_encode({{"redirect_uri", "http://localhost:1455/auth/callback"}});
+    REQUIRE(result.find("http%3A%2F%2Flocalhost") != std::string::npos);
+}
+
+TEST_CASE("form_encode: empty params", "[util]") {
+    REQUIRE(form_encode({}).empty());
+}
+
+TEST_CASE("form_encode: single param", "[util]") {
+    auto result = form_encode({{"key", "value"}});
+    REQUIRE(result == "key=value");
+}

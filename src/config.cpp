@@ -19,12 +19,17 @@ nlohmann::json Config::defaults_json() {
             {"anthropic", {{"api_key", ""}, {"prompt_caching", true}}},
             {"openai", {
                 {"api_key", ""},
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
+                // Only seeded when the OAuth flow is built: a generated config
+                // should not advertise a client_id for a flow the binary cannot
+                // run.
                 {"use_oauth", false},
                 {"oauth_access_token", ""},
                 {"oauth_refresh_token", ""},
                 {"oauth_expires_at", 0},
                 {"oauth_client_id", "app_EMoamEEZ73f0CkXaXp7hrann"},
-                {"oauth_token_url", "https://auth.openai.com/oauth/token"}
+                {"oauth_token_url", "https://auth.openai.com/oauth/token"},
+#endif
             }},
             {"openrouter", {{"api_key", ""}}},
             {"ollama", {{"base_url", "http://localhost:11434"}}},

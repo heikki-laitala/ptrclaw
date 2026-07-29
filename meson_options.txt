@@ -9,6 +9,8 @@ option('with_compatible', type: 'boolean', value: true,
        description: 'Build the OpenAI-compatible provider (requires with_openai)')
 option('with_ollama', type: 'boolean', value: true,
        description: 'Build the Ollama provider')
+option('with_openai_oauth', type: 'boolean', value: true,
+       description: 'Build the OpenAI OAuth flow (/auth openai). Off keeps the OpenAI-compatible provider but leaves out the browser sign-in flow and its default client_id — for unattended deployments that authenticate with an API key only')
 
 # Channel features
 option('with_telegram', type: 'boolean', value: true,

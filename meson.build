@@ -74,6 +74,13 @@ opt_openai     = get_option('with_openai') or get_option('with_openrouter') or g
 if opt_openai
   add_project_arguments('-DPTRCLAW_HAS_OPENAI', language: 'cpp')
 endif
+# The OAuth flow is a separate axis from the provider: openrouter and compatible
+# only ever authenticate with an API key, so they should not have to carry the
+# browser sign-in flow just because they inherit from OpenAIProvider.
+opt_openai_oauth = opt_openai and get_option('with_openai_oauth')
+if opt_openai_oauth
+  add_project_arguments('-DPTRCLAW_HAS_OPENAI_OAUTH', language: 'cpp')
+endif
 opt_anthropic  = get_option('with_anthropic')
 opt_openrouter = get_option('with_openrouter')
 opt_compatible = get_option('with_compatible')
@@ -124,7 +131,7 @@ endif
 # ── Core sources (always compiled) ─────────────────────────────
 core_sources = files(
   'src/agent.cpp', 'src/channel.cpp', 'src/commands.cpp', 'src/config.cpp',
-  'src/dispatcher.cpp', 'src/event_bus.cpp', 'src/oauth.cpp',
+  'src/dispatcher.cpp', 'src/event_bus.cpp',
   'src/onboard.cpp', 'src/output_filter.cpp', 'src/plugin.cpp',
   'src/prompt.cpp', 'src/provider.cpp',
   'src/session.cpp', 'src/skill.cpp', 'src/stream_relay.cpp', 'src/tool.cpp',
@@ -141,7 +148,12 @@ if opt_anthropic
   optional_sources += files('src/providers/anthropic.cpp')
 endif
 if opt_openai
-  optional_sources += files('src/providers/openai.cpp', 'src/providers/oauth_openai.cpp')
+  optional_sources += files('src/providers/openai.cpp')
+endif
+if opt_openai_oauth
+  # src/oauth.cpp is the generic PKCE helper — only the OAuth flow uses it, so it
+  # moves out of core_sources with the flow rather than staying in every build.
+  optional_sources += files('src/oauth.cpp', 'src/providers/oauth_openai.cpp')
 endif
 if opt_openrouter
   optional_sources += files('src/providers/openrouter.cpp')
@@ -239,7 +251,6 @@ core_test_sources = files(
   'tests/test_channel.cpp',
   'tests/test_event_bus.cpp',
   'tests/test_plugin.cpp',
-  'tests/test_oauth.cpp',
   'tests/test_onboard.cpp',
   'tests/test_output_filter.cpp',
   'tests/test_skill.cpp',
@@ -251,6 +262,9 @@ optional_test_sources = []
 
 if opt_sse
   optional_test_sources += files('tests/test_sse.cpp')
+endif
+if opt_openai_oauth
+  optional_test_sources += files('tests/test_oauth.cpp')
 endif
 if opt_tools
   optional_test_sources += files('tests/test_tools.cpp', 'tests/test_cron.cpp',

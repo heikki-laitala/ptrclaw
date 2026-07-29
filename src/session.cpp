@@ -7,7 +7,7 @@
 #include "tool_manager.hpp"
 #include "plugin.hpp"
 #include "util.hpp"
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
 #include "providers/oauth_openai.hpp"
 #endif
 
@@ -101,7 +101,7 @@ std::vector<std::string> SessionManager::list_sessions() const {
     return ids;
 }
 
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
 std::optional<PendingOAuth> SessionManager::get_pending_oauth(const std::string& session_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = pending_oauth_.find(session_id);
@@ -235,7 +235,7 @@ void SessionManager::handle_message(const MessageReceivedEvent& ev) {
 
     // Handle auth commands + raw OAuth paste
     if (ev.message.content.rfind("/auth", 0) == 0
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
         || get_pending_oauth(ev.session_id).has_value()
 #endif
     ) {
@@ -265,7 +265,7 @@ bool SessionManager::handle_auth_command(
     Agent& agent,
     const std::function<void(const std::string&)>& send_reply) {
 
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
     auto finish_oauth = [&](const PendingOAuth& pending,
                              const std::string& code) {
         auto r = apply_oauth_result(code, pending, config_, http_);
@@ -285,7 +285,7 @@ bool SessionManager::handle_auth_command(
     if (ev.message.content.rfind("/auth", 0) == 0) {
         auto parts = split(ev.message.content, ' ');
 
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
         // /auth openai start — two-step OAuth flow
         if (parts.size() >= 3 && parts[1] == "openai" && parts[2] == "start") {
             auto openai_it = config_.providers.find("openai");
@@ -360,7 +360,7 @@ bool SessionManager::handle_auth_command(
         return true;
     }
 
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
     // If OpenAI OAuth is pending, accept raw callback URL/code directly.
     auto pending_oauth = get_pending_oauth(ev.session_id);
     if (pending_oauth && pending_oauth->provider == "openai") {

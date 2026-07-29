@@ -70,32 +70,9 @@ std::string query_param(const std::string& input, const std::string& key) {
 
 } // namespace
 
-// ── URL encoding ─────────────────────────────────────────────────
-
-std::string oauth_url_encode(const std::string& s) {
-    std::ostringstream out;
-    out << std::hex << std::uppercase;
-    for (unsigned char c : s) {
-        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
-            out << c;
-        } else {
-            out << '%' << std::setw(2) << std::setfill('0') << static_cast<int>(c);
-        }
-    }
-    return out.str();
-}
-
-// ── Form encoding ────────────────────────────────────────────────
-
-std::string form_encode(const std::vector<std::pair<std::string, std::string>>& params) {
-    std::string result;
-    for (const auto& [key, value] : params) {
-        if (!result.empty()) result += '&';
-        result += oauth_url_encode(key) + '=' + oauth_url_encode(value);
-    }
-    return result;
-}
+// NOTE: url_encode/form_encode live in util.hpp — they are generic encoders
+// with no OAuth semantics, and the OpenAI provider needs form_encode whether or
+// not the OAuth flow is built.
 
 // ── PKCE helpers ─────────────────────────────────────────────────
 

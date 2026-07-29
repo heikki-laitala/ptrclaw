@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <utility>
 #include <vector>
 #include <cstdint>
 
@@ -43,5 +44,11 @@ bool atomic_write_file(const std::string& path, const std::string& content);
 
 // Resolve argv[0] to an absolute binary path (searches PATH if bare name)
 std::string resolve_binary_path(const char* argv0);
+
+// Percent-encode a string, leaving RFC 3986 unreserved characters as-is
+std::string url_encode(const std::string& s);
+
+// Build an application/x-www-form-urlencoded body from key/value pairs
+std::string form_encode(const std::vector<std::pair<std::string, std::string>>& params);
 
 } // namespace ptrclaw
