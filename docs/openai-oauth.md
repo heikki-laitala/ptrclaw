@@ -6,6 +6,18 @@ OpenAI's codex models (e.g. `gpt-5-codex-mini`) can be accessed via OAuth using 
 
 PtrClaw runs a PKCE OAuth flow against `auth.openai.com`. You authorize in your browser, and PtrClaw exchanges the callback code for access and refresh tokens. Tokens are saved to `~/.ptrclaw/config.json` and refreshed automatically when they expire.
 
+> **Build note.** The browser flow is behind the `with_openai_oauth` feature flag
+> (default `true`), so everything below works in a standard build. A build
+> configured with `-Dwith_openai_oauth=false` leaves out the flow and its default
+> client id — intended for unattended deployments that cannot open a browser.
+>
+> Such a build is not "OAuth-free": if `use_oauth` and the tokens are present in
+> `~/.ptrclaw/config.json` — placed there by provisioning, or copied from a machine
+> that did run the flow — the provider uses them, refreshes them on expiry, and
+> writes the rotated refresh token back exactly as described here. What it cannot
+> do is *obtain* tokens interactively, and it has no built-in `oauth_client_id`, so
+> set that explicitly alongside the tokens.
+
 ### Interactive setup
 
 The easiest way to set up OAuth is via the `/auth openai` command and choosing "OAuth login":
