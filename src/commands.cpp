@@ -68,7 +68,7 @@ std::string cmd_hatch(Agent& agent) {
 std::string cmd_model(const std::string& new_model, Agent& agent,
                        Config& config, HttpClient& http) {
     // On openai, re-create provider if auth mode changes
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
     if (agent.provider_name() == "openai") {
         auto oai_it = config.providers.find("openai");
         bool on_oauth = oai_it != config.providers.end() &&

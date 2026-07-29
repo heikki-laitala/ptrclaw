@@ -1,8 +1,11 @@
 #include "openai.hpp"
 #include "sse.hpp"
 #include "../http.hpp"
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
 #include "oauth_openai.hpp"
+#endif
 #include "../plugin.hpp"
+#include "../util.hpp"
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <map>
@@ -27,6 +30,20 @@ using json = nlohmann::json;
 
 namespace ptrclaw {
 
+namespace {
+// The built-in client_id belongs to the OAuth flow, so it is only compiled in
+// when that flow is. A build without the flow must not carry a client_id it can
+// never use — and the provider still honours one supplied in config, so a
+// caller holding its own tokens is unaffected.
+std::string resolve_oauth_client_id(const std::string& configured) {
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
+    return configured.empty() ? kDefaultOAuthClientId : configured;
+#else
+    return configured;
+#endif
+}
+} // namespace
+
 OpenAIProvider::OpenAIProvider(const std::string& api_key, HttpClient& http,
                                const std::string& base_url,
                                bool use_oauth,
@@ -41,7 +58,7 @@ OpenAIProvider::OpenAIProvider(const std::string& api_key, HttpClient& http,
       oauth_access_token_(oauth_access_token),
       oauth_refresh_token_(oauth_refresh_token),
       oauth_expires_at_(oauth_expires_at),
-      oauth_client_id_(oauth_client_id.empty() ? kDefaultOAuthClientId : oauth_client_id),
+      oauth_client_id_(resolve_oauth_client_id(oauth_client_id)),
       oauth_token_url_(oauth_token_url.empty()
                        ? "https://auth.openai.com/oauth/token"
                        : oauth_token_url) {}

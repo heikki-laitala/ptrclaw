@@ -30,8 +30,6 @@ struct ParsedOAuthInput {
 };
 
 // ── Generic OAuth utilities ──────────────────────────────────────
-std::string oauth_url_encode(const std::string& s);
-std::string form_encode(const std::vector<std::pair<std::string, std::string>>& params);
 std::string make_code_verifier();
 std::string make_code_challenge_s256(const std::string& verifier);
 ParsedOAuthInput parse_oauth_input(const std::string& raw_input);

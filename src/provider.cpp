@@ -1,7 +1,7 @@
 #include "provider.hpp"
 #include "plugin.hpp"
 #include "config.hpp"
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
 #include "providers/oauth_openai.hpp"
 #endif
 
@@ -97,7 +97,7 @@ SwitchProviderResult switch_provider(const std::string& name,
         result.provider = create_provider("openai", config.api_key_for("openai"), http,
             config.base_url_for("openai"), config.prompt_caching_for("openai"), &adjusted);
         result.model = model_arg.empty() ? effective : model_arg;
-#ifdef PTRCLAW_HAS_OPENAI
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
         setup_oauth_refresh(result.provider.get(), config);
 #endif
         return result;

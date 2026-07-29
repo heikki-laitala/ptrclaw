@@ -20,15 +20,15 @@ std::string build_authorize_url(const std::string& client_id,
     std::string scope = "openid+profile+email+offline_access";
     return std::string(kDefaultAuthorizeBaseUrl) +
         "?response_type=code"
-        "&client_id=" + oauth_url_encode(client_id) +
-        "&redirect_uri=" + oauth_url_encode(redirect_uri) +
+        "&client_id=" + url_encode(client_id) +
+        "&redirect_uri=" + url_encode(redirect_uri) +
         "&scope=" + scope +
-        "&code_challenge=" + oauth_url_encode(code_challenge) +
+        "&code_challenge=" + url_encode(code_challenge) +
         "&code_challenge_method=S256"
-        "&state=" + oauth_url_encode(state) +
+        "&state=" + url_encode(state) +
         "&id_token_add_organizations=true"
         "&codex_cli_simplified_flow=true"
-        "&originator=" + oauth_url_encode(kDefaultOriginator);
+        "&originator=" + url_encode(kDefaultOriginator);
 }
 
 // ── Start OAuth flow (PKCE + authorize URL) ─────────────────────
