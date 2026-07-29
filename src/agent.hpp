@@ -34,6 +34,15 @@ public:
     // Clear history
     void clear_history();
 
+    // Replace the conversation history. For callers that own conversation state
+    // themselves — restoring a persisted conversation, or supplying the context
+    // window per request. A leading System message is kept as the system prompt;
+    // otherwise the built-in prompt is injected on the next process() call.
+    void set_history(std::vector<ChatMessage> messages);
+
+    // Read the conversation history, e.g. to persist it across restarts.
+    const std::vector<ChatMessage>& history() const { return history_; }
+
     // Switch model
     void set_model(const std::string& model);
     const std::string& model() const { return model_; }

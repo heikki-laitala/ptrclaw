@@ -991,3 +991,98 @@ TEST_CASE("Agent: tool output is filtered (ANSI stripped)", "[agent]") {
 
 // Skill whitelist tests removed — skill tool whitelisting was removed.
 // Skills now only inject prompts; all tools are always available.
+
+// ── set_history ──────────────────────────────────────────────────
+
+TEST_CASE("Agent: set_history supplies prior turns to the provider", "[agent]") {
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
+    mock->next_response.content = "ok";
+
+    agent.set_history({
+        ChatMessage{Role::User, "what is my name?", {}, {}},
+        ChatMessage{Role::Assistant, "You are Ada.", {}, {}},
+    });
+    agent.process("and my surname?");
+
+    // The restored turns must reach the model, in order, ahead of the new one —
+    // otherwise the caller's context is silently dropped and the model answers
+    // without it.
+    REQUIRE(mock->last_messages.size() == 4);
+    REQUIRE(mock->last_messages[0].role == Role::System);
+    REQUIRE(mock->last_messages[1].role == Role::User);
+    REQUIRE(mock->last_messages[1].content == "what is my name?");
+    REQUIRE(mock->last_messages[2].role == Role::Assistant);
+    REQUIRE(mock->last_messages[2].content == "You are Ada.");
+    REQUIRE(mock->last_messages[3].role == Role::User);
+    REQUIRE(mock->last_messages[3].content == "and my surname?");
+}
+
+TEST_CASE("Agent: set_history injects the built-in prompt when none is given", "[agent]") {
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
+    mock->next_response.content = "ok";
+
+    agent.set_history({ChatMessage{Role::User, "hi", {}, {}}});
+    agent.process("again");
+
+    REQUIRE_FALSE(mock->last_messages.empty());
+    REQUIRE(mock->last_messages[0].role == Role::System);
+    REQUIRE(mock->last_messages[0].content.find("PtrClaw") != std::string::npos);
+}
+
+TEST_CASE("Agent: set_history keeps a caller-supplied system prompt", "[agent]") {
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
+    mock->next_response.content = "ok";
+
+    agent.set_history({
+        ChatMessage{Role::System, "You are a haiku poet.", {}, {}},
+        ChatMessage{Role::User, "spring", {}, {}},
+    });
+    agent.process("summer");
+
+    // Exactly one system message, and it is the caller's: stacking the built-in
+    // prompt on top would override the instructions they just supplied.
+    size_t system_count = 0;
+    for (const auto& msg : mock->last_messages) {
+        if (msg.role == Role::System) system_count++;
+    }
+    REQUIRE(system_count == 1);
+    REQUIRE(mock->last_messages[0].role == Role::System);
+    REQUIRE(mock->last_messages[0].content == "You are a haiku poet.");
+}
+
+TEST_CASE("Agent: set_history replaces earlier history", "[agent]") {
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
+    mock->next_response.content = "ok";
+
+    agent.process("first conversation");
+    agent.set_history({ChatMessage{Role::User, "second conversation", {}, {}}});
+    agent.process("continue");
+
+    for (const auto& msg : mock->last_messages) {
+        REQUIRE(msg.content.find("first conversation") == std::string::npos);
+    }
+}
+
+TEST_CASE("Agent: history round-trips through set_history", "[agent]") {
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
+    mock->next_response.content = "reply";
+
+    agent.process("remember this");
+    const auto saved = agent.history();
+    REQUIRE_FALSE(saved.empty());
+
+    agent.clear_history();
+    REQUIRE(agent.history_size() == 0);
+
+    agent.set_history(saved);
+    REQUIRE(agent.history_size() == saved.size());
+    for (size_t i = 0; i < saved.size(); i++) {
+        REQUIRE(agent.history()[i].role == saved[i].role);
+        REQUIRE(agent.history()[i].content == saved[i].content);
+    }
+}

@@ -403,6 +403,16 @@ void Agent::clear_history() {
     last_prompt_tokens_.reset();
 }
 
+void Agent::set_history(std::vector<ChatMessage> messages) {
+    history_ = std::move(messages);
+    // A caller-supplied leading system message stands in for ours; without one,
+    // process() injects the built-in prompt on its next call. Treating the two
+    // cases the same way would either drop the caller's prompt or stack a second
+    // system message ahead of it.
+    system_prompt_injected_ = !history_.empty() && history_[0].role == Role::System;
+    last_prompt_tokens_.reset();
+}
+
 void Agent::invalidate_system_prompt() {
     if (system_prompt_injected_ && !history_.empty()) {
         if (history_[0].role == Role::System) {
