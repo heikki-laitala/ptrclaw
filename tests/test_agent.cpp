@@ -1053,6 +1053,50 @@ TEST_CASE("Agent: set_history keeps a caller-supplied system prompt", "[agent]")
     REQUIRE(mock->last_messages[0].content == "You are a haiku poet.");
 }
 
+TEST_CASE("Agent: caller system prompt survives set_model", "[agent]") {
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
+    mock->next_response.content = "ok";
+
+    agent.set_history({
+        ChatMessage{Role::System, "You are a haiku poet.", {}, {}},
+        ChatMessage{Role::User, "spring", {}, {}},
+    });
+    // set_model/set_provider/activate_skill/deactivate_skill all funnel into
+    // invalidate_system_prompt(), which regenerates OUR prompt. It must not
+    // regenerate the caller's — that would swap persisted custom instructions
+    // for the built-in prompt on an ordinary model switch.
+    agent.set_model("some-other-model");
+    agent.process("summer");
+
+    size_t system_count = 0;
+    for (const auto& msg : mock->last_messages) {
+        if (msg.role == Role::System) system_count++;
+    }
+    REQUIRE(system_count == 1);
+    REQUIRE(mock->last_messages[0].content == "You are a haiku poet.");
+}
+
+TEST_CASE("Agent: generated system prompt is still regenerated on set_model", "[agent]") {
+    auto [setup, mock] = make_agent();
+    auto& agent = setup.agent;
+    mock->next_response.content = "ok";
+
+    // The other half of the same rule: without a caller-supplied prompt, the
+    // built-in one must keep being rebuilt so it reflects the new model.
+    agent.set_history({ChatMessage{Role::User, "hi", {}, {}}});
+    agent.process("first");
+    agent.set_model("model-two");
+    agent.process("second");
+
+    size_t system_count = 0;
+    for (const auto& msg : mock->last_messages) {
+        if (msg.role == Role::System) system_count++;
+    }
+    REQUIRE(system_count == 1);
+    REQUIRE(mock->last_messages[0].content.find("model-two") != std::string::npos);
+}
+
 TEST_CASE("Agent: set_history replaces earlier history", "[agent]") {
     auto [setup, mock] = make_agent();
     auto& agent = setup.agent;

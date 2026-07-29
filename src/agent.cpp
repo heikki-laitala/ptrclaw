@@ -106,6 +106,7 @@ void Agent::start_hatch() {
     hatching_ = true;
     history_.clear();
     system_prompt_injected_ = false;
+    caller_system_prompt_ = false;
     last_prompt_tokens_.reset();
 }
 
@@ -400,6 +401,7 @@ uint32_t Agent::estimated_tokens() const {
 void Agent::clear_history() {
     history_.clear();
     system_prompt_injected_ = false;
+    caller_system_prompt_ = false;
     last_prompt_tokens_.reset();
 }
 
@@ -409,11 +411,19 @@ void Agent::set_history(std::vector<ChatMessage> messages) {
     // process() injects the built-in prompt on its next call. Treating the two
     // cases the same way would either drop the caller's prompt or stack a second
     // system message ahead of it.
-    system_prompt_injected_ = !history_.empty() && history_[0].role == Role::System;
+    caller_system_prompt_ = !history_.empty() && history_[0].role == Role::System;
+    system_prompt_injected_ = caller_system_prompt_;
     last_prompt_tokens_.reset();
 }
 
 void Agent::invalidate_system_prompt() {
+    // A caller-supplied prompt is not ours to regenerate: dropping it here would
+    // silently replace persisted custom instructions with the built-in prompt on
+    // the next process(), triggered by something as ordinary as set_model() or
+    // activate_skill(). The caller owns that text and only set_history() or
+    // clear_history() may remove it.
+    if (caller_system_prompt_) return;
+
     if (system_prompt_injected_ && !history_.empty()) {
         if (history_[0].role == Role::System) {
             history_.erase(history_.begin());
