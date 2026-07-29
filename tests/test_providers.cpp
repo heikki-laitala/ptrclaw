@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "mock_http_client.hpp"
+#include "test_helpers.hpp"
+#include "providers/openai_token_persist.hpp"
 #include "provider.hpp"
 #include "providers/anthropic.hpp"
 #include "providers/openai.hpp"
@@ -914,4 +916,80 @@ TEST_CASE("OpenAIProvider: chat_simple with codex model uses Responses API", "[p
     auto body = json::parse(mock.last_body);
     REQUIRE(body["instructions"] == "Be brief");
     REQUIRE_FALSE(body.contains("messages"));
+}
+
+// ── OAuth token persistence ──────────────────────────────────────
+//
+// persist_openai_oauth() and setup_oauth_refresh() are compiled whenever the
+// OpenAI provider is built, independently of the interactive OAuth flow, because a
+// deployment can be handed tokens in config and the provider still refreshes them.
+// These tests run under HomeGuard: config code resolves "~" through $HOME, so the
+// writes land in a temp dir rather than the developer's own config.
+
+TEST_CASE("persist_openai_oauth: writes the OAuth fields to the config file", "[providers][oauth]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    ProviderEntry entry;
+    entry.use_oauth = true;
+    entry.oauth_access_token = "at-1";
+    entry.oauth_refresh_token = "rt-1";
+    entry.oauth_expires_at = 1234567890;
+    entry.oauth_client_id = "client-abc";
+    entry.oauth_token_url = "https://example.test/token";
+
+    REQUIRE(persist_openai_oauth(entry));
+
+    auto j = home.read_config();
+    const auto& o = j["providers"]["openai"];
+    REQUIRE(o["use_oauth"] == true);
+    REQUIRE(o["oauth_access_token"] == "at-1");
+    REQUIRE(o["oauth_refresh_token"] == "rt-1");
+    REQUIRE(o["oauth_expires_at"] == 1234567890);
+    REQUIRE(o["oauth_client_id"] == "client-abc");
+    REQUIRE(o["oauth_token_url"] == "https://example.test/token");
+}
+
+TEST_CASE("setup_oauth_refresh: a refresh is written back to config and file", "[providers][oauth]") {
+    // The failure this pins is delayed and silent: without the callback the
+    // provider still refreshes, but the ROTATED refresh token is never stored, so
+    // the next start loads a stale one and authentication fails later.
+    HomeGuard home;
+    home.write_default_config();
+
+    Config cfg;
+    cfg.providers["openai"].use_oauth = true;
+    cfg.providers["openai"].oauth_access_token = "old-at";
+    cfg.providers["openai"].oauth_refresh_token = "old-rt";
+    cfg.providers["openai"].oauth_expires_at = 1; // long expired
+
+    MockHttpClient mock;
+    // Refresh endpoint first, then the chat call that triggered it — matching the
+    // existing refresh test, since refresh_oauth_if_needed() is protected and only
+    // reachable through a real request.
+    mock.response_queue.push_back({200, R"({
+        "access_token": "new-at",
+        "refresh_token": "new-rt",
+        "expires_in": 3600
+    })"});
+    mock.response_queue.push_back({200, R"({
+        "model": "gpt-4",
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+    })"});
+
+    OpenAIProvider provider("", mock, "",
+                            true, "old-at", "old-rt", 1,
+                            "client-abc", "https://example.test/token");
+    setup_oauth_refresh(&provider, cfg);
+
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5);
+
+    // In-memory Config updated...
+    REQUIRE(cfg.providers["openai"].oauth_access_token == "new-at");
+    REQUIRE(cfg.providers["openai"].oauth_refresh_token == "new-rt");
+    // ...and written through to the file, which is the part that survives restart.
+    auto j = home.read_config();
+    REQUIRE(j["providers"]["openai"]["oauth_access_token"] == "new-at");
+    REQUIRE(j["providers"]["openai"]["oauth_refresh_token"] == "new-rt");
 }

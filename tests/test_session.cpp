@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "mock_http_client.hpp"
+#include "test_helpers.hpp"
 #include "session.hpp"
 #include "plugin.hpp"
 #include "event.hpp"
@@ -126,8 +127,22 @@ TEST_CASE("SessionManager: /auth openai finish is never stored as the API key", 
     REQUIRE_FALSE(reply.empty());
 }
 
-// The positive case — "/auth openai <api_key>" actually storing the key — is
-// deliberately NOT tested here: that path calls persist_provider_key(), which goes
-// through modify_config_json() and rewrites the developer's real
-// ~/.ptrclaw/config.json. Running the suite must not overwrite someone's
-// credentials. Covering it needs an injectable config path first.
+TEST_CASE("SessionManager: /auth openai <key> stores and persists the key", "[session]") {
+    // The counterpart to the two tests above: the guard must refuse the
+    // subcommands without breaking the legitimate form. This one reaches
+    // persist_provider_key() -> modify_config_json(), so it runs under HomeGuard —
+    // config code resolves "~" through $HOME, so the write lands in the temp dir
+    // and never touches the developer's own config.
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    auto reply = run_auth_command(cfg, "/auth openai sk-test-12345");
+
+    REQUIRE(cfg.providers["openai"].api_key == "sk-test-12345");
+    REQUIRE(reply.find("saved") != std::string::npos);
+    // Asserting on the file, not just memory: persistence is the half that fails
+    // silently and only shows up as a lost credential after a restart.
+    auto persisted = home.read_config();
+    REQUIRE(persisted["providers"]["openai"]["api_key"] == "sk-test-12345");
+}
