@@ -56,11 +56,25 @@ WhatsApp there is no third-party service — the caller is whatever you put in f
 - **`history`** (optional) — when present it **replaces** the session's own history for
   this turn, so the caller can be the single source of truth and the agent stays a
   stateless consumer. A leading `system` message becomes the system prompt. Roles are
-  `system`, `user`, `assistant`, `tool`.
+  `system`, `user` and `assistant`.
+
+  **`tool` is refused with a `400`**, deliberately. A tool result only means anything
+  paired with the `tool_call_id` of the call it answers, and the assistant turn carrying
+  the original `tool_calls` is not expressible here either — so accepting the role would
+  send unassociated tool results to the provider. Refusing is more honest than
+  half-supporting it.
 
 Omit `history` entirely to let the agent accumulate its own, as other channels do. A
 malformed `history` is a `400` rather than a request answered without it — being quietly
 answered with the context missing is worse than being told.
+
+**One turn per session at a time.** A second `/chat` for a session whose turn is still
+running is refused with `409`. Everything downstream keys off the session — the reply and
+the token stream both — so two overlapping turns would share one mailbox: both streams
+racing for the first reply, one closing empty, the second reply discarded. Wait for
+`done` (or `error`) before sending the next message for that session. An abandoned turn is
+reclaimed after `turn_timeout_seconds`, so a client that vanishes mid-request cannot wedge
+its session permanently.
 
 ### The response stream
 

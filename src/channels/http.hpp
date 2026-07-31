@@ -1,6 +1,7 @@
 #pragma once
 #include "../channel.hpp"
 #include "webhook_server.hpp"
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -77,9 +78,16 @@ private:
         std::string             final_content;
         std::string             error;
         bool                    done = false;
+        // Only used to recognise an abandoned turn. WebhookServer can return before
+        // invoking the producer (if the response headers fail to send), which would leave
+        // an entry nothing will ever clear — and with one turn per session enforced, that
+        // would wedge the session permanently.
+        std::chrono::steady_clock::time_point started{};
     };
 
     void stream_turn(const std::string& session, const BodyWriter& write);
+    // Ends every in-flight turn with an error and wakes the threads writing them.
+    void release_pending_turns(const std::string& reason);
     void append_delta(const std::string& session, const std::string& delta);
     void fail_turn(const std::string& session, const std::string& error);
 
@@ -88,6 +96,7 @@ private:
     std::unique_ptr<WebhookServer> server_;
 
     std::mutex                  inbound_mutex_;
+    std::condition_variable     inbound_cv_;
     std::vector<ChannelMessage> inbound_queue_;
 
     std::mutex                                     turn_mutex_;

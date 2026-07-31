@@ -67,7 +67,18 @@ bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& 
         if      (role == "system")    parsed = Role::System;
         else if (role == "user")      parsed = Role::User;
         else if (role == "assistant") parsed = Role::Assistant;
-        else if (role == "tool")      parsed = Role::Tool;
+        else if (role == "tool") {
+            // Refused rather than half-supported. A tool result is only meaningful paired
+            // with the tool_call_id of the call it answers — Anthropic emits tool_use_id
+            // from it (providers/anthropic.cpp:78) and OpenAI omits tool_call_id entirely
+            // when absent (providers/openai.cpp:81) — and the assistant turn carrying the
+            // original tool_calls is not expressible in this schema either. Accepting the
+            // role while dropping the association would send unassociated tool results to
+            // the provider, which is worse than saying no.
+            error = "role 'tool' is not supported: a pushed window cannot carry the "
+                    "tool_call_id a tool result needs";
+            return false;
+        }
         else {
             error = "unknown role '" + role + "'";
             return false;
@@ -82,7 +93,34 @@ bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& 
 HttpChannel::HttpChannel(HttpChannelConfig config) : config_(std::move(config)) {}
 
 HttpChannel::~HttpChannel() {
-    if (server_) server_->stop();
+    // Order matters. WebhookServer::stop() waits for its connection threads, and each of
+    // those may be parked in stream_turn() waiting for a reply the poll loop will now never
+    // produce — its own writer-based cancellation only fires once a write is attempted, and
+    // a parked thread attempts none. So shutdown would stall for the full turn timeout,
+    // 120 s by default, long past any termination grace period. Release the waiters first.
+    // Guarded because a destructor must not throw, and both steps allocate or lock:
+    // release_pending_turns() copies its reason into each turn, and stop() joins threads.
+    // Nothing here is recoverable — if it fails, waiters fall back to their own turn
+    // timeout — so swallowing is the honest behaviour rather than terminating.
+    try {
+        release_pending_turns("server is shutting down");
+        if (server_) server_->stop();
+    } catch (...) {  // NOLINT(bugprone-empty-catch) — see above
+    }
+}
+
+void HttpChannel::release_pending_turns(const std::string& reason) {
+    {
+        std::lock_guard<std::mutex> lk(turn_mutex_);
+        for (auto& [session, turn] : turns_) {
+            (void)session;
+            if (!turn.done) {
+                turn.error = reason;
+                turn.done = true;
+            }
+        }
+    }
+    turn_cv_.notify_all();
 }
 
 bool HttpChannel::health_check() {
@@ -137,7 +175,15 @@ void HttpChannel::initialize() {
 
 std::vector<ChannelMessage> HttpChannel::poll_updates() {
     std::vector<ChannelMessage> out;
-    std::lock_guard<std::mutex> lk(inbound_mutex_);
+    std::unique_lock<std::mutex> lk(inbound_mutex_);
+    // Blocks briefly when there is nothing to do, matching WhatsAppChannel. main.cpp's
+    // poll loop has no sleep of its own, so returning immediately spins it: an idle
+    // deployment would burn a core and re-run session eviction continuously. The wait is
+    // bounded rather than indefinite so shutdown still takes effect within 100 ms.
+    if (inbound_queue_.empty()) {
+        inbound_cv_.wait_for(lk, std::chrono::milliseconds(100),
+                             [this] { return !inbound_queue_.empty(); });
+    }
     out.swap(inbound_queue_);
     return out;
 }
@@ -169,10 +215,18 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
     }
     if (!body.is_object()) return json_error(400, "body must be a JSON object");
 
-    const std::string session = body.value("session", std::string{});
-    const std::string message = body.value("message", std::string{});
-    if (session.empty()) return json_error(400, "'session' is required");
-    if (message.empty()) return json_error(400, "'message' is required");
+    // is_string() before extracting, not value<std::string>(): nlohmann throws on a type
+    // mismatch rather than returning the default, so {"session": 1} would escape to the
+    // handler wrapper and become a 500 for what is plainly a malformed request.
+    if (!body.contains("session") || !body["session"].is_string())
+        return json_error(400, "'session' is required and must be a string");
+    if (!body.contains("message") || !body["message"].is_string())
+        return json_error(400, "'message' is required and must be a string");
+
+    const std::string session = body["session"].get<std::string>();
+    const std::string message = body["message"].get<std::string>();
+    if (session.empty()) return json_error(400, "'session' must not be empty");
+    if (message.empty()) return json_error(400, "'message' must not be empty");
 
     ChannelMessage msg;
     msg.sender = session;        // SessionManager keys sessions off sender
@@ -190,17 +244,41 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
         msg.history = std::move(window);
     }
 
+    // One in-flight turn per session, and the alternative is worse than it looks.
+    // Everything downstream keys off the session: the reply arrives via send_message(target
+    // = session), and the deltas via StreamChunkEvent(session_id). Two overlapping turns
+    // would therefore share one mailbox — both streams racing for the first reply, one
+    // closing empty, the second reply discarded. Keying by a request id would make the
+    // routing unambiguous but still leave two turns interleaving over one Agent and one
+    // history, which is not a conversation.
+    //
     // Registered before the message is queued: the poll thread can pick it up and start
     // publishing deltas the moment it is visible, and a delta arriving with no Turn to
     // hold it would be dropped.
     {
+        const auto now = std::chrono::steady_clock::now();
         std::lock_guard<std::mutex> lk(turn_mutex_);
-        turns_[session] = Turn{};
+        auto existing = turns_.find(session);
+        if (existing != turns_.end()) {
+            // Unless it is abandoned: WebhookServer returns without invoking the producer
+            // if the response headers fail to send, and nothing else would ever clear that
+            // entry. Without this the session would be wedged for the process's lifetime.
+            const bool stale = now - existing->second.started >
+                               std::chrono::seconds(config_.turn_timeout_seconds);
+            if (!stale) {
+                return json_error(409, "a turn is already in flight for this session");
+            }
+            turns_.erase(existing);
+        }
+        Turn fresh;
+        fresh.started = now;
+        turns_.emplace(session, std::move(fresh));
     }
     {
         std::lock_guard<std::mutex> lk(inbound_mutex_);
         inbound_queue_.push_back(std::move(msg));
     }
+    inbound_cv_.notify_one();  // so the poll loop reacts now, not up to 100 ms later
 
     WebhookResponse resp;
     resp.status = 200;
