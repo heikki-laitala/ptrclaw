@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include "mock_http_client.hpp"
 #include "test_helpers.hpp"
 #include "session.hpp"
@@ -7,6 +8,7 @@
 #include "event_bus.hpp"
 
 using namespace ptrclaw;
+using json = nlohmann::json;
 
 // SessionManager requires valid provider creation, so we pick the first
 // registered provider (any will do — the HTTP client is mocked).
@@ -153,3 +155,111 @@ TEST_CASE("SessionManager: /auth openai <key> stores and persists the key", "[se
     REQUIRE(persisted["providers"]["openai"]["api_key"] == "sk-test-12345");
 }
 #endif // PTRCLAW_HAS_OPENAI
+
+// ── Pushed conversation history ─────────────────────────────────
+//
+// A channel whose frontend owns the conversation sets ChannelMessage::history, and
+// the session must hand exactly that window to the model.
+//
+// Both tests assert on the *outgoing provider payload* rather than on
+// agent.history(), because "what the model was shown" is the property the feature
+// exists for: a set_history() call that never reached a request would satisfy an
+// agent.history() assertion while being useless.
+
+static Config make_pushed_history_config() {
+    Config cfg;
+    cfg.provider = "anthropic";
+    cfg.model = "claude-sonnet-4-6";
+    cfg.providers["anthropic"].api_key = "test-key";
+    // One post() per turn, so last_body unambiguously belongs to the turn asserted.
+    cfg.agent.disable_streaming = true;
+    cfg.agent.max_tool_iterations = 1;
+    cfg.agent.max_history_messages = 50;
+    // Keeps an injected [Memory context] block out of the user turn.
+    cfg.memory.backend = "none";
+    return cfg;
+}
+
+static const char* kStubReply =
+    R"({"model":"claude-sonnet-4-6","content":[{"type":"text","text":"ok"}],)"
+    R"("usage":{"input_tokens":10,"output_tokens":2}})";
+
+TEST_CASE("SessionManager: a pushed history window reaches the provider in order",
+          "[session]") {
+    MockHttpClient http;
+    http.next_response = {200, kStubReply};
+    auto cfg = make_pushed_history_config();
+
+    EventBus bus;
+    SessionManager mgr(cfg, http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    MessageReceivedEvent ev;
+    ev.session_id = "pushed";
+    ev.message.content = "and the second?";
+    ev.message.history = std::vector<ChatMessage>{
+        {Role::System,    "You are a hotel concierge.",   std::nullopt, std::nullopt},
+        {Role::User,      "what was my first question?",  std::nullopt, std::nullopt},
+        {Role::Assistant, "You asked about breakfast.",   std::nullopt, std::nullopt},
+    };
+    bus.publish(ev);
+
+    REQUIRE(http.call_count == 1);
+    auto body = json::parse(http.last_body);
+
+    // A leading System message in the pushed window must become the system prompt,
+    // which is how a caller supplies the agent's instructions per request. Anthropic
+    // carries it out-of-band, so it is asserted there rather than in messages[].
+    REQUIRE(body.contains("system"));
+    REQUIRE(body["system"].get<std::string>().find("hotel concierge") != std::string::npos);
+
+    // Roles and order both matter: collapsing prior turns into one user message is
+    // the lossy shortcut this field exists to avoid.
+    const auto& msgs = body["messages"];
+    REQUIRE(msgs.size() == 3);
+    REQUIRE(msgs[0]["role"] == "user");
+    REQUIRE(msgs[0]["content"] == "what was my first question?");
+    REQUIRE(msgs[1]["role"] == "assistant");
+    REQUIRE(msgs[1]["content"] == "You asked about breakfast.");
+    REQUIRE(msgs[2]["role"] == "user");
+    REQUIRE(msgs[2]["content"] == "and the second?");
+}
+
+TEST_CASE("SessionManager: a pushed window replaces what the session accumulated",
+          "[session]") {
+    // The discriminating half. On a fresh session, "replace" and "append" are
+    // indistinguishable — so run a turn first, then push a window that omits it.
+    // An implementation that appended the pushed window to the session's own
+    // history would pass the test above and fail this one.
+    MockHttpClient http;
+    http.next_response = {200, kStubReply};
+    auto cfg = make_pushed_history_config();
+
+    EventBus bus;
+    SessionManager mgr(cfg, http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    MessageReceivedEvent first;
+    first.session_id = "pushed";
+    first.message.content = "remember-me-please";
+    bus.publish(first);
+    REQUIRE(json::parse(http.last_body)["messages"][0]["content"] == "remember-me-please");
+
+    MessageReceivedEvent second;
+    second.session_id = "pushed";
+    second.message.content = "a brand new topic";
+    second.message.history = std::vector<ChatMessage>{
+        {Role::User, "unrelated earlier turn", std::nullopt, std::nullopt},
+    };
+    bus.publish(second);
+
+    auto body = json::parse(http.last_body);
+    REQUIRE(http.last_body.find("remember-me-please") == std::string::npos);
+
+    const auto& msgs = body["messages"];
+    REQUIRE(msgs.size() == 2);
+    REQUIRE(msgs[0]["content"] == "unrelated earlier turn");
+    REQUIRE(msgs[1]["content"] == "a brand new topic");
+}

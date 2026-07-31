@@ -1,4 +1,5 @@
 #pragma once
+#include "provider.hpp"  // ChatMessage
 #include <string>
 #include <vector>
 #include <memory>
@@ -17,6 +18,14 @@ struct ChannelMessage {
     std::optional<int64_t> message_id;
     std::optional<std::string> first_name;
     bool is_group = false;
+
+    // Conversation window for this turn, for channels whose frontend owns the
+    // history rather than the agent. When set it *replaces* the session's
+    // accumulated history before the message is processed, so the agent stays a
+    // stateless consumer of whatever the caller sends. A leading System message
+    // becomes the system prompt (see Agent::set_history). Unset — the normal
+    // case, and every built-in channel — means "use the agent's own history".
+    std::optional<std::vector<ChatMessage>> history;
 };
 
 // Abstract base class for messaging channels
