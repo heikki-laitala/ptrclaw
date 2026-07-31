@@ -8,9 +8,11 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 // MSG_NOSIGNAL prevents SIGPIPE on Linux; macOS uses SO_NOSIGPIPE per-socket.
 #ifndef MSG_NOSIGNAL
@@ -87,10 +89,12 @@ bool parse_listen_addr(const std::string& addr, std::string& host, uint16_t& por
 
 WebhookServer::WebhookServer(std::string listen_addr,
                                              uint32_t max_body,
-                                             Handler handler)
+                                             Handler handler,
+                                             uint32_t max_connections)
     : listen_addr_(std::move(listen_addr))
     , max_body_(max_body)
     , handler_(std::move(handler))
+    , max_connections_(max_connections > 0 ? max_connections : 1)
 {}
 
 WebhookServer::~WebhookServer() {
@@ -158,7 +162,19 @@ void WebhookServer::stop() {
     if (!running_.exchange(false)) return;
     char b = 0;
     if (shutdown_pipe_[1] >= 0) ::write(shutdown_pipe_[1], &b, 1);
+    conn_cv_.notify_all();  // wake the capacity wait so the accept loop sees !running_
     if (thread_.joinable()) thread_.join();
+
+    // Drain in-flight connection threads. They are detached and hold `this`, so
+    // returning before they finish would leave them calling handler_ on a destroyed
+    // server. Producers see the writer fail as soon as running_ goes false, and every
+    // send is bounded by SO_SNDTIMEO, so this waits seconds at worst rather than for
+    // as long as a client cares to hold a stream open.
+    {
+        std::unique_lock<std::mutex> lk(conn_mutex_);
+        conn_cv_.wait(lk, [this] { return active_conns_ == 0; });
+    }
+
     if (server_fd_ >= 0)         { ::close(server_fd_);         server_fd_ = -1; }
     if (shutdown_pipe_[0] >= 0)  { ::close(shutdown_pipe_[0]);  shutdown_pipe_[0] = -1; }
     if (shutdown_pipe_[1] >= 0)  { ::close(shutdown_pipe_[1]);  shutdown_pipe_[1] = -1; }
@@ -169,6 +185,18 @@ void WebhookServer::accept_loop() {
         struct pollfd fds[2];
         fds[0].fd = server_fd_;         fds[0].events = POLLIN;
         fds[1].fd = shutdown_pipe_[0];  fds[1].events = POLLIN;
+
+        // Wait for a free slot *before* accepting, so a connection over capacity stays
+        // in the kernel backlog and is picked up when one frees. Accepting it only to
+        // answer 503 would turn a wait into an error for the client.
+        if (max_connections_ > 1) {
+            std::unique_lock<std::mutex> lk(conn_mutex_);
+            conn_cv_.wait_for(lk, std::chrono::milliseconds(200), [this] {
+                return active_conns_ < max_connections_ || !running_.load();
+            });
+            if (!running_.load()) break;
+            if (active_conns_ >= max_connections_) continue;
+        }
 
         int ret = ::poll(fds, 2, 1000);
         if (ret <= 0) continue;              // timeout or transient error
@@ -189,8 +217,29 @@ void WebhookServer::accept_loop() {
             // changes nothing. Removing it, and then the listener's too, still passes
             // the peer-disconnect test — writing to a hung-up client here surfaces as
             // ECONNRESET, not EPIPE, so SIGPIPE is not on this path.
-            handle_connection(cfd);
-            ::close(cfd);
+            if (max_connections_ <= 1) {
+                handle_connection(cfd);
+                ::close(cfd);
+                continue;
+            }
+
+            {
+                std::lock_guard<std::mutex> lk(conn_mutex_);
+                ++active_conns_;
+            }
+            // Detached rather than tracked: a std::thread cannot be asked whether it
+            // has finished, so a vector of them would grow for the process's lifetime.
+            // stop() waits on active_conns_ instead, which is what keeps `this` alive
+            // for as long as any of these threads can touch it.
+            std::thread([this, cfd] {
+                handle_connection(cfd);
+                ::close(cfd);
+                {
+                    std::lock_guard<std::mutex> lk(conn_mutex_);
+                    --active_conns_;
+                }
+                conn_cv_.notify_all();
+            }).detach();
         }
     }
 }
@@ -241,6 +290,13 @@ static bool send_stream_headers(int fd, int status, const std::string& content_t
         "HTTP/1.1 " + std::to_string(status) + " " + reason_phrase(status) + "\r\n"
         "Content-Type: " + content_type + "\r\n"
         "Cache-Control: no-cache\r\n"
+        // Cache-Control does not stop a reverse proxy buffering the body, and nginx
+        // buffers by default — which would hold small token chunks until its buffer
+        // filled, defeating streaming without any error to show for it. nginx and
+        // several other proxies honour this header per-response, so streaming works
+        // behind the configuration in docs/reverse-proxy.md without requiring an edit
+        // there.
+        "X-Accel-Buffering: no\r\n"
         "Connection: close\r\n\r\n";
 
     return send_all(fd, head);
@@ -328,7 +384,13 @@ void WebhookServer::handle_connection(int fd) const {
     WebhookResponse resp = handler_(req);
     if (resp.stream) {
         if (!send_stream_headers(fd, resp.status, resp.content_type)) return;
-        resp.stream([fd](std::string_view chunk) { return send_all(fd, chunk); });
+        // Reports shutdown as well as a lost peer: without this a healthy client
+        // holding a long stream open would keep every write succeeding, and stop()
+        // would block until the producer happened to finish on its own.
+        resp.stream([this, fd](std::string_view chunk) {
+            if (!running_.load()) return false;
+            return send_all(fd, chunk);
+        });
         return;  // accept_loop closes fd, which is what ends a close-delimited body
     }
     send_http_response(fd, resp.status, resp.content_type, resp.body);
