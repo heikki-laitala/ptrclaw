@@ -350,11 +350,12 @@ namespace {
 // job, does not fail the suite.
 class TestServer {
 public:
-    TestServer(uint32_t max_body, const WebhookServer::Handler& handler) {
+    TestServer(uint32_t max_body, const WebhookServer::Handler& handler,
+               uint32_t max_connections = 1) {
         std::string error = "range exhausted";
         for (uint16_t p = 18730; p < 18760; ++p) {
             auto candidate = std::make_unique<WebhookServer>(
-                "127.0.0.1:" + std::to_string(p), max_body, handler);
+                "127.0.0.1:" + std::to_string(p), max_body, handler, max_connections);
             if (candidate->start(error)) {
                 server_ = std::move(candidate);
                 port_ = p;
@@ -370,6 +371,9 @@ public:
     TestServer& operator=(const TestServer&) = delete;
 
     uint16_t port() const { return port_; }
+
+    // Explicit, for the shutdown test — the destructor would hide the timing.
+    void stop() { if (server_) server_->stop(); }
 
 private:
     std::unique_ptr<WebhookServer> server_;
@@ -459,6 +463,11 @@ TEST_CASE("WebhookServer: a streamed chunk reaches the client before the handler
     // No Content-Length: the length is not knowable when the headers go out. A
     // streamed response that carried one would be malformed, not merely wasteful.
     REQUIRE(to_lower(head).find("content-length") == std::string::npos);
+    // nginx buffers response bodies by default and Cache-Control does not change that,
+    // so without this header small chunks would sit in the proxy's buffer and the
+    // stream would arrive in one lump behind the documented reverse proxy — with no
+    // error anywhere to explain why.
+    REQUIRE(to_lower(head).find("x-accel-buffering: no") != std::string::npos);
 
     {
         std::lock_guard<std::mutex> lk(m);
@@ -529,5 +538,93 @@ TEST_CASE("WebhookServer: a non-streaming response still carries Content-Length"
     std::string all = recv_until_close(fd);
     REQUIRE(all.find("Content-Length: 15") != std::string::npos);
     REQUIRE(all.find(R"({"status":"ok"})") != std::string::npos);
+    ::close(fd);
+}
+
+TEST_CASE("WebhookServer: max_connections serves two clients at once",
+          "[whatsapp_webhook]") {
+    // Asserted on elapsed time, and that is not laziness: the obvious version of this
+    // test — both clients get their body, and the handler saw arrived == 2 — passes
+    // under serial handling too, because the second connection is simply served after
+    // the first one's wait times out. Wall-clock is what actually separates the two.
+    std::mutex m;
+    std::condition_variable cv;
+    int arrived = 0;
+
+    TestServer ts(1024, [&](const WebhookRequest&) {
+        {
+            std::lock_guard<std::mutex> lk(m);
+            ++arrived;
+        }
+        cv.notify_all();
+        std::unique_lock<std::mutex> lk(m);
+        cv.wait_for(lk, std::chrono::seconds(5), [&] { return arrived >= 2; });
+
+        WebhookResponse r;
+        r.content_type = "text/plain";
+        r.body = "ok";
+        return r;
+    }, 4);
+
+    const auto t0 = std::chrono::steady_clock::now();
+
+    int a = connect_to(ts.port());
+    send_request(a, "POST /a HTTP/1.1\r\nHost: t\r\nContent-Length: 0\r\n\r\n");
+    int b = connect_to(ts.port());
+    send_request(b, "POST /b HTTP/1.1\r\nHost: t\r\nContent-Length: 0\r\n\r\n");
+
+    REQUIRE(recv_until_close(a).find("ok") != std::string::npos);
+    REQUIRE(recv_until_close(b).find("ok") != std::string::npos);
+    const auto elapsed = std::chrono::steady_clock::now() - t0;
+
+    REQUIRE(arrived == 2);
+    // Serial handling costs the first handler's full 5 s timeout before the second is
+    // even accepted; concurrent handling returns as soon as both are inside.
+    REQUIRE(elapsed < std::chrono::seconds(3));
+
+    ::close(a);
+    ::close(b);
+}
+
+TEST_CASE("WebhookServer: stop() is not held open by a live stream",
+          "[whatsapp_webhook]") {
+    // The shutdown hazard: with connection threads detached and holding `this`, stop()
+    // must wait for them — but a healthy client keeps every write succeeding, so
+    // without a cancellation signal the wait lasts as long as the client cares to
+    // listen. The writer reporting false on shutdown is what bounds it.
+    std::atomic<bool> writer_reported_stop{false};
+    std::atomic<bool> producer_done{false};
+
+    TestServer ts(1024, [&](const WebhookRequest&) {
+        WebhookResponse r;
+        r.content_type = "text/event-stream";
+        r.stream = [&](const BodyWriter& write) {
+            // 2000 ticks is ~20 s if nothing interrupts it.
+            for (int i = 0; i < 2000; ++i) {
+                if (!write("data: tick\n\n")) {
+                    writer_reported_stop = true;
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            producer_done = true;
+        };
+        return r;
+    }, 4);
+
+    int fd = connect_to(ts.port());
+    send_request(fd, "POST /chat HTTP/1.1\r\nHost: t\r\nContent-Length: 0\r\n\r\n");
+    REQUIRE_FALSE(recv_until(fd, "data: tick").empty());  // the stream is live
+
+    const auto t0 = std::chrono::steady_clock::now();
+    ts.stop();
+    const auto elapsed = std::chrono::steady_clock::now() - t0;
+
+    // Ordering matters here: stop() returning *before* the producer finished would mean
+    // a detached thread still holding a destroyed server.
+    REQUIRE(producer_done.load());
+    REQUIRE(writer_reported_stop.load());
+    REQUIRE(elapsed < std::chrono::seconds(5));
+
     ::close(fd);
 }
