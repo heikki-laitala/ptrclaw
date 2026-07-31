@@ -130,6 +130,16 @@ void SessionManager::handle_message(const MessageReceivedEvent& ev) {
     if (!ev.message.channel.empty()) {
         agent.set_channel(ev.message.channel);
     }
+    // A channel whose frontend owns the conversation pushes the window with every
+    // message, which makes the session's accumulated history stale by definition —
+    // so replace it rather than adding to it.
+    //
+    // Applied here, on the thread that runs process(), and not by the channel
+    // itself: Agent has no internal synchronisation, so a channel calling
+    // set_history() from its own accept/serve thread would race an in-flight turn.
+    if (ev.message.history) {
+        agent.set_history(*ev.message.history);
+    }
     std::string chat_id = ev.message.reply_target.value_or("");
 
     auto send_reply = [&](const std::string& content) {
@@ -243,8 +253,15 @@ void SessionManager::handle_message(const MessageReceivedEvent& ev) {
     }
 
     // Auto-hatch: if memory exists but no soul, enter hatching
-    // so the user's first message kicks off the interview
-    if (agent.memory() && !agent.is_hatched() && !agent.hatching()) {
+    // so the user's first message kicks off the interview.
+    //
+    // Never when the caller pushed the conversation: start_hatch() calls
+    // history_.clear() and resets caller_system_prompt_, so it would throw the
+    // window away and answer the user with an interview question instead. A caller
+    // that supplies the history has already said who this agent is, and there is
+    // nobody at the far end of an onboarding interview to answer it.
+    if (!ev.message.history && agent.memory() && !agent.is_hatched()
+        && !agent.hatching()) {
         agent.start_hatch();
     }
 
