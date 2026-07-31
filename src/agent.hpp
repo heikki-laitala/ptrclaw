@@ -84,6 +84,10 @@ private:
     void compact_history();
     void inject_system_prompt();
     void invalidate_system_prompt();
+
+    // Key material for the response cache: the conversation as the model will see it,
+    // minus the current message. See the definition for why the old key was unsafe.
+    std::string conversation_cache_context() const;
     const SkillDef* find_skill(const std::string& name) const;
     void run_synthesis();
     void maybe_synthesize();

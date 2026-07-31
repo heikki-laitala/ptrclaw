@@ -122,6 +122,14 @@ std::string Agent::process(const std::string& user_message) {
                                           config_.memory.recall_limit,
                                           config_.memory.enrich_depth);
     }
+    // Snapshotted BEFORE the user turn is appended, and reused by the cache put at the
+    // end of this function. Both sites must hash the same thing, and by the time the
+    // response is stored history_ has grown by the user turn, any tool turns, and the
+    // assistant reply — so recomputing it there would key the entry under something the
+    // next lookup can never reproduce.
+    const std::string cache_ctx =
+        response_cache_ ? conversation_cache_context() : std::string{};
+
     history_.push_back(ChatMessage{Role::User, enriched_message, {}, {}});
 
     // Use cached tool specs from ToolsAvailableEvent (skip during hatching)
@@ -138,11 +146,7 @@ std::string Agent::process(const std::string& user_message) {
     // Use enriched_message (includes memory context) so cache key reflects what
     // the LLM actually sees — different memory state produces a different key.
     if (response_cache_) {
-        std::string sys_prompt;
-        if (!history_.empty() && history_[0].role == Role::System) {
-            sys_prompt = history_[0].content;
-        }
-        auto cached = response_cache_->get(model_, sys_prompt, enriched_message);
+        auto cached = response_cache_->get(model_, cache_ctx, enriched_message);
         if (cached) {
             history_.push_back(ChatMessage{Role::Assistant, *cached, {}, {}});
             // Cached responses have no provider usage payload — fall back to heuristic.
@@ -367,13 +371,9 @@ std::string Agent::process(const std::string& user_message) {
         }
     }
 
-    // Populate response cache (keyed on enriched message to match lookup above)
+    // Populate response cache (same key material as the lookup above)
     if (response_cache_ && !final_content.empty()) {
-        std::string sys_prompt;
-        if (!history_.empty() && history_[0].role == Role::System) {
-            sys_prompt = history_[0].content;
-        }
-        response_cache_->put(model_, sys_prompt, enriched_message, final_content);
+        response_cache_->put(model_, cache_ctx, enriched_message, final_content);
     }
 
     // Synthesize knowledge from conversation
@@ -403,6 +403,28 @@ void Agent::clear_history() {
     system_prompt_injected_ = false;
     caller_system_prompt_ = false;
     last_prompt_tokens_.reset();
+}
+
+std::string Agent::conversation_cache_context() const {
+    // Everything the model will be shown except the current message, roles included.
+    //
+    // The cache key used to be (model, leading system prompt, current message), which
+    // made two different conversations collide whenever they shared a system prompt and
+    // a latest user message — the second caller received the first one's answer without
+    // its own history ever reaching the provider. That is a wrong answer in a CLI and a
+    // cross-conversation leak anywhere sessions belong to different people, and the
+    // cache file is shared, so it is not confined to one process.
+    //
+    // Roles are part of the material because the same texts in a different arrangement
+    // are a different conversation.
+    std::string ctx;
+    for (const auto& msg : history_) {
+        ctx += role_to_string(msg.role);
+        ctx += ':';
+        ctx += msg.content;
+        ctx += '\n';
+    }
+    return ctx;
 }
 
 void Agent::set_history(std::vector<ChatMessage> messages) {
