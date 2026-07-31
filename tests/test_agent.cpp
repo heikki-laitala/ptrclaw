@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include "test_helpers.hpp"
 #include "agent.hpp"
 #include "dispatcher.hpp"
 #include "memory/json_memory.hpp"
@@ -1129,4 +1130,95 @@ TEST_CASE("Agent: history round-trips through set_history", "[agent]") {
         REQUIRE(agent.history()[i].role == saved[i].role);
         REQUIRE(agent.history()[i].content == saved[i].content);
     }
+}
+
+// ── Response cache identity ──────────────────────────────────────
+//
+// The cache key must cover the conversation, not just the current message. It used to
+// be (model, leading system prompt, current user text), so two conversations sharing a
+// system prompt and a latest question collided — the second caller got the first one's
+// answer and its own history never reached the provider. The cache file is shared
+// (~/.ptrclaw/response_cache.json), so this was not confined to one session.
+
+static MakeAgentResult make_caching_agent() {
+    auto provider = std::make_unique<MockProvider>();
+    auto* provider_ptr = provider.get();
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<MockTool>());
+
+    Config cfg;
+    cfg.agent.max_tool_iterations = 5;
+    cfg.agent.max_history_messages = 50;
+    cfg.memory.response_cache = true;
+    // NoneMemory is non-null, which is all the response cache needs to be constructed,
+    // and it keeps memory enrichment out of the message being keyed.
+    cfg.memory.backend = "none";
+
+    return {TestAgentSetup(std::move(provider), std::move(tools), cfg), provider_ptr};
+}
+
+TEST_CASE("Agent: the response cache does not collide across different histories",
+          "[agent]") {
+    // HomeGuard because an enabled response cache writes ~/.ptrclaw/response_cache.json
+    // — without it this test would poison the developer's real cache with its fixtures.
+    HomeGuard home;
+    home.write_default_config();
+
+    auto [setup, mock] = make_caching_agent();
+    auto& agent = setup.agent;
+
+    const char* kSystem = "You are a hotel concierge.";
+    const char* kSameQuestion = "and what about the second one?";
+
+    agent.set_history({
+        {Role::System,    kSystem,                   std::nullopt, std::nullopt},
+        {Role::User,      "tell me about room 101",  std::nullopt, std::nullopt},
+        {Role::Assistant, "Room 101 faces the park", std::nullopt, std::nullopt},
+    });
+    mock->next_response.content = "ANSWER-ABOUT-ROOM-102";
+    const std::string first = agent.process(kSameQuestion);
+    REQUIRE(first == "ANSWER-ABOUT-ROOM-102");
+    REQUIRE(mock->chat_call_count == 1);
+
+    // Same model, same leading system prompt, same current message — and a completely
+    // different conversation behind it.
+    agent.set_history({
+        {Role::System,    kSystem,                    std::nullopt, std::nullopt},
+        {Role::User,      "tell me about breakfast",  std::nullopt, std::nullopt},
+        {Role::Assistant, "Breakfast is 07:00-10:30", std::nullopt, std::nullopt},
+    });
+    mock->next_response.content = "ANSWER-ABOUT-SECOND-SITTING";
+    const std::string second = agent.process(kSameQuestion);
+
+    // The provider call is the assertion that matters: on a cache hit it never happens,
+    // and the reply is silently the other conversation's.
+    REQUIRE(mock->chat_call_count == 2);
+    REQUIRE(second == "ANSWER-ABOUT-SECOND-SITTING");
+}
+
+TEST_CASE("Agent: the response cache still hits for a genuinely identical turn",
+          "[agent]") {
+    // The other half — the fix must not disable caching, only narrow it. Without this,
+    // keying on something over-specific (a timestamp, a counter) would look correct.
+    HomeGuard home;
+    home.write_default_config();
+
+    auto [setup, mock] = make_caching_agent();
+    auto& agent = setup.agent;
+
+    const std::vector<ChatMessage> window = {
+        {Role::System, "You are terse.",   std::nullopt, std::nullopt},
+        {Role::User,   "previous message", std::nullopt, std::nullopt},
+    };
+
+    agent.set_history(window);
+    mock->next_response.content = "CACHED-ANSWER";
+    REQUIRE(agent.process("the same question") == "CACHED-ANSWER");
+    REQUIRE(mock->chat_call_count == 1);
+
+    agent.set_history(window);
+    mock->next_response.content = "SHOULD-NOT-BE-USED";
+    REQUIRE(agent.process("the same question") == "CACHED-ANSWER");
+    REQUIRE(mock->chat_call_count == 1);  // served from cache, provider untouched
 }
