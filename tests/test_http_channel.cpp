@@ -5,8 +5,15 @@
 #include "event.hpp"
 #include "event_bus.hpp"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -300,4 +307,182 @@ TEST_CASE("HttpChannel: a vanished client abandons the turn", "[http_channel]") 
     // wreckage behind it.
     auto again = ch.handle_request(chat_request({{"session", "s1"}, {"message", "again"}}));
     REQUIRE(again.status == 200);
+}
+
+// ── Review fixes: idling, turn identity, typed fields, shutdown ──────
+
+TEST_CASE("HttpChannel: poll_updates waits while idle rather than spinning",
+          "[http_channel]") {
+    // main.cpp's poll loop has no sleep of its own, so a poll_updates() that returns
+    // immediately spins it — an idle deployment would burn a core and re-run session
+    // eviction continuously. Both halves matter: wait when idle, return at once when not.
+    HttpChannel ch(test_config());
+
+    auto before = std::chrono::steady_clock::now();
+    REQUIRE(ch.poll_updates().empty());
+    const auto idle_wait = std::chrono::steady_clock::now() - before;
+    REQUIRE(idle_wait >= std::chrono::milliseconds(50));
+
+    ch.handle_request(chat_request({{"session", "s1"}, {"message", "hi"}}));
+    before = std::chrono::steady_clock::now();
+    const auto queued = ch.poll_updates();
+    const auto busy_wait = std::chrono::steady_clock::now() - before;
+    REQUIRE(queued.size() == 1);
+    REQUIRE(busy_wait < std::chrono::milliseconds(50));
+}
+
+TEST_CASE("HttpChannel: a second turn for the same session is refused", "[http_channel]") {
+    EventBus bus;
+    HttpChannel ch(test_config());
+    ch.set_event_bus(&bus);
+
+    auto first = ch.handle_request(chat_request({{"session", "s1"}, {"message", "one"}}));
+    REQUIRE(first.status == 200);
+
+    // Overlapping turns would share one mailbox: the reply routes by session and so do the
+    // deltas, so both streams would race for the first reply.
+    REQUIRE(ch.handle_request(chat_request({{"session", "s1"}, {"message", "two"}})).status
+            == 409);
+    // A different session is unaffected.
+    REQUIRE(ch.handle_request(chat_request({{"session", "s2"}, {"message", "x"}})).status
+            == 200);
+    // And the refused request queued nothing, so no turn runs for it.
+    REQUIRE(ch.poll_updates().size() == 2);
+
+    // Once the first turn finishes, the session is usable again.
+    std::thread consumer([&] {
+        first.stream([](std::string_view) { return true; });
+    });
+    ch.send_message("s1", "done with one");
+    consumer.join();
+
+    REQUIRE(ch.handle_request(chat_request({{"session", "s1"}, {"message", "three"}})).status
+            == 200);
+}
+
+TEST_CASE("HttpChannel: an abandoned turn stops blocking its session", "[http_channel]") {
+    // WebhookServer returns without invoking the producer when the response headers fail
+    // to send, and nothing else clears that entry — so with one-turn-per-session enforced,
+    // the session would be wedged for the life of the process.
+    auto cfg = test_config();
+    cfg.turn_timeout_seconds = 1;
+    HttpChannel ch(cfg);
+
+    REQUIRE(ch.handle_request(chat_request({{"session", "s1"}, {"message", "one"}})).status
+            == 200);
+    REQUIRE(ch.handle_request(chat_request({{"session", "s1"}, {"message", "two"}})).status
+            == 409);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+
+    REQUIRE(ch.handle_request(chat_request({{"session", "s1"}, {"message", "later"}})).status
+            == 200);
+}
+
+TEST_CASE("HttpChannel: wrongly typed required fields are 400, not 500", "[http_channel]") {
+    // nlohmann's value<std::string>() throws on a type mismatch rather than returning the
+    // default, so these used to escape to the handler wrapper and surface as a 500 for
+    // what is plainly a malformed request.
+    HttpChannel ch(test_config());
+
+    REQUIRE(ch.handle_request(chat_request({{"session", 1}, {"message", "hi"}})).status == 400);
+    REQUIRE(ch.handle_request(chat_request({{"session", "s1"}, {"message", 42}})).status == 400);
+    REQUIRE(ch.handle_request(chat_request({{"session", json::array()}, {"message", "hi"}}))
+                .status == 400);
+    REQUIRE(ch.poll_updates().empty());
+}
+
+TEST_CASE("HttpChannel: the tool role is refused rather than half-supported",
+          "[http_channel]") {
+    HttpChannel ch(test_config());
+    auto resp = ch.handle_request(chat_request({
+        {"session", "s1"},
+        {"message", "hi"},
+        {"history", json::array({json{{"role", "tool"}, {"content", "result"}}})},
+    }));
+    REQUIRE(resp.status == 400);
+    REQUIRE(resp.body.find("tool_call_id") != std::string::npos);
+    REQUIRE(ch.poll_updates().empty());
+}
+
+// ── Shutdown, over a real connection ────────────────────────────────
+//
+// This one cannot be faked. WebhookServer::stop() joins its connection threads, and that
+// join is exactly what turns a parked stream into a stalled shutdown — so the test needs a
+// real server and a real client.
+
+namespace {
+
+// initialize() throws when the port is taken, so scan for a free one rather than risking a
+// collision with a parallel run or a TIME_WAIT leftover.
+std::unique_ptr<HttpChannel> start_on_free_port(HttpChannelConfig cfg, uint16_t& out_port) {
+    for (uint16_t p = 18800; p < 18830; ++p) {
+        cfg.listen = "127.0.0.1:" + std::to_string(p);
+        auto ch = std::make_unique<HttpChannel>(cfg);
+        try {
+            ch->initialize();
+            out_port = p;
+            return ch;
+        } catch (const std::exception&) {
+            continue;
+        }
+    }
+    throw std::runtime_error("no free port for the http channel test");
+}
+
+int connect_to(uint16_t port) {
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    REQUIRE(fd >= 0);
+    struct timeval tv{6, 0};
+    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = ::inet_addr("127.0.0.1");
+    REQUIRE(::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+    return fd;
+}
+
+std::string recv_until(int fd, const std::string& needle) {
+    std::string acc;
+    char buf[2048];
+    while (acc.find(needle) == std::string::npos) {
+        ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+        if (n <= 0) break;
+        acc.append(buf, static_cast<size_t>(n));
+    }
+    return acc;
+}
+
+} // namespace
+
+TEST_CASE("HttpChannel: shutdown does not wait for the turn timeout", "[http_channel]") {
+    auto cfg = test_config();
+    // Far longer than any acceptable shutdown, and longer than Kubernetes'
+    // terminationGracePeriodSeconds — so a stall here is a SIGKILL in production.
+    cfg.turn_timeout_seconds = 60;
+    cfg.max_connections = 4;
+
+    uint16_t port = 0;
+    auto ch = start_on_free_port(cfg, port);
+
+    int fd = connect_to(port);
+    const std::string body = R"({"session":"s1","message":"hi"})";
+    const std::string request =
+        "POST /chat HTTP/1.1\r\nHost: t\r\nContent-Length: " +
+        std::to_string(body.size()) + "\r\n\r\n" + body;
+    REQUIRE(::send(fd, request.data(), request.size(), 0) ==
+            static_cast<ssize_t>(request.size()));
+
+    // Headers are written before the producer runs, so this proves the request reached
+    // stream_turn() and is now parked waiting for a reply that will never come.
+    REQUIRE_FALSE(recv_until(fd, "\r\n\r\n").empty());
+
+    const auto before = std::chrono::steady_clock::now();
+    ch.reset();  // destructor: release pending turns, then stop() joins the threads
+    const auto elapsed = std::chrono::steady_clock::now() - before;
+
+    REQUIRE(elapsed < std::chrono::seconds(5));
+    ::close(fd);
 }
