@@ -301,7 +301,11 @@ void WebhookServer::handle_connection(int fd) const {
         size_t content_len = 0;
         auto it = req.headers.find("content-length");
         if (it != req.headers.end()) {
-            try { content_len = std::stoul(it->second); } catch (...) {}
+            // A malformed Content-Length is treated as "no body", which is the
+            // behaviour the empty catch here already had — spelled out because
+            // bugprone-empty-catch is right that a silent swallow hides the choice.
+            try { content_len = std::stoul(it->second); }
+            catch (...) { content_len = 0; }
         }
 
         if (content_len > max_body_) {
