@@ -181,6 +181,14 @@ void WebhookServer::accept_loop() {
         if (cfd >= 0) {
             struct timeval tv{10, 0};  // 10s recv timeout
             ::setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            // Send timeout matters for streamed responses: it bounds a single
+            // blocked write, so a client that stops reading cannot park the accept
+            // thread — and this thread is the whole server.
+            ::setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+            // No SO_NOSIGPIPE on the accepted fd: it looks necessary for streams but
+            // changes nothing. Removing it, and then the listener's too, still passes
+            // the peer-disconnect test — writing to a hung-up client here surfaces as
+            // ECONNRESET, not EPIPE, so SIGPIPE is not on this path.
             handle_connection(cfd);
             ::close(cfd);
         }
@@ -189,22 +197,53 @@ void WebhookServer::accept_loop() {
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
+static const char* reason_phrase(int status) {
+    if      (status == 400) return "Bad Request";
+    else if (status == 403) return "Forbidden";
+    else if (status == 404) return "Not Found";
+    else if (status == 405) return "Method Not Allowed";
+    else if (status == 413) return "Payload Too Large";
+    return "OK";
+}
+
+// ::send may accept fewer bytes than asked, so a single call cannot be trusted to
+// deliver a whole buffer — a short write mid-response corrupts it. Returns false
+// when the peer is gone or a send times out, which a streaming producer uses as
+// its stop signal rather than writing into a dead socket indefinitely.
+static bool send_all(int fd, std::string_view data) {
+    while (!data.empty()) {
+        ssize_t n = ::send(fd, data.data(), data.size(), MSG_NOSIGNAL);
+        if (n > 0) {
+            data.remove_prefix(static_cast<size_t>(n));
+            continue;
+        }
+        if (n < 0 && errno == EINTR) continue;  // signal, not an error
+        return false;
+    }
+    return true;
+}
+
 static void send_http_response(int fd, int status, const std::string& content_type,
                                const std::string& body) {
-    const char* reason = "OK";
-    if      (status == 400) reason = "Bad Request";
-    else if (status == 403) reason = "Forbidden";
-    else if (status == 404) reason = "Not Found";
-    else if (status == 405) reason = "Method Not Allowed";
-    else if (status == 413) reason = "Payload Too Large";
-
     std::string resp =
-        "HTTP/1.1 " + std::to_string(status) + " " + reason + "\r\n"
+        "HTTP/1.1 " + std::to_string(status) + " " + reason_phrase(status) + "\r\n"
         "Content-Type: " + content_type + "\r\n"
         "Content-Length: " + std::to_string(body.size()) + "\r\n"
         "Connection: close\r\n\r\n" + body;
 
-    ::send(fd, resp.c_str(), resp.size(), MSG_NOSIGNAL);
+    send_all(fd, resp);
+}
+
+// Headers for a close-delimited streamed body: deliberately no Content-Length,
+// since the length is not known until the producer is done.
+static bool send_stream_headers(int fd, int status, const std::string& content_type) {
+    std::string head =
+        "HTTP/1.1 " + std::to_string(status) + " " + reason_phrase(status) + "\r\n"
+        "Content-Type: " + content_type + "\r\n"
+        "Cache-Control: no-cache\r\n"
+        "Connection: close\r\n\r\n";
+
+    return send_all(fd, head);
 }
 
 void WebhookServer::handle_connection(int fd) const {
@@ -283,6 +322,11 @@ void WebhookServer::handle_connection(int fd) const {
     }
 
     WebhookResponse resp = handler_(req);
+    if (resp.stream) {
+        if (!send_stream_headers(fd, resp.status, resp.content_type)) return;
+        resp.stream([fd](std::string_view chunk) { return send_all(fd, chunk); });
+        return;  // accept_loop closes fd, which is what ends a close-delimited body
+    }
     send_http_response(fd, resp.status, resp.content_type, resp.body);
 }
 

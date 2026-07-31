@@ -3,6 +3,18 @@
 #include "channels/webhook_server.hpp"
 #include "mock_http_client.hpp"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
+
 using namespace ptrclaw;
 
 static WhatsAppConfig make_webhook_config() {
@@ -321,4 +333,201 @@ TEST_CASE("WhatsApp webhook: supports_polling false without webhook_listen", "[w
     cfg.webhook_listen = "";
     WhatsAppChannel ch(cfg, http);
     REQUIRE_FALSE(ch.supports_polling());
+}
+
+// ── WebhookServer over real sockets ───────────────────────────────────────────
+//
+// Every test above calls a handler function directly, so the socket layer itself
+// had no coverage at all. Streaming lives entirely in that layer — headers written
+// before the body exists, incremental writes, a peer that vanishes mid-body — and
+// none of it is observable from a handler-level test. These use a real loopback
+// connection and assert on the bytes on the wire.
+
+namespace {
+
+// parse_listen_addr rejects port 0, so an ephemeral port cannot be requested.
+// Scan a small range so a port left in TIME_WAIT by an earlier run, or a parallel
+// job, does not fail the suite.
+class TestServer {
+public:
+    TestServer(uint32_t max_body, const WebhookServer::Handler& handler) {
+        std::string error = "range exhausted";
+        for (uint16_t p = 18730; p < 18760; ++p) {
+            auto candidate = std::make_unique<WebhookServer>(
+                "127.0.0.1:" + std::to_string(p), max_body, handler);
+            if (candidate->start(error)) {
+                server_ = std::move(candidate);
+                port_ = p;
+                return;
+            }
+        }
+        throw std::runtime_error("no free port for the test server: " + error);
+    }
+
+    ~TestServer() { if (server_) server_->stop(); }
+
+    TestServer(const TestServer&) = delete;
+    TestServer& operator=(const TestServer&) = delete;
+
+    uint16_t port() const { return port_; }
+
+private:
+    std::unique_ptr<WebhookServer> server_;
+    uint16_t port_ = 0;
+};
+
+// Every client read is bounded, so a server that never writes fails the test on an
+// assertion instead of hanging the suite forever.
+int connect_to(uint16_t port) {
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    REQUIRE(fd >= 0);
+
+    struct timeval tv{6, 0};
+    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    sockaddr_in addr{};
+    addr.sin_family      = AF_INET;
+    addr.sin_port        = htons(port);
+    addr.sin_addr.s_addr = ::inet_addr("127.0.0.1");
+    REQUIRE(::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+    return fd;
+}
+
+void send_request(int fd, const std::string& raw) {
+    REQUIRE(::send(fd, raw.data(), raw.size(), 0) == static_cast<ssize_t>(raw.size()));
+}
+
+// Read until `needle` appears, or the receive timeout expires.
+std::string recv_until(int fd, const std::string& needle) {
+    std::string acc;
+    char buf[4096];
+    while (acc.find(needle) == std::string::npos) {
+        ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+        if (n <= 0) break;
+        acc.append(buf, static_cast<size_t>(n));
+    }
+    return acc;
+}
+
+std::string recv_until_close(int fd) {
+    std::string acc;
+    char buf[4096];
+    for (;;) {
+        ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+        if (n <= 0) break;
+        acc.append(buf, static_cast<size_t>(n));
+    }
+    return acc;
+}
+
+std::string to_lower(std::string s) {
+    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+} // namespace
+
+TEST_CASE("WebhookServer: a streamed chunk reaches the client before the handler returns",
+          "[whatsapp_webhook]") {
+    // The whole point of the feature, and the assertion is deliberately built so it
+    // cannot pass under a buffering implementation: the producer blocks on the
+    // client's acknowledgement of chunk one before writing chunk two. If the body
+    // were held until the producer returned, the client would never see chunk one,
+    // the wait would time out, and the test fails.
+    std::mutex m;
+    std::condition_variable cv;
+    bool client_has_first = false;
+
+    TestServer ts(1024, [&](const WebhookRequest&) {
+        WebhookResponse r;
+        r.content_type = "text/event-stream";
+        r.stream = [&](const BodyWriter& write) {
+            write("data: first\n\n");
+            std::unique_lock<std::mutex> lk(m);
+            cv.wait_for(lk, std::chrono::seconds(5), [&] { return client_has_first; });
+            write("data: second\n\n");
+        };
+        return r;
+    });
+
+    int fd = connect_to(ts.port());
+    send_request(fd, "POST /chat HTTP/1.1\r\nHost: t\r\nContent-Length: 0\r\n\r\n");
+
+    std::string head = recv_until(fd, "data: first");
+    REQUIRE(head.find("200 OK") != std::string::npos);
+    REQUIRE(head.find("text/event-stream") != std::string::npos);
+    // No Content-Length: the length is not knowable when the headers go out. A
+    // streamed response that carried one would be malformed, not merely wasteful.
+    REQUIRE(to_lower(head).find("content-length") == std::string::npos);
+
+    {
+        std::lock_guard<std::mutex> lk(m);
+        client_has_first = true;
+    }
+    cv.notify_all();
+
+    REQUIRE(recv_until(fd, "data: second").find("data: second") != std::string::npos);
+    ::close(fd);
+}
+
+TEST_CASE("WebhookServer: the body writer reports a peer that has gone away",
+          "[whatsapp_webhook]") {
+    // Without this signal a pod would keep generating tokens for a visitor who
+    // closed the tab. It also covers the SIGPIPE hazard: writing to a hung-up peer
+    // raises it, and if it were unhandled this test would kill the test process
+    // rather than fail — so a crash here is a real result, not flakiness.
+    std::atomic<bool> writer_said_gone{false};
+    std::atomic<bool> producer_finished{false};
+
+    TestServer ts(1024, [&](const WebhookRequest&) {
+        WebhookResponse r;
+        r.content_type = "text/event-stream";
+        r.stream = [&](const BodyWriter& write) {
+            // Big writes fill the socket buffer fast, so this ends promptly once the
+            // client is gone instead of spinning on writes that still fit.
+            const std::string filler(8192, 'x');
+            for (int i = 0; i < 2000; ++i) {
+                if (!write(filler)) {
+                    writer_said_gone = true;
+                    break;
+                }
+            }
+            producer_finished = true;
+        };
+        return r;
+    });
+
+    int fd = connect_to(ts.port());
+    send_request(fd, "POST /chat HTTP/1.1\r\nHost: t\r\nContent-Length: 0\r\n\r\n");
+    REQUIRE_FALSE(recv_until(fd, "xxxx").empty());  // stream is running
+    ::close(fd);                                     // vanish mid-body
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (!producer_finished && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    REQUIRE(producer_finished.load());
+    REQUIRE(writer_said_gone.load());
+}
+
+TEST_CASE("WebhookServer: a non-streaming response still carries Content-Length",
+          "[whatsapp_webhook]") {
+    // Regression guard for every existing caller: WhatsApp's handler returns a body,
+    // and adding the streaming branch must not change how that is framed. Also the
+    // first end-to-end test of the request-parse -> handler -> response path.
+    TestServer ts(1024, [](const WebhookRequest& req) {
+        WebhookResponse r;
+        r.content_type = "application/json";
+        r.body = req.path == "/webhook" ? R"({"status":"ok"})" : "wrong path";
+        return r;
+    });
+
+    int fd = connect_to(ts.port());
+    send_request(fd, "POST /webhook HTTP/1.1\r\nHost: t\r\nContent-Length: 0\r\n\r\n");
+
+    std::string all = recv_until_close(fd);
+    REQUIRE(all.find("Content-Length: 15") != std::string::npos);
+    REQUIRE(all.find(R"({"status":"ok"})") != std::string::npos);
+    ::close(fd);
 }

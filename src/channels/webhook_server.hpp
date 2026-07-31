@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <string_view>
 #include <functional>
 #include <map>
 #include <atomic>
@@ -20,16 +21,41 @@ struct WebhookRequest {
     std::string query_param(const std::string& key) const;
 };
 
+// Writes one piece of a streamed response body. Returns false once the peer is
+// gone, so a producer can stop early instead of generating output nobody reads.
+using BodyWriter = std::function<bool(std::string_view chunk)>;
+
 struct WebhookResponse {
     int         status       = 200;
     std::string content_type = "text/plain";
     std::string body;
+
+    // Set this to stream a body whose length is not known when the handler
+    // returns — a token stream, or any text/event-stream response. It is called
+    // once, after the headers are sent, and may keep writing for as long as it
+    // likes. When set, `body` is ignored.
+    //
+    // The response is delimited by connection close: no Content-Length and no
+    // chunked framing, which is what this server's unconditional
+    // "Connection: close" already implies for every response it sends.
+    //
+    // It runs on the accept thread, so the server accepts no further connection
+    // until it returns — see the class comment.
+    // The default initializer is load-bearing: existing callers brace-initialise
+    // this struct positionally with three fields, and without it every one of them
+    // warns under -Wmissing-field-initializers.
+    std::function<void(const BodyWriter&)> stream = nullptr;
 };
 
 // Minimal single-threaded TCP HTTP server for receiving webhook calls from a
 // local reverse proxy. Designed to sit behind nginx/Caddy; not exposed to the
 // internet directly. Handles one connection at a time (reverse proxy queues
 // concurrent requests). Runs its accept loop in a background thread.
+//
+// "One connection at a time" is worth re-reading before using
+// WebhookResponse::stream: a streamed response occupies the accept thread for its
+// whole lifetime, so a long-lived stream blocks every other request until it
+// finishes. Fine for one stream per process; not a general-purpose SSE server.
 class WebhookServer {
 public:
     using Handler = std::function<WebhookResponse(const WebhookRequest&)>;
