@@ -17,6 +17,8 @@ option('with_telegram', type: 'boolean', value: true,
        description: 'Build the Telegram channel')
 option('with_whatsapp', type: 'boolean', value: false,
        description: 'Build the WhatsApp channel (requires webhook server + reverse proxy)')
+option('with_http', type: 'boolean', value: false,
+       description: 'Build the HTTP+SSE chat channel (POST /chat, streamed reply)')
 
 # Tool features
 option('with_tools', type: 'boolean', value: true,

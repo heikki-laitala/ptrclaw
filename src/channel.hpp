@@ -8,6 +8,8 @@
 
 namespace ptrclaw {
 
+class EventBus;
+
 struct ChannelMessage {
     std::string id;
     std::string sender;
@@ -36,6 +38,13 @@ public:
     virtual std::string channel_name() const = 0;
     virtual bool health_check() = 0;
     virtual void send_message(const std::string& target, const std::string& message) = 0;
+
+    // Wired once, before initialize(), so a channel may subscribe there.
+    //
+    // Only needed to observe agent events directly — emitting tokens as they arrive by
+    // subscribing to StreamChunkEvent, for instance. The supports_streaming_display()
+    // path below covers progressive message editing and needs no bus.
+    virtual void set_event_bus(EventBus* /*bus*/) {}
 
     // Channel lifecycle: called once before the poll loop starts
     virtual void initialize() {}

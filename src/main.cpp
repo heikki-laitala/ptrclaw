@@ -231,6 +231,10 @@ int main(int argc, char* argv[]) try {
             return 1;
         }
 
+        // Before initialize(), so a channel that observes agent events can subscribe
+        // there rather than needing a later hook.
+        channel->set_event_bus(&bus);
+
         channel->initialize();
 
         std::signal(SIGINT, signal_handler);

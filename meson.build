@@ -87,6 +87,7 @@ opt_compatible = get_option('with_compatible')
 opt_ollama     = get_option('with_ollama')
 opt_telegram   = get_option('with_telegram')
 opt_whatsapp   = get_option('with_whatsapp')
+opt_http       = get_option('with_http')
 opt_tools      = get_option('with_tools')
 
 # Memory features (core memory is always included — Agent requires it)
@@ -172,10 +173,15 @@ if opt_telegram
   optional_sources += files('src/channels/telegram.cpp')
 endif
 if opt_whatsapp
-  optional_sources += files(
-    'src/channels/whatsapp.cpp',
-    'src/channels/webhook_server.cpp',
-  )
+  optional_sources += files('src/channels/whatsapp.cpp')
+endif
+if opt_http
+  optional_sources += files('src/channels/http.cpp')
+endif
+# Shared by both channels above, so it is added once here rather than by each — listing it
+# under both would define every symbol in it twice and fail the link.
+if opt_whatsapp or opt_http
+  optional_sources += files('src/channels/webhook_server.cpp')
 endif
 if opt_tools
   optional_sources += files(
@@ -287,6 +293,9 @@ if opt_whatsapp
     'tests/test_whatsapp_webhook.cpp',
   )
 endif
+if opt_http
+  optional_test_sources += files('tests/test_http_channel.cpp')
+endif
 # test_providers.cpp tests all five providers in a single file
 if opt_anthropic and opt_openai and opt_ollama and opt_openrouter and opt_compatible
   optional_test_sources += files('tests/test_providers.cpp')
@@ -343,6 +352,9 @@ if opt_telegram
 endif
 if opt_whatsapp
   channels += 'whatsapp'
+endif
+if opt_http
+  channels += 'http'
 endif
 if opt_embed
   channels += 'embed'
