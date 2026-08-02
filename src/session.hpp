@@ -12,6 +12,7 @@
 #include <mutex>
 #include <optional>
 #include <functional>
+#include <vector>
 
 namespace ptrclaw {
 
@@ -64,11 +65,43 @@ private:
     EventBus* event_bus_ = nullptr;
     Embedder* embedder_ = nullptr;
 
-    // Create a new session with provider, tools, event bus, embedder
+    // Memory backends, owned here rather than by each Agent.
+    //
+    // Shared isolation: one instance for every session. N instances over one store
+    // is not merely wasteful — JsonMemory holds the whole document and rewrites it
+    // wholesale, so concurrent turns would lose each other's writes. One instance
+    // is safe under a worker pool because every backend locks internally
+    // (BaseMemory::mutex_).
+    //
+    // Session isolation: one instance per session, each over its own file, kept
+    // here so eviction can drop it with the session.
+    std::shared_ptr<Memory> shared_memory_;
+    std::unordered_map<std::string, std::shared_ptr<Memory>> session_memory_;
+
+    // The response cache is a file-backed store with the same problem, so it gets
+    // the same treatment: shared instance, or one per session under isolation.
+    // Null unless memory.response_cache is on.
+    std::shared_ptr<ResponseCache> shared_cache_;
+    std::unordered_map<std::string, std::shared_ptr<ResponseCache>> session_cache_;
+
+    // Stores for a session, creating and configuring them on first use.
+    // Caller must hold mutex_.
+    std::shared_ptr<Memory> memory_for(const std::string& session_id);
+    std::shared_ptr<ResponseCache> cache_for(const std::string& session_id);
+
+    // Create a new session with provider, tools, event bus, embedder.
+    // Caller must hold mutex_, and must announce the session afterwards — see
+    // get_session(), which publishes once the lock is released.
     Session create_session(const std::string& session_id);
 
-    // Dispatch a slash command or regular message
+    // Bus entry point: runs dispatch_message and turns a thrown exception into a
+    // reply, so a failed turn ends rather than leaving the caller waiting out the
+    // channel's turn timeout.
     void handle_message(const MessageReceivedEvent& ev);
+
+    // Dispatch a slash command or regular message. Runs on a TurnPool worker, so
+    // everything it touches must belong to this session alone.
+    void dispatch_message(const MessageReceivedEvent& ev);
 
     // Dispatch a slash command. Returns true if the message was one and was handled.
     // Only called when commands are permitted for this session — see

@@ -9,10 +9,9 @@
 
 static ptrclaw::MemoryRegistrar reg_json("json",
     [](const ptrclaw::Config& config) {
-        std::string path = config.memory.path;
-        if (path.empty()) {
-            path = ptrclaw::expand_home("~/.ptrclaw/memory.json");
-        }
+        std::string path = config.memory.path.empty()
+            ? ptrclaw::default_memory_path("json")
+            : ptrclaw::expand_home(config.memory.path);
         return std::make_unique<ptrclaw::JsonMemory>(path);
     });
 

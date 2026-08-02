@@ -31,6 +31,18 @@ struct ChannelMessage {
 };
 
 // Abstract base class for messaging channels
+//
+// ⚠ Threading. The two halves have different contracts:
+//
+//   Poll side — health_check(), initialize(), poll_updates() — is called only from
+//   the poll loop thread, so it may keep unsynchronised state (a last-update
+//   cursor, say).
+//
+//   Send side — send_message(), edit_message(), send_typing_indicator(),
+//   send_streaming_placeholder() — is called from the worker threads that run
+//   turns, one per session and several at a time, so it must be thread-safe. In
+//   practice the built-in channels already are: Telegram and WhatsApp send over a
+//   fresh HTTP handle per call, and HttpChannel takes its own lock.
 class Channel {
 public:
     virtual ~Channel() = default;

@@ -380,9 +380,10 @@ void HttpChannel::fail_turn(const std::string& session, const std::string& error
 }
 
 void HttpChannel::send_message(const std::string& target, const std::string& message) {
-    // The reply arrives here from StreamRelay's MessageReadyEvent handler, on the poll
-    // thread. It is the authoritative end of a turn — StreamEndEvent is not, because a
-    // non-streaming provider produces no stream events at all and only this fires.
+    // The reply arrives here from StreamRelay's MessageReadyEvent handler, on the thread
+    // that ran the turn. It is the authoritative end of a turn — StreamEndEvent is not,
+    // because a non-streaming provider produces no stream events at all and only this
+    // fires.
     {
         std::lock_guard<std::mutex> lk(turn_mutex_);
         auto it = turns_.find(target);

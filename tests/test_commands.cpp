@@ -141,7 +141,8 @@ TEST_CASE("cmd_model: refuses a model the configured credential cannot serve",
     Config cfg;
     cfg.providers["openai"].api_key = "sk-test";
 
-    auto result = cmd_model("gpt-5.3-codex-spark", agent, cfg, test_http);
+    auto result = cmd_model("gpt-5.3-codex-spark", agent, cfg, test_http,
+                            /*persist=*/true);
 
     REQUIRE(result.find("subscription") != std::string::npos);
     // Neither the live agent nor the config may keep the unusable model: it would be
@@ -159,11 +160,31 @@ TEST_CASE("cmd_model: switches to a model the credential can serve", "[commands]
     Config cfg;
     cfg.providers["openai"].api_key = "sk-test";
 
-    auto result = cmd_model("gpt-5.6", agent, cfg, test_http);
+    auto result = cmd_model("gpt-5.6", agent, cfg, test_http, /*persist=*/true);
 
     REQUIRE(result.find("gpt-5.6") != std::string::npos);
     REQUIRE(agent.model() == "gpt-5.6");
     REQUIRE(cfg.model == "gpt-5.6");
+}
+
+// A channel session changes its own model without writing the selection every other
+// session starts from.
+TEST_CASE("cmd_model: does not persist the selection when told not to", "[commands][oauth]") {
+    REQUIRE_PROVIDER("openai");
+    HomeGuard home;
+    home.write_default_config();
+
+    auto agent = make_openai_agent("gpt-4o");
+    Config cfg;
+    cfg.model = "gpt-4o";
+    cfg.providers["openai"].api_key = "sk-test";
+
+    auto result = cmd_model("gpt-5.6", agent, cfg, test_http, /*persist=*/false);
+
+    REQUIRE(result.find("gpt-5.6") != std::string::npos);
+    REQUIRE(agent.model() == "gpt-5.6");
+    REQUIRE(cfg.model == "gpt-4o");
+    REQUIRE(home.read_config()["model"] != "gpt-5.6");
 }
 
 // A non-OpenAI provider has one credential, so there is nothing to resolve and no reason
@@ -175,7 +196,8 @@ TEST_CASE("cmd_model: other providers just take the model", "[commands]") {
     auto agent = make_cmd_agent();
     Config cfg;
 
-    auto result = cmd_model("some-local-model", agent, cfg, test_http);
+    auto result = cmd_model("some-local-model", agent, cfg, test_http,
+                            /*persist=*/true);
 
     REQUIRE(result.find("some-local-model") != std::string::npos);
     REQUIRE(agent.model() == "some-local-model");

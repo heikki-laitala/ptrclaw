@@ -66,12 +66,15 @@ std::string cmd_hatch(Agent& agent) {
 }
 
 std::string cmd_model(const std::string& new_model, Agent& agent,
-                       Config& config, HttpClient& http) {
+                       Config& config, HttpClient& http, bool persist) {
     // On openai every model change goes through switch_provider, not only the ones that
     // flip the credential: it is what knows which transport can serve the model and
     // refuses the ones neither credential can reach. Comparing modes first would skip
     // that check for the majority of changes, and persist a model the next start cannot
     // build a provider for. Rebuilding an object is cheap beside either failure.
+    //
+    // Nothing here reads config.providers any more, so nothing here needs
+    // provider_credentials_mutex(): switch_provider() takes it itself.
     //
     // Guarded on the provider, not the interactive flow: tokens can be supplied in config
     // without the flow, and the credential still has to follow the model.
@@ -81,19 +84,23 @@ std::string cmd_model(const std::string& new_model, Agent& agent,
         if (!sr.error.empty()) return sr.error;
         agent.set_provider(std::move(sr.provider));
         if (!sr.model.empty()) agent.set_model(sr.model);
-        config.model = agent.model();
-        config.persist_selection();
+        if (persist) {
+            config.model = agent.model();
+            config.persist_selection();
+        }
         return "Model set to: " + agent.model();
     }
 #endif
     agent.set_model(new_model);
-    config.model = new_model;
-    config.persist_selection();
+    if (persist) {
+        config.model = new_model;
+        config.persist_selection();
+    }
     return "Model set to: " + new_model;
 }
 
 std::string cmd_provider(const std::string& args_str, Agent& agent,
-                          Config& config, HttpClient& http) {
+                          Config& config, HttpClient& http, bool persist) {
     auto args = trim(args_str);
     auto space = args.find(' ');
     std::string prov_name = (space == std::string::npos)
@@ -106,9 +113,11 @@ std::string cmd_provider(const std::string& args_str, Agent& agent,
 
     agent.set_provider(std::move(sr.provider));
     if (!sr.model.empty()) agent.set_model(sr.model);
-    config.provider = prov_name;
-    config.model = agent.model();
-    config.persist_selection();
+    if (persist) {
+        config.provider = prov_name;
+        config.model = agent.model();
+        config.persist_selection();
+    }
     return "Switched to " + prov_name + " | Model: " + agent.model();
 }
 

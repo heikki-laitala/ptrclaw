@@ -30,6 +30,13 @@ void setup_oauth_refresh(Provider* provider, Config& config) {
     if (!oai) return;
     oai->set_on_token_refresh(
         [&config](const std::string& at, const std::string& rt, uint64_t ea) {
+            // Every session's provider installs this callback over the same
+            // Config, and with workers > 1 it fires on whichever worker hit the
+            // expiry. Two turns expiring at once would race on these strings and
+            // on the config file's shared temp path — see
+            // provider_credentials_mutex(). Held across the write so memory and
+            // file cannot disagree.
+            std::lock_guard<std::mutex> lock(provider_credentials_mutex());
             auto& entry = config.providers["openai"];
             entry.oauth_access_token = at;
             entry.oauth_refresh_token = rt;

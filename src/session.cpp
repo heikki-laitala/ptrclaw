@@ -7,6 +7,7 @@
 #include "tool_manager.hpp"
 #include "plugin.hpp"
 #include "util.hpp"
+#include <iostream>
 #ifdef PTRCLAW_HAS_OPENAI_OAUTH
 #include "providers/oauth_openai.hpp"
 #endif
@@ -17,6 +18,60 @@ SessionManager::SessionManager(Config& config, HttpClient& http)
     : config_(config), http_(http)
 {}
 
+std::shared_ptr<Memory> SessionManager::memory_for(const std::string& session_id) {
+    if (config_.memory.isolation != "session") {
+        if (!shared_memory_) {
+            shared_memory_ = create_memory(config_);
+            if (shared_memory_) {
+                shared_memory_->apply_config(config_.memory);
+                if (embedder_) {
+                    shared_memory_->set_embedder(
+                        embedder_, config_.memory.embeddings.text_weight,
+                        config_.memory.embeddings.vector_weight);
+                }
+            }
+        }
+        return shared_memory_;
+    }
+
+    auto it = session_memory_.find(session_id);
+    if (it != session_memory_.end()) return it->second;
+
+    std::shared_ptr<Memory> mem = create_memory(config_, session_id);
+    if (mem) {
+        mem->apply_config(config_.memory);
+        if (embedder_) {
+            mem->set_embedder(embedder_, config_.memory.embeddings.text_weight,
+                              config_.memory.embeddings.vector_weight);
+        }
+    }
+    session_memory_[session_id] = mem;
+    return mem;
+}
+
+std::shared_ptr<ResponseCache> SessionManager::cache_for(
+    const std::string& session_id) {
+    if (!config_.memory.response_cache) return nullptr;
+
+    std::string base = expand_home("~/.ptrclaw/response_cache.json");
+    auto make = [&](const std::string& path) {
+        return std::make_shared<ResponseCache>(path, config_.memory.cache_ttl,
+                                               config_.memory.cache_max_entries);
+    };
+
+    if (config_.memory.isolation != "session" || session_id.empty()) {
+        if (!shared_cache_) shared_cache_ = make(base);
+        return shared_cache_;
+    }
+
+    auto it = session_cache_.find(session_id);
+    if (it != session_cache_.end()) return it->second;
+
+    auto cache = make(session_store_path(base, session_id));
+    session_cache_[session_id] = cache;
+    return cache;
+}
+
 Session SessionManager::create_session(const std::string& session_id) {
     auto sr = switch_provider(
         config_.provider, config_.model, config_.model, config_, http_);
@@ -26,7 +81,9 @@ Session SessionManager::create_session(const std::string& session_id) {
 
     Session session;
     session.id = session_id;
-    session.agent = std::make_unique<Agent>(std::move(sr.provider), config_);
+    session.agent = std::make_unique<Agent>(std::move(sr.provider), config_,
+                                            memory_for(session_id),
+                                            cache_for(session_id));
     session.last_active = epoch_seconds();
 
     if (!binary_path_.empty()) {
@@ -34,18 +91,20 @@ Session SessionManager::create_session(const std::string& session_id) {
     }
 
     if (event_bus_) {
-        session.agent->set_event_bus(event_bus_);
+        // Identity before subscription, and the order matters once turns run on
+        // several threads. Agent's event handlers fall back to accepting anything
+        // when session_id_ is empty — the CLI and embed cases never set one — so an
+        // Agent subscribed first would, for the width of these two calls, take a
+        // concurrently-created session's ToolsAvailableEvent, and read session_id_
+        // while this thread wrote it. Subscribing after the write also gives the
+        // happens-before edge, through the bus mutex.
         session.agent->set_session_id(session_id);
+        session.agent->set_event_bus(event_bus_);
 
         auto tools = create_builtin_tools();
         session.tool_manager = std::make_unique<ToolManager>(
             std::move(tools), config_, *event_bus_, session_id);
         session.tool_manager->wire_memory(session.agent->memory());
-        session.tool_manager->publish_tool_specs(session_id);
-
-        SessionCreatedEvent ev;
-        ev.session_id = session_id;
-        event_bus_->publish(ev);
     }
 
     if (embedder_) {
@@ -56,37 +115,74 @@ Session SessionManager::create_session(const std::string& session_id) {
 }
 
 Agent& SessionManager::get_session(const std::string& session_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    Agent* agent = nullptr;
+    ToolManager* fresh_tools = nullptr;
 
-    auto it = sessions_.find(session_id);
-    if (it != sessions_.end()) {
-        it->second.last_active = epoch_seconds();
-        return *(it->second.agent);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = sessions_.find(session_id);
+        if (it != sessions_.end()) {
+            it->second.last_active = epoch_seconds();
+            return *(it->second.agent);
+        }
+
+        auto [inserted, _] = sessions_.emplace(session_id, create_session(session_id));
+        agent = inserted->second.agent.get();
+        fresh_tools = inserted->second.tool_manager.get();
     }
 
-    auto [inserted, _] = sessions_.emplace(session_id, create_session(session_id));
-    return *(inserted->second.agent);
+    // Announce the new session with the lock released. Turns run on several
+    // threads now, so a handler that called back into SessionManager — as the
+    // tool-spec handler does, indirectly — would deadlock on a non-recursive
+    // mutex. The reference stays valid: unordered_map does not move its nodes,
+    // and eviction only runs while every worker is idle.
+    // Same order as when these ran inside create_session: specs first, so a
+    // SessionCreated subscriber sees a session whose tools are already announced.
+    if (fresh_tools) {
+        fresh_tools->publish_tool_specs(session_id);
+    }
+    if (event_bus_) {
+        SessionCreatedEvent ev;
+        ev.session_id = session_id;
+        event_bus_->publish(ev);
+    }
+
+    return *agent;
 }
 
 void SessionManager::remove_session(const std::string& session_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     sessions_.erase(session_id);
+    session_memory_.erase(session_id);
+    session_cache_.erase(session_id);
 }
 
 void SessionManager::evict_idle(uint64_t max_idle_seconds) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    uint64_t now = epoch_seconds();
+    std::vector<std::string> evicted;
 
-    for (auto it = sessions_.begin(); it != sessions_.end(); ) {
-        if ((now - it->second.last_active) > max_idle_seconds) {
-            if (event_bus_) {
-                SessionEvictedEvent ev;
-                ev.session_id = it->first;
-                event_bus_->publish(ev);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        uint64_t now = epoch_seconds();
+
+        for (auto it = sessions_.begin(); it != sessions_.end(); ) {
+            if ((now - it->second.last_active) > max_idle_seconds) {
+                evicted.push_back(it->first);
+                session_memory_.erase(it->first);
+                session_cache_.erase(it->first);
+                it = sessions_.erase(it);
+            } else {
+                ++it;
             }
-            it = sessions_.erase(it);
-        } else {
-            ++it;
+        }
+    }
+
+    // Outside the lock, for the reason given in get_session().
+    if (event_bus_) {
+        for (const auto& id : evicted) {
+            SessionEvictedEvent ev;
+            ev.session_id = id;
+            event_bus_->publish(ev);
         }
     }
 }
@@ -126,6 +222,33 @@ void SessionManager::clear_pending_oauth(const std::string& session_id) {
 #endif
 
 void SessionManager::handle_message(const MessageReceivedEvent& ev) {
+    std::string failure;
+    try {
+        dispatch_message(ev);
+        return;
+    } catch (const std::exception& e) {
+        failure = e.what();
+    } catch (...) {
+        failure = "unknown error";
+    }
+
+    // A turn that throws must still end the turn. get_session() throws when the
+    // provider cannot be built, and Agent::process can throw too; inline on the
+    // poll loop that reached main()'s handler and exited, dropping the caller's
+    // connection with it. On a worker it is caught, so without this the caller
+    // waits out turn_timeout_seconds — two minutes of nothing, by default.
+    std::cerr << "[session] turn failed for " << ev.session_id << ": "
+              << failure << "\n";
+    if (!event_bus_) return;
+
+    MessageReadyEvent reply;
+    reply.session_id = ev.session_id;
+    reply.reply_target = ev.message.reply_target.value_or("");
+    reply.content = "Sorry — that turn failed: " + failure;
+    event_bus_->publish(reply);
+}
+
+void SessionManager::dispatch_message(const MessageReceivedEvent& ev) {
     auto& agent = get_session(ev.session_id);
     if (!ev.message.channel.empty()) {
         agent.set_channel(ev.message.channel);
@@ -235,7 +358,7 @@ bool SessionManager::handle_command(
     // Handle /model command
     if (ev.message.content.rfind("/model ", 0) == 0) {
         send_reply(cmd_model(trim(ev.message.content.substr(7)),
-                             agent, config_, http_));
+                             agent, config_, http_, ev.from_cli));
         return true;
     }
 
@@ -278,7 +401,7 @@ bool SessionManager::handle_command(
     // Handle /provider command
     if (ev.message.content.rfind("/provider ", 0) == 0) {
         send_reply(cmd_provider(ev.message.content.substr(10),
-                                agent, config_, http_));
+                                agent, config_, http_, ev.from_cli));
         return true;
     }
 
@@ -288,7 +411,25 @@ bool SessionManager::handle_command(
         || get_pending_oauth(ev.session_id).has_value()
 #endif
     ) {
-        if (handle_auth_command(ev, agent, send_reply)) return true;
+        // /auth writes a credential into the shared Config and persists it to
+        // ~/.ptrclaw/config.json — process-wide, for every session. That is a local
+        // operator's decision, not something a remote caller gets to make on
+        // everyone else's behalf, so allow_channel_commands does not extend to it:
+        // opting a channel into commands is not opting it into credential writes.
+        //
+        // from_cli, not session_id: the id is a routing key the caller picks, so
+        // testing it against "cli" would hand /auth to anyone who asked for that
+        // session name — the bypass fixed in f6d68fc, one command over.
+        if (!ev.from_cli) {
+            if (ev.message.content.rfind("/auth", 0) == 0) {
+                send_reply("/auth is only available on the local CLI — it sets "
+                           "credentials for the whole process. Configure them in "
+                           "~/.ptrclaw/config.json or via environment variables.");
+                return true;
+            }
+        } else if (handle_auth_command(ev, agent, send_reply)) {
+            return true;
+        }
     }
 
     return false;

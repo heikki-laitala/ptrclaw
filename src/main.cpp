@@ -10,11 +10,13 @@
 #include "tool_manager.hpp"
 #include "session.hpp"
 #include "stream_relay.hpp"
+#include "turn_pool.hpp"
 #include "onboard.hpp"
 #include "util.hpp"
 #ifdef PTRCLAW_HAS_EMBEDDINGS
 #include "embedder.hpp"
 #endif
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <cstring>
@@ -22,6 +24,13 @@
 #include <csignal>
 
 namespace {
+
+// Upper bound on how often the channel poll loop looks for idle sessions to
+// evict; the actual interval also tracks agent.session_max_idle_seconds. The
+// factor is how many intervals it will defer for a busy turn pool before
+// blocking on it. How long a session may sit unused is config, not a constant.
+constexpr uint64_t kEvictionIntervalSeconds = 60;
+constexpr uint64_t kEvictionDeadlineFactor = 10;
 
 struct HttpGuard {
     HttpGuard() { ptrclaw::http_init(); }
@@ -252,8 +261,24 @@ int main(int argc, char* argv[]) try {
         // typing + stream state
         sessions.subscribe_events();
 
-        uint32_t poll_count = 0;
-        std::cerr << "[" << channel_name << "] Bot started. Polling for messages...\n";
+        ptrclaw::TurnPool pool(bus, config.workers);
+
+        std::cerr << "[" << channel_name << "] Bot started. Polling for messages";
+        if (pool.workers() > 0) {
+            std::cerr << " (" << pool.workers() << " turn workers)";
+        }
+        std::cerr << "...\n";
+
+        // Check at least as often as the idle window itself. A deployment that sets
+        // agent.session_max_idle_seconds short does so to watch memory come back;
+        // a fixed minute would round that up and hide it.
+        const uint64_t evict_interval = std::min<uint64_t>(
+            kEvictionIntervalSeconds,
+            std::max<uint64_t>(1, config.agent.session_max_idle_seconds));
+        // How long we will keep deferring eviction for a busy pool before waiting.
+        const uint64_t evict_deadline = evict_interval * kEvictionDeadlineFactor;
+
+        uint64_t last_eviction = ptrclaw::epoch_seconds();
 
         while (!g_shutdown.load()) {
             auto messages = channel->poll_updates();
@@ -261,19 +286,42 @@ int main(int argc, char* argv[]) try {
                 ptrclaw::MessageReceivedEvent ev;
                 ev.session_id = msg.sender;
                 ev.message = std::move(msg);
-                bus.publish(ev);
+                pool.submit(std::move(ev));
             }
 
-            // Periodic session eviction. The window is configurable because one hour is a
-            // long time to hold a conversation's memory in a deployment that runs a
-            // process per agent, and because a hard-coded hour makes reclamation
-            // impossible to observe in any test shorter than one.
-            if (++poll_count % 100 == 0) {
+            // Periodic session eviction, and it has to be quiescent.
+            //
+            // EventBus::publish copies the handler list under its lock and then
+            // calls the handlers unlocked. A copied handler captures another
+            // session's Agent or ToolManager, so freeing that session while a
+            // worker is mid-dispatch is a use-after-free. After drain() every
+            // handler on every thread has finished. Safe because this thread is the
+            // only one that submits, so no shard can refill behind us.
+            //
+            // Normally we only evict when the pool is already idle, so drain()
+            // returns at once. Blocking here would stop the channel being read for
+            // as long as the slowest turn in flight — a latency spike for everyone,
+            // once a minute. Under sustained load that could defer eviction
+            // forever, hence the deadline: past it we do wait.
+            //
+            // Wall clock rather than a poll count: polls are fast under load, and a
+            // count would barrier constantly. A clock cannot starve either — and it
+            // is what makes the check interval independent of poll rate, so a short
+            // agent.session_max_idle_seconds is actually honoured on that timescale.
+            uint64_t now = ptrclaw::epoch_seconds();
+            uint64_t since = now - last_eviction;
+            if (since >= evict_interval &&
+                (pool.idle() || since >= evict_deadline)) {
+                pool.drain();
                 sessions.evict_idle(config.agent.session_max_idle_seconds);
+                last_eviction = now;
             }
         }
 
         std::cerr << "[" << channel_name << "] Shutting down.\n";
+        // Before the channel and SessionManager go out of scope: a worker mid-turn
+        // holds references to both.
+        pool.stop();
         return 0;
     }
 

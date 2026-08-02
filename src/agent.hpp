@@ -18,8 +18,23 @@ struct SkillRequestEvent; // forward declaration
 
 class Agent {
 public:
+    // `memory` and `cache` let the caller supply the two file-backed stores
+    // instead of the Agent building them from config. SessionManager uses this to
+    // hand every session the same instance in shared mode and a per-session
+    // instance under memory.isolation = "session".
+    //
+    // Sharing is required, not an optimisation. Both stores rewrite their file
+    // whole — and through atomic_write_file, which derives its temp path from the
+    // target — so two instances over one path lose writes and can interleave into
+    // the same temp file. One instance is safe: both lock internally.
+    //
+    // A supplied store arrives already configured; the Agent does not re-apply
+    // config or embedder to it, which would write state other sessions are
+    // reading.
     Agent(std::unique_ptr<Provider> provider,
-          const Config& config);
+          const Config& config,
+          std::shared_ptr<Memory> memory = nullptr,
+          std::shared_ptr<ResponseCache> cache = nullptr);
     ~Agent();
 
     // Process a user message and return the assistant's final text reply
@@ -53,7 +68,7 @@ public:
 
     // Optional event bus integration (nullptr = disabled)
     void set_event_bus(EventBus* bus);
-    void set_session_id(const std::string& id) { session_id_ = id; }
+    void set_session_id(const std::string& id);
     void set_channel(const std::string& ch) { channel_ = ch; }
     void set_binary_path(const std::string& path) { binary_path_ = path; }
 
@@ -62,7 +77,8 @@ public:
     Memory* memory() const { return memory_.get(); }
 
     // Response cache
-    void set_response_cache(std::unique_ptr<ResponseCache> cache);
+    void set_response_cache(std::shared_ptr<ResponseCache> cache);
+    ResponseCache* response_cache() const { return response_cache_.get(); }
 
     // Embedder for vector search (non-owning, caller retains ownership)
     void set_embedder(Embedder* embedder);
@@ -81,6 +97,10 @@ public:
 
 private:
     bool has_active_memory() const;
+    // (Re)build the response cache. An empty session_id, or shared isolation,
+    // points it at the process-wide cache file. No-op when the caller supplied
+    // one — it is theirs to scope.
+    void build_response_cache(const std::string& session_id);
     void compact_history();
     void inject_system_prompt();
     void invalidate_system_prompt();
@@ -110,8 +130,13 @@ private:
     std::string session_id_;
     std::string channel_;
     std::string binary_path_;
-    std::unique_ptr<Memory> memory_;
-    std::unique_ptr<ResponseCache> response_cache_;
+    // shared_ptr because in shared-isolation mode every session points at one
+    // instance. See the constructor comment.
+    std::shared_ptr<Memory> memory_;
+    std::shared_ptr<ResponseCache> response_cache_;
+    // True when the store came from the caller, who owns its configuration.
+    bool external_memory_ = false;
+    bool external_cache_ = false;
     Embedder* embedder_ = nullptr;
     uint32_t turns_since_synthesis_ = 0;
     bool hatching_ = false;

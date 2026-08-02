@@ -33,25 +33,53 @@ bool Agent::has_active_memory() const {
 }
 
 Agent::Agent(std::unique_ptr<Provider> provider,
-             const Config& config)
+             const Config& config,
+             std::shared_ptr<Memory> memory,
+             std::shared_ptr<ResponseCache> cache)
     : provider_(std::move(provider))
     , config_(config)
     , model_(config.model)
 {
-    // Create memory backend from config
-    memory_ = create_memory(config_);
-    if (memory_) {
-        memory_->apply_config(config_.memory);
+    if (memory) {
+        memory_ = std::move(memory);
+        external_memory_ = true;
+    } else {
+        memory_ = create_memory(config_);
+        if (memory_) {
+            memory_->apply_config(config_.memory);
+        }
     }
 
     // Load skills from default directory
     load_skills();
 
-    // Create response cache if enabled
-    if (memory_ && config_.memory.response_cache) {
-        std::string cache_path = expand_home("~/.ptrclaw/response_cache.json");
-        response_cache_ = std::make_unique<ResponseCache>(
-            cache_path, config_.memory.cache_ttl, config_.memory.cache_max_entries);
+    if (cache) {
+        response_cache_ = std::move(cache);
+        external_cache_ = true;
+    } else if (config_.memory.isolation != "session") {
+        // Under session isolation it is built in set_session_id() instead, once
+        // the session is known — the cache is a file like the memory store, and a
+        // shared one would hand session A's cached completion to session B.
+        build_response_cache("");
+    }
+}
+
+void Agent::build_response_cache(const std::string& session_id) {
+    if (external_cache_) return;
+    if (!memory_ || !config_.memory.response_cache) return;
+
+    std::string path = expand_home("~/.ptrclaw/response_cache.json");
+    if (!session_id.empty() && config_.memory.isolation == "session") {
+        path = session_store_path(path, session_id);
+    }
+    response_cache_ = std::make_shared<ResponseCache>(
+        path, config_.memory.cache_ttl, config_.memory.cache_max_entries);
+}
+
+void Agent::set_session_id(const std::string& id) {
+    session_id_ = id;
+    if (config_.memory.isolation == "session") {
+        build_response_cache(id);
     }
 }
 
@@ -470,6 +498,7 @@ std::string Agent::provider_name() const {
 
 void Agent::set_memory(std::unique_ptr<Memory> memory) {
     memory_ = std::move(memory);
+    external_memory_ = false;
     if (memory_) {
         memory_->apply_config(config_.memory);
     }
@@ -543,13 +572,16 @@ void Agent::on_skill_request(const SkillRequestEvent& req) {
     event_bus_->publish(resp);
 }
 
-void Agent::set_response_cache(std::unique_ptr<ResponseCache> cache) {
+void Agent::set_response_cache(std::shared_ptr<ResponseCache> cache) {
     response_cache_ = std::move(cache);
+    external_cache_ = false;
 }
 
 void Agent::set_embedder(Embedder* embedder) {
     embedder_ = embedder;
-    if (memory_ && embedder_) {
+    // A caller-supplied backend is configured by its owner. Pushing the embedder
+    // in here would write BaseMemory state that another session may be reading.
+    if (memory_ && embedder_ && !external_memory_) {
         memory_->set_embedder(embedder_,
                               config_.memory.embeddings.text_weight,
                               config_.memory.embeddings.vector_weight);
