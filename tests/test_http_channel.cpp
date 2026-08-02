@@ -8,6 +8,10 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+// struct timeval, for the SO_RCVTIMEO below. glibc's <sys/socket.h> pulls this in
+// transitively, so the omission is invisible on the Ubuntu runners CI uses; musl does not,
+// and the file fails to compile there with "variable has incomplete type".
+#include <sys/time.h>
 #include <unistd.h>
 
 #include <atomic>

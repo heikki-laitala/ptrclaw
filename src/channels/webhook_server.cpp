@@ -5,6 +5,10 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
+// struct timeval, for the SO_RCVTIMEO/SO_SNDTIMEO calls below. glibc's <sys/socket.h>
+// pulls it in transitively, so its absence is invisible on the Ubuntu runners CI uses;
+// musl does not, and this file fails to compile there with "variable has incomplete type".
+#include <sys/time.h>
 #include <unistd.h>
 
 #include <cerrno>
