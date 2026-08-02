@@ -28,6 +28,12 @@ struct AgentConfig {
     bool disable_streaming = false;
     std::string tee_mode = "off";  // "off", "failures", "always"
     uint32_t tool_timeout = 120;   // seconds, 0 = no timeout
+    // How long a session may sit idle before it is dropped. Was hard-coded to an hour at
+    // the eviction call site, which suits a long-lived assistant and not a deployment
+    // that runs one process per agent: there, an hour of retention after the last visitor
+    // message is memory paid for nothing. Also the only way to observe reclamation in
+    // less than an hour, which makes per-session memory measurable at all.
+    uint32_t session_max_idle_seconds = 3600;
 };
 
 struct EmbeddingConfig {

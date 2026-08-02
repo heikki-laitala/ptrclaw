@@ -261,9 +261,12 @@ int main(int argc, char* argv[]) try {
                 bus.publish(ev);
             }
 
-            // Periodic session eviction
+            // Periodic session eviction. The window is configurable because one hour is a
+            // long time to hold a conversation's memory in a deployment that runs a
+            // process per agent, and because a hard-coded hour makes reclamation
+            // impossible to observe in any test shorter than one.
             if (++poll_count % 100 == 0) {
-                sessions.evict_idle(3600);
+                sessions.evict_idle(config.agent.session_max_idle_seconds);
             }
         }
 
