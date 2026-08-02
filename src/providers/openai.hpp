@@ -18,6 +18,10 @@ public:
                    const std::string& oauth_client_id = "",
                    const std::string& oauth_token_url = "");
 
+    // Set separately rather than as a tenth constructor argument: it is optional, it is
+    // orthogonal to authentication, and that parameter list is already at its limit.
+    void set_user(const std::string& user) { user_ = user; }
+
     ChatResponse chat(const std::vector<ChatMessage>& messages,
                       const std::vector<ToolSpec>& tools,
                       const std::string& model,
@@ -55,6 +59,8 @@ protected:
     std::string responses_url(const std::string& model) const;
 
 private:
+    // OpenAI's `user` field. Empty means omit it; see ProviderEntry::user.
+    std::string user_;
     nlohmann::json build_responses_request(
         const std::vector<ChatMessage>& messages,
         const std::vector<ToolSpec>& tools,
