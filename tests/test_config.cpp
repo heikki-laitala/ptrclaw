@@ -24,6 +24,9 @@ TEST_CASE("AgentConfig: default values", "[config]") {
     REQUIRE(ac.max_tool_iterations == 50);
     REQUIRE(ac.max_history_messages == 50);
     REQUIRE(ac.token_limit == 128000);
+    // The hour that used to be hard-coded at the eviction call site. Pinned so making it
+    // configurable cannot quietly change what an unconfigured deployment does.
+    REQUIRE(ac.session_max_idle_seconds == 3600);
 }
 
 // ── api_key_for ──────────────────────────────────────────────────
@@ -145,6 +148,25 @@ TEST_CASE("Config::load: reads config file", "[config]") {
     REQUIRE(cfg.agent.max_tool_iterations == 20);
     REQUIRE(cfg.agent.max_history_messages == 100);
     REQUIRE(cfg.agent.token_limit == 64000);
+}
+
+TEST_CASE("AgentConfig: session_max_idle_seconds is read from the config file",
+          "[config]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({"agent": {"session_max_idle_seconds": 90}})");
+    REQUIRE(Config::load().agent.session_max_idle_seconds == 90);
+}
+
+TEST_CASE("AgentConfig: a non-numeric session_max_idle_seconds keeps the default",
+          "[config]") {
+    // Every other field in this block ignores a wrongly typed value rather than failing
+    // the load; this one does the same, and the default it falls back to is the safe
+    // direction — sessions live longer than intended, not shorter.
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({"agent": {"session_max_idle_seconds": "not-a-number"}})");
+    REQUIRE(Config::load().agent.session_max_idle_seconds == 3600);
 }
 
 TEST_CASE("Config::load: env vars override config file", "[config]") {
