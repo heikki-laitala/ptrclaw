@@ -293,14 +293,14 @@ std::string Agent::process(const std::string& user_message) {
             // cannot prevent that; owning the collector from the handler can.
             auto collector = std::make_shared<BatchCollector>(
                 batch_id, response.tool_calls.size());
+            // Captures the collector and nothing else. on_result() already drops
+            // events whose batch_id is not this batch's, and takes the collector's
+            // lock before touching it, so a session filter here would be
+            // redundant — and capturing `this` for it pushes the closure over
+            // std::function's small-buffer size, forcing a heap allocation.
             uint64_t sub_id = subscribe<ToolCallResultEvent>(*event_bus_,
                 std::function<void(const ToolCallResultEvent&)>(
-                    [collector, this](const ToolCallResultEvent& ev) {
-                        // Every session's collector is on one global handler list;
-                        // batch_id would sort it out, but not before touching this
-                        // collector from another session's worker thread.
-                        if (!session_id_.empty() && !ev.session_id.empty() &&
-                            ev.session_id != session_id_) return;
+                    [collector](const ToolCallResultEvent& ev) {
                         collector->on_result(ev);
                     }));
 

@@ -136,17 +136,23 @@ TEST_CASE("TurnPool: turns for different sessions run in parallel",
     EventBus bus;
     TurnPool pool(bus, 4);
 
-    std::mutex m;
-    std::condition_variable cv;
-    int arrived = 0;
-    std::atomic<int> both_saw{0};
+    // One capture, not four: a closure over more than a couple of references
+    // outgrows std::function's small buffer and heap-allocates, which the static
+    // analyzer reports as a leak through EventBus::subscribe.
+    struct Barrier {
+        std::mutex m;
+        std::condition_variable cv;
+        int arrived = 0;
+        std::atomic<int> both_saw{0};
+    } barrier;
 
-    subscribe<MessageReceivedEvent>(bus, [&](const MessageReceivedEvent&) {
-        std::unique_lock<std::mutex> lock(m);
-        ++arrived;
-        cv.notify_all();
-        if (cv.wait_for(lock, std::chrono::seconds(5), [&] { return arrived == 2; })) {
-            ++both_saw;
+    subscribe<MessageReceivedEvent>(bus, [&barrier](const MessageReceivedEvent&) {
+        std::unique_lock<std::mutex> lock(barrier.m);
+        ++barrier.arrived;
+        barrier.cv.notify_all();
+        if (barrier.cv.wait_for(lock, std::chrono::seconds(5),
+                                [&barrier] { return barrier.arrived == 2; })) {
+            ++barrier.both_saw;
         }
     });
 
@@ -159,7 +165,7 @@ TEST_CASE("TurnPool: turns for different sessions run in parallel",
     pool.submit(make_event(b));
     pool.drain();
 
-    REQUIRE(both_saw.load() == 2);
+    REQUIRE(barrier.both_saw.load() == 2);
 }
 
 // ── drain() ─────────────────────────────────────────────────────
