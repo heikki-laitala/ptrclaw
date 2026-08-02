@@ -89,6 +89,9 @@ opt_telegram   = get_option('with_telegram')
 opt_whatsapp   = get_option('with_whatsapp')
 opt_http       = get_option('with_http')
 opt_tools      = get_option('with_tools')
+# with_tools implies file_read; the standalone option only adds it to a build that would
+# otherwise have no tools at all.
+opt_file_read  = get_option('with_file_read') or opt_tools
 
 # Memory features (core memory is always included — Agent requires it)
 opt_sqlite_memory = get_option('with_sqlite_memory')
@@ -185,10 +188,15 @@ if opt_whatsapp or opt_http
 endif
 if opt_tools
   optional_sources += files(
-    'src/tools/file_edit.cpp', 'src/tools/file_read.cpp',
+    'src/tools/file_edit.cpp',
     'src/tools/file_write.cpp', 'src/tools/shell.cpp',
     'src/tools/skill_activate.cpp', 'src/tools/cron.cpp',
   )
+endif
+# Separate, and listed once: opt_file_read is already true whenever opt_tools is, so
+# naming file_read.cpp in both lists would define its symbols twice and fail the link.
+if opt_file_read
+  optional_sources += files('src/tools/file_read.cpp')
 endif
 
 # Memory system (always included — Agent requires it)
@@ -280,6 +288,10 @@ if opt_tools
   optional_test_sources += files('tests/test_tools.cpp', 'tests/test_cron.cpp',
                                  'tests/test_shell_filter.cpp',
                                  'tests/test_skill_activate.cpp')
+elif opt_file_read
+  # Only in the read-only configuration: what it asserts is which tools are ABSENT, and
+  # that is not a claim the full-tools build can make.
+  optional_test_sources += files('tests/test_file_read_only.cpp')
 endif
 if opt_telegram
   optional_test_sources += files('tests/test_telegram.cpp')
@@ -377,6 +389,8 @@ endif
 
 if opt_tools
   tools_summary = 'file_read, file_write, file_edit, shell, cron'
+elif opt_file_read
+  tools_summary = 'file_read only (no mutating tools)'
 elif opt_embed
   tools_summary = 'host-bridged (via ptrclaw_register_tool)'
 else

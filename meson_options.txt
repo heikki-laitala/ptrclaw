@@ -24,6 +24,14 @@ option('with_http', type: 'boolean', value: false,
 option('with_tools', type: 'boolean', value: true,
        description: 'Build all tool implementations (file_read, file_write, file_edit, shell)')
 
+# Grounding without acting. `with_tools` is all-or-nothing: it gates file_read together
+# with file_write, file_edit, shell and cron, so an agent that only needs to READ its
+# reference material has to be given the ability to rewrite the filesystem and run
+# commands to get it. This option builds file_read alone. Implied by with_tools, so
+# existing configurations are unaffected.
+option('with_file_read', type: 'boolean', value: false,
+       description: 'Build the file_read tool without the mutating tools (implied by with_tools)')
+
 # Memory features (core memory is always included — Agent requires it)
 option('with_sqlite_memory', type: 'boolean', value: true,
        description: 'Build SQLite memory backend (requires sqlite3)')
