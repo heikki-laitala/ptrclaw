@@ -263,3 +263,66 @@ jobs:
           if [ -f code-coverage-results.md ]; then
             cat code-coverage-results.md >> $GITHUB_STEP_SUMMARY
           fi
+
+  # ── Configurations CI never built ───────────────────────────────────────────
+  #
+  # `make build` uses the defaults, and with_http, with_whatsapp and with_file_read all
+  # default to false. So src/channels/http.cpp, src/channels/whatsapp.cpp,
+  # src/channels/webhook_server.cpp and three test files were linted but never compiled,
+  # by any job, on any libc — and their tests had never run anywhere.
+  #
+  # That gap shipped a compile error: `struct timeval` without <sys/time.h> in
+  # webhook_server.cpp (#110). It is also why the musl leg below exists rather than
+  # ubuntu alone — glibc's <sys/socket.h> provides that header transitively, so an Ubuntu
+  # job would have compiled the broken file happily. The bug was found by a downstream
+  # Alpine image build, which is not a reasonable place to learn about it.
+  optional-features:
+    name: Optional features (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: channels
+            flags: -Dwith_http=true -Dwith_whatsapp=true
+          - label: read-only tools
+            flags: -Dwith_tools=false -Dwith_file_read=true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: g++ clang meson ninja-build libssl-dev libsqlite3-dev lld
+          version: 1.0
+
+      - name: Build and test
+        run: |
+          meson setup builddir-opt --native-file meson-native-linux.ini \
+            -Dcatch2:tests=false ${{ matrix.flags }}
+          meson compile -C builddir-opt
+          meson test -C builddir-opt --print-errorlogs
+
+  musl-build:
+    name: musl build (channels)
+    runs-on: ubuntu-latest
+    container: alpine:3.22
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apk add --no-cache build-base clang lld meson ninja pkgconf \
+            mbedtls-dev mbedtls-static musl-dev linux-headers sqlite-dev bash
+
+      # Only what musl can tell us that glibc cannot: whether these files compile and
+      # their tests pass against a different libc. Not a second full matrix.
+      - name: Build and test
+        run: |
+          meson setup builddir-musl --native-file meson-native-linux.ini \
+            -Dcatch2:tests=false -Dwith_mbedtls=true \
+            -Dwith_http=true -Dwith_whatsapp=true
+          meson compile -C builddir-musl
+          meson test -C builddir-musl --print-errorlogs
