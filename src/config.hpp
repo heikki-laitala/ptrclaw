@@ -2,6 +2,7 @@
 #include <string>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 #include <nlohmann/json.hpp>
@@ -65,6 +66,11 @@ struct MemoryConfig {
     std::string backend = "json";
 #endif
     std::string path;
+    // "shared" — every session reads and writes one store (the default, and the
+    // behaviour before this key existed). "session" — each session gets its own
+    // store file under <dir of path>/sessions/, so keys, recall and links never
+    // cross between sessions.
+    std::string isolation = "shared";
     bool auto_save = false;
     uint32_t recall_limit = 5;
     uint32_t hygiene_max_age = 604800;  // 7 days
@@ -79,6 +85,9 @@ struct MemoryConfig {
     double knowledge_survival_chance = 0.05; // [0.0, 1.0] random survival probability
     EmbeddingConfig embeddings;         // vector search config (disabled by default)
 };
+
+// Upper bound on Config::workers.
+constexpr uint32_t kMaxWorkers = 64;
 
 struct Config {
     std::string provider = "anthropic";
@@ -99,6 +108,11 @@ struct Config {
     // a personal bot, where the only person messaging it is the operator.
     bool allow_channel_commands = false;
     std::string base_url;  // Global override — applies to the active provider
+
+    // Worker threads running agent turns. 1 = turns run inline on the poll loop,
+    // one at a time for the whole process. Above 1, turns for different sessions
+    // run in parallel; turns for one session stay serialised. Channel modes only.
+    uint32_t workers = 1;
 
     std::unordered_map<std::string, ProviderEntry> providers;
 
@@ -131,5 +145,23 @@ struct Config {
 // Read-modify-write ~/.ptrclaw/config.json atomically.
 // The callback receives a mutable reference to the parsed JSON.
 bool modify_config_json(const std::function<void(nlohmann::json&)>& modifier);
+
+// Guards the OAuth fields of Config::providers, the one part of Config that
+// changes while turns are running.
+//
+// OpenAIProvider rotates its tokens mid-turn and calls back to write them to the
+// shared Config and to ~/.ptrclaw/config.json. With `workers > 1` that callback
+// fires on whichever worker hit the expiry, while another worker may be reading
+// the same entry to build a provider for a new session — two turns expiring at
+// once would race on the strings and on the config file's temp path, losing a
+// rotated refresh token and locking the deployment out of OpenAI.
+//
+// Held across the file write too, so the in-memory entry and the file cannot
+// disagree. The refresh is an HTTP round trip away, so contention is nil.
+//
+// Not taken by Config's own accessors: api_key_for() and base_url_for() read
+// fields the refresh never writes, and locking there would deadlock the
+// composite operations below, which call them while holding it.
+std::mutex& provider_credentials_mutex();
 
 } // namespace ptrclaw

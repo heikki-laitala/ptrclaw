@@ -120,9 +120,30 @@ std::vector<MemoryEntry> collect_neighbors(Memory* memory,
 std::string memory_enrich(Memory* memory, const std::string& user_message,
                           uint32_t recall_limit, uint32_t enrich_depth = 0);
 
+struct Config;
+
+// Where a backend keeps its store when memory.path is unset. Backends call this
+// rather than each hardcoding a default, so isolation can derive from it.
+std::string default_memory_path(const std::string& backend);
+
+// Rewrite a store path so it belongs to one session:
+//   ~/.ptrclaw/memory.json  →  ~/.ptrclaw/sessions/<key>/memory.json
+//
+// `key` is an 8-hex FNV-1a of the raw session id followed by the id with every
+// character outside [A-Za-z0-9._-] replaced and the result truncated. Session ids
+// are caller-supplied — the HTTP channel reads `session` straight from the request
+// body — so this is a path-traversal boundary: the hash prefix means the component
+// can never be "." or "..", the substitution means it can never contain a
+// separator, and the hash keeps two ids that sanitize alike from colliding.
+std::string session_store_path(const std::string& base_path,
+                               const std::string& session_id);
+
 // Create a memory backend from config.
 // Uses the plugin registry to instantiate the configured backend.
-struct Config;
-std::unique_ptr<Memory> create_memory(const Config& config);
+//
+// With memory.isolation == "session" and a non-empty session_id, the backend is
+// pointed at that session's own store; otherwise at the shared one.
+std::unique_ptr<Memory> create_memory(const Config& config,
+                                      const std::string& session_id = "");
 
 } // namespace ptrclaw

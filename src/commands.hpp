@@ -18,11 +18,17 @@ std::string cmd_soul(const Agent& agent, bool dev);
 std::string cmd_hatch(Agent& agent);
 std::string cmd_skill(const std::string& args, Agent& agent);
 
-// These mutate agent and/or config state.
+// These mutate agent state, and with `persist` also the process-wide Config and
+// ~/.ptrclaw/config.json.
+//
+// `persist` must be false for anything but the local CLI session. The Config is
+// shared by every session and turns run on several threads, so writing it from a
+// channel session is both a data race and a cross-tenant change: one caller's
+// /model would move every other caller's default too.
 std::string cmd_model(const std::string& new_model, Agent& agent,
-                       Config& config, HttpClient& http);
+                       Config& config, HttpClient& http, bool persist);
 std::string cmd_provider(const std::string& args, Agent& agent,
-                          Config& config, HttpClient& http);
+                          Config& config, HttpClient& http, bool persist);
 
 // Help text (channel=true omits REPL-only commands like /exit, /onboard)
 std::string cmd_help(bool dev, bool channel = false);

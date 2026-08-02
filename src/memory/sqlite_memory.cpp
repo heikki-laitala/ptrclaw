@@ -12,14 +12,16 @@
 
 static ptrclaw::MemoryRegistrar reg_sqlite("sqlite",
     [](const ptrclaw::Config& config) {
-        std::string path = config.memory.path;
-        if (path.empty()) {
-            path = ptrclaw::expand_home("~/.ptrclaw/memory.db");
-        }
+        std::string path = config.memory.path.empty()
+            ? ptrclaw::default_memory_path("sqlite")
+            : ptrclaw::expand_home(config.memory.path);
         return std::make_unique<ptrclaw::SqliteMemory>(path);
     });
 
 namespace ptrclaw {
+
+// How long to wait for another connection's write lock before giving up.
+constexpr int kBusyTimeoutMs = 5000;
 
 // Preprocess a user query for FTS5: split on non-alphanumeric, skip
 // single-char tokens, and OR-join the remainder so that any matching
@@ -67,6 +69,10 @@ SqliteMemory::SqliteMemory(const std::string& path) {
         }
         throw std::runtime_error("SqliteMemory: failed to open database: " + err);
     }
+
+    // Wait rather than returning SQLITE_BUSY when another connection holds the
+    // write lock — a second PtrClaw process, or a shared store opened twice.
+    sqlite3_busy_timeout(db_, kBusyTimeoutMs);
 
     // Performance pragmas
     sqlite3_exec(db_, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);

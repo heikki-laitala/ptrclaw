@@ -28,8 +28,8 @@ WhatsApp there is no third-party service — the caller is whatever you put in f
   `Authorization: Bearer <secret>`. Empty means no authentication, which is only safe on
   a loopback or otherwise private address. `/healthz` is always open, because container
   probes cannot carry it.
-- **`max_connections`** — how many callers may be *connected* at once. It does not buy
-  parallel turns; see "One turn at a time" below.
+- **`max_connections`** — how many callers may be *connected* at once. Parallel turns are
+  controlled separately by the top-level `workers` key; see "Concurrency" below.
 - **`turn_timeout_seconds`** — how long a single turn may take before the stream is
   closed with an `error` event. Without it a provider that never answers holds a
   connection open indefinitely.
@@ -102,26 +102,44 @@ no-cache` alone does not prevent that.
 
 Returns `200 ok`, no authentication. Suitable for a readiness probe.
 
-## One turn at a time
+## Concurrency
 
-`max_connections` governs concurrent *connections*, not concurrent turns. PtrClaw
-publishes each inbound message on the event bus synchronously from a single poll loop, so
-`Agent::process` — provider call, tool loop and all — runs to completion before the next
-message is looked at. **One turn executes per process.**
+`max_connections` governs concurrent *connections*. Concurrent *turns* are governed by
+the top-level `workers` key, which defaults to `1`:
 
-So several callers can be connected and streaming while their turns queue behind one
-another. That is deliberate rather than incidental: `Agent` has no internal
-synchronisation, and pushing history from a connection thread would race an in-flight
-turn, so every `Agent` mutation stays on the poll thread.
+```json
+{
+  "workers": 4
+}
+```
 
-Two practical consequences:
+At `workers: 1` PtrClaw publishes each inbound message on the event bus synchronously
+from the poll loop, so `Agent::process` — provider call, tool loop and all — runs to
+completion before the next message is looked at. One turn executes per process.
 
-- Throughput per process is `1 / turn duration`. Raising `max_connections` converts
-  *refused* connections into *waiting* ones — worth doing, since the kernel accept queue
-  is only 16 deep and the 17th caller is refused outright — but it does not raise
-  throughput.
-- To serve more traffic, run more processes. Nothing is held authoritatively in one when
-  the caller pushes `history`, so any process can serve any turn.
+Above `1`, turns are handed to a pool of worker threads sharded by session id. Turns for
+**different** sessions run in parallel; turns for **one** session always land on the same
+worker, so they stay serialised and in order. That sharding is the safety argument, not
+an optimisation: `Agent` has no internal synchronisation, and the shard guarantees no two
+threads ever touch one `Agent`.
+
+The per-session `409` above is the other half of the same rule — a second concurrent turn
+on one session is refused rather than queued, because two turns interleaving over one
+history is not a conversation.
+
+Practical guidance:
+
+- Throughput per process is roughly `workers / turn duration`, and turns are dominated by
+  waiting on the provider, so workers cost little CPU. Start at the number of concurrent
+  callers you expect, not the number of cores.
+- Raising `max_connections` converts *refused* connections into *waiting* ones — worth
+  doing, since the kernel accept queue is only 16 deep and the 17th caller is refused
+  outright — but on its own it does not raise throughput.
+- To serve more traffic still, run more processes. Nothing is held authoritatively in one
+  when the caller pushes `history`, so any process can serve any turn.
+- Session ids come straight from the request body. With `memory.isolation: "session"`
+  each distinct id gets its own store on disk, so an untrusted caller can create
+  directories — put authentication in front of it (`secret`, or the reverse proxy).
 
 ## Behind a reverse proxy
 

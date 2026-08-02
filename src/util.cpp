@@ -141,13 +141,26 @@ std::string replace_all(const std::string& str, const std::string& from, const s
 }
 
 std::string generate_id() {
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_int_distribution<uint64_t> dist;
+    // thread_local, not static: turns for different sessions run on different
+    // threads, and a shared mt19937 would be a data race on its state.
+    static thread_local std::mt19937 gen(std::random_device{}());
+    static thread_local std::uniform_int_distribution<uint64_t> dist;
     uint64_t val = dist(gen);
     char buf[17];
     std::snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(val));
     return buf;
+}
+
+uint64_t fnv1a(const std::string& s) {
+    constexpr uint64_t fnv_offset = 14695981039346656037ULL;
+    constexpr uint64_t fnv_prime  = 1099511628211ULL;
+
+    uint64_t hash = fnv_offset;
+    for (unsigned char byte : s) {
+        hash ^= byte;
+        hash *= fnv_prime;
+    }
+    return hash;
 }
 
 uint32_t estimate_tokens(const std::string& text) {

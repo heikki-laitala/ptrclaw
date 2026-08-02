@@ -27,6 +27,9 @@ std::vector<ProviderInfo> list_providers(
 
     std::vector<ProviderInfo> result;
 
+    // oauth_access_token here is rewritten by a token refresh on another worker.
+    std::lock_guard<std::mutex> lock(provider_credentials_mutex());
+
     for (const auto& [name, entry] : config.providers) {
         if (name == "openai") {
             bool has_key = !entry.api_key.empty();
@@ -112,6 +115,9 @@ std::string auth_mode_label(const std::string& provider_name,
                              const std::string& model,
                              const Config& config) {
     if (provider_name == "openai") {
+        // Rewritten by a token refresh on another worker. Held across
+        // openai_oauth_eligible() too, which reads oauth_models from the same entry.
+        std::lock_guard<std::mutex> lock(provider_credentials_mutex());
         auto it = config.providers.find("openai");
         if (it != config.providers.end() && !it->second.oauth_access_token.empty() &&
             openai_oauth_eligible(model, it->second))
@@ -130,6 +136,10 @@ SwitchProviderResult switch_provider(const std::string& name,
                                      Config& config,
                                      HttpClient& http) {
     SwitchProviderResult result;
+
+    // Reads the openai entry's OAuth fields, which a refresh on another worker
+    // rewrites mid-turn. See provider_credentials_mutex().
+    std::lock_guard<std::mutex> lock(provider_credentials_mutex());
 
     auto it = config.providers.find(name);
     if (it == config.providers.end()) {

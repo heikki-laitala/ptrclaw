@@ -1,6 +1,7 @@
 #pragma once
 #include "../embedder.hpp"
 #include "../http.hpp"
+#include <atomic>
 #include <string>
 
 namespace ptrclaw {
@@ -22,13 +23,16 @@ public:
     HttpEmbedder(Config config, HttpClient& http);
 
     Embedding embed(const std::string& text) override;
-    uint32_t dimensions() const override { return dimensions_; }
+    uint32_t dimensions() const override { return dimensions_.load(); }
     std::string embedder_name() const override { return config_.name; }
 
 private:
     Config config_;
     HttpClient& http_;
-    uint32_t dimensions_;
+    // One embedder is shared by every session, and embed() learns the real width
+    // from the first response — so this is written on one worker thread while
+    // others read it.
+    std::atomic<uint32_t> dimensions_;
 };
 
 std::unique_ptr<Embedder> create_openai_embedder(

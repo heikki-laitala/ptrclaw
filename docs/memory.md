@@ -130,7 +130,37 @@ No-op backend. All operations return empty/false/zero. Used when memory is disab
 
 ### Backend selection
 
-Backends self-register via `MemoryRegistrar` in the plugin registry (`src/plugin.hpp`). The factory function `create_memory(config)` looks up the configured backend name and falls back to `"none"` if unavailable.
+Backends self-register via `MemoryRegistrar` in the plugin registry (`src/plugin.hpp`). The factory function `create_memory(config, session_id)` looks up the configured backend name and falls back to `"none"` if unavailable.
+
+## Session isolation
+
+`memory.isolation` decides whether sessions share a store:
+
+```json
+{
+  "memory": {
+    "isolation": "session"
+  }
+}
+```
+
+- **`"shared"`** (default) — every session reads and writes one store. `SessionManager` creates a single backend instance and hands it to every `Agent`; the backends lock internally, so parallel turns are safe. Sharing the instance is required rather than an optimisation: both `JsonMemory` and `ResponseCache` rewrite their file whole through `atomic_write_file`, which derives its temp path from the target, so two instances over one path would lose writes and could interleave into the same `.tmp`. Entries record the `session_id` that stored them, but nothing filters on it: a key stored by one session is visible to, and overwritable by, all of them.
+- **`"session"`** — each session gets its own store file, so keys, recall, links and writes never cross:
+
+  ```text
+  ~/.ptrclaw/sessions/<8-hex-hash>-<sanitized-id>/memory.json
+  ```
+
+  The directory name is derived by `session_store_path()` (`src/memory.cpp`). Session ids are caller-supplied — the HTTP channel reads `session` straight from the request body — so the derivation is a path-traversal boundary: characters outside `[A-Za-z0-9._-]` are replaced, the name is truncated, and the leading hash means a component can never be `.` or `..` and two ids that sanitize alike still get separate directories.
+
+  The response cache is scoped the same way, and has to be: its key is model + system prompt + conversation, none of which is session-bound, so a shared cache under isolation would hand one session's completion to another.
+
+Switching an existing deployment to `"session"` changes visible behaviour:
+
+- Existing memories stay in the shared store and are not migrated. Copy the file into the per-session directory if a session should keep them.
+- Each session hatches its own soul, since `is_hatched()` reads that session's store. On a channel with many chats that means one hatching interview per chat.
+- `/memory`, `/memory export` and `/memory import` operate on the calling session's store only.
+- Nothing prunes the directories when a session is evicted; the store outlives the session on purpose, so memory survives a restart.
 
 ## Knowledge graph
 

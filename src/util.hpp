@@ -33,6 +33,10 @@ std::string replace_all(const std::string& str, const std::string& from, const s
 // Generate a simple unique ID (hex)
 std::string generate_id();
 
+// FNV-1a 64-bit hash of a byte string. Not cryptographic — used for shard
+// selection and for disambiguating sanitized filesystem names.
+uint64_t fnv1a(const std::string& s);
+
 // Estimate token count from text (~4 chars per token)
 uint32_t estimate_tokens(const std::string& text);
 

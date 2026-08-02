@@ -101,12 +101,15 @@ TEST_CASE("SessionManager: evict_idle keeps recent sessions", "[session]") {
 // touch api_key.
 // Driven through the public route — bus in, reply event out — rather than the
 // private handler, so this exercises the path a real channel takes.
-static std::string run_auth_command(Config& cfg, const std::string& line) {
-    // /auth is a channel command, and channel commands are off by default — it sets a
-    // provider API key from a chat message, which is the last thing a public agent
-    // should accept. These tests are about what /auth does once it is reached, so they
-    // opt in explicitly; the gate itself is covered below.
-    cfg.allow_channel_commands = true;
+// Defaults to CLI origin: /auth writes the shared Config and the config file, so it is
+// refused anywhere else — most of the tests below are about the guard inside the
+// command, which only a CLI-origin message reaches.
+//
+// The session id is always the CLI's, while `from_cli` varies. That pairing is the point:
+// the id is a routing key the caller picks, so a message *claiming* to be the CLI session
+// must still be refused when it did not come from one.
+static std::string run_auth_command(Config& cfg, const std::string& line,
+                                    bool from_cli = true) {
     EventBus bus;
     SessionManager mgr(cfg, test_http);
     mgr.set_event_bus(&bus);
@@ -117,7 +120,8 @@ static std::string run_auth_command(Config& cfg, const std::string& line) {
         bus, [&reply](const MessageReadyEvent& e) { reply = e.content; });
 
     MessageReceivedEvent ev;
-    ev.session_id = "auth_sess";
+    ev.session_id = SessionManager::kCliSessionId;
+    ev.from_cli = from_cli;
     ev.message.content = line;
     bus.publish(ev);
     return reply;
@@ -165,7 +169,8 @@ TEST_CASE("SessionManager: /auth openai <key> stores and persists the key", "[se
 
 // The reply claims the change was saved, so it has to be: apply_oauth_result only writes
 // the token fields, and without the selection the next start comes back on the old
-// provider and model.
+// provider and model. Driven from a CLI-originating message, which is the only kind /auth
+// answers now.
 #ifdef PTRCLAW_HAS_OPENAI_OAUTH
 TEST_CASE("SessionManager: /auth openai finish persists provider and model", "[session]") {
     HomeGuard home;
@@ -185,6 +190,7 @@ TEST_CASE("SessionManager: /auth openai finish persists provider and model", "[s
 
     MessageReceivedEvent start;
     start.session_id = "oauth_sess";
+    start.from_cli = true;   // /auth is CLI-only; see the gate in handle_message
     start.message.content = "/auth openai start";
     bus.publish(start);
 
@@ -193,6 +199,7 @@ TEST_CASE("SessionManager: /auth openai finish persists provider and model", "[s
 
     MessageReceivedEvent finish;
     finish.session_id = "oauth_sess";
+    finish.from_cli = true;
     finish.message.content = "/auth openai finish test-code";
     bus.publish(finish);
 
@@ -229,6 +236,7 @@ TEST_CASE("SessionManager: /auth openai finish honours oauth_models for the defa
 
     MessageReceivedEvent start;
     start.session_id = "oauth_sess";
+    start.from_cli = true;   // /auth is CLI-only; see the gate in handle_message
     start.message.content = "/auth openai start";
     bus.publish(start);
 
@@ -237,6 +245,7 @@ TEST_CASE("SessionManager: /auth openai finish honours oauth_models for the defa
 
     MessageReceivedEvent finish;
     finish.session_id = "oauth_sess";
+    finish.from_cli = true;
     finish.message.content = "/auth openai finish test-code";
     bus.publish(finish);
 
@@ -268,6 +277,7 @@ TEST_CASE("SessionManager: /auth openai finish reports a model no credential can
 
     MessageReceivedEvent start;
     start.session_id = "oauth_sess";
+    start.from_cli = true;   // /auth is CLI-only; see the gate in handle_message
     start.message.content = "/auth openai start";
     bus.publish(start);
 
@@ -276,6 +286,7 @@ TEST_CASE("SessionManager: /auth openai finish reports a model no credential can
 
     MessageReceivedEvent finish;
     finish.session_id = "oauth_sess";
+    finish.from_cli = true;
     finish.message.content = "/auth openai finish test-code";
     bus.publish(finish);
 
@@ -287,7 +298,184 @@ TEST_CASE("SessionManager: /auth openai finish reports a model no credential can
     REQUIRE(reply.find("No API key") != std::string::npos);
 }
 #endif // PTRCLAW_HAS_OPENAI_OAUTH
+TEST_CASE("SessionManager: /auth is refused on a channel session", "[session]") {
+    // The credential goes into the process-wide Config and into
+    // ~/.ptrclaw/config.json, for every session — so a remote caller on a channel
+    // must not be able to set it. HomeGuard anyway, so a regression writes to the
+    // temp dir rather than the developer's real config.
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    // Commands opted ON, deliberately: with them off the outer gate refuses every
+    // command and this would pass without /auth's own guard existing at all. What is
+    // under test is that opting a channel into commands still does not buy /auth.
+    cfg.allow_channel_commands = true;
+    // Claiming the CLI's session id while not being the CLI — the f6d68fc bypass,
+    // aimed at the one command that writes a credential.
+    auto reply = run_auth_command(cfg, "/auth openai sk-should-not-stick",
+                                  /*from_cli=*/false);
+
+    REQUIRE(cfg.providers["openai"].api_key == "test-key");
+    REQUIRE(reply.find("only available on the local CLI") != std::string::npos);
+
+    auto persisted = home.read_config();
+    REQUIRE(persisted["providers"]["openai"]["api_key"] != "sk-should-not-stick");
+}
 #endif // PTRCLAW_HAS_OPENAI
+
+TEST_CASE("SessionManager: a failing turn answers rather than hanging",
+          "[session]") {
+    // get_session() throws when the provider cannot be built. Inline on the poll
+    // loop that reached main()'s handler and exited, dropping the caller's
+    // connection. On a worker thread TurnPool catches it, so without a reply the
+    // caller waits out the channel's turn timeout — 120s for HTTP by default.
+    Config cfg;
+    cfg.provider = "definitely-not-a-registered-provider";
+
+    EventBus bus;
+    SessionManager mgr(cfg, test_http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    std::string reply;
+    bool got_reply = false;
+    subscribe<MessageReadyEvent>(bus, [&](const MessageReadyEvent& e) {
+        reply = e.content;
+        got_reply = true;
+    });
+
+    MessageReceivedEvent ev;
+    ev.session_id = "doomed";
+    ev.message.reply_target = "doomed";
+    ev.message.content = "hello";
+    REQUIRE_NOTHROW(bus.publish(ev));  // must not escape to the worker
+
+    REQUIRE(got_reply);
+    REQUIRE(reply.find("failed") != std::string::npos);
+}
+
+TEST_CASE("SessionManager: a new session knows its id before it subscribes",
+          "[session]") {
+    // Agent's event handlers accept anything while session_id_ is empty, so an
+    // Agent that subscribed before its id was set would, with workers > 1, take a
+    // concurrently-created session's ToolsAvailableEvent. Observed through the
+    // ordering that guarantees it: the specs for a new session must arrive after
+    // that session exists, never against a half-built one.
+    auto cfg = make_test_config();
+
+    EventBus bus;
+    SessionManager mgr(cfg, test_http);
+    mgr.set_event_bus(&bus);
+
+    std::vector<std::string> spec_sessions;
+    subscribe<ToolsAvailableEvent>(bus, [&](const ToolsAvailableEvent& e) {
+        spec_sessions.push_back(e.session_id);
+    });
+
+    mgr.get_session("alice");
+    mgr.get_session("bob");
+
+    REQUIRE(spec_sessions.size() == 2);
+    REQUIRE(spec_sessions[0] == "alice");
+    REQUIRE(spec_sessions[1] == "bob");
+}
+
+// ── /model and /provider scope ──────────────────────────────────
+//
+// The Config is shared by every session and turns run on several threads, so a
+// channel session may change only its own Agent. Writing the shared Config from
+// there is both a data race and a cross-tenant change.
+
+namespace {
+
+// Runs `line` for `session_id` and returns the reply.
+//
+// `from_cli` decides whether the shared Config may be written, and is passed explicitly
+// rather than derived from the session id — the id is a routing key the caller picks
+// (see the bypass covered further down). Callers that pass false must also opt commands
+// on, or the outer gate refuses the command before this scoping is reached.
+std::string run_command(Config& cfg, const std::string& line,
+                        const std::string& session_id, bool from_cli = false) {
+    EventBus bus;
+    SessionManager mgr(cfg, test_http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    std::string reply;
+    subscribe<MessageReadyEvent>(
+        bus, [&reply](const MessageReadyEvent& e) { reply = e.content; });
+
+    MessageReceivedEvent ev;
+    ev.session_id = session_id;
+    ev.from_cli = from_cli;
+    ev.message.content = line;
+    bus.publish(ev);
+    return reply;
+}
+
+} // namespace
+
+TEST_CASE("SessionManager: /model on a channel session does not touch Config",
+          "[session]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    // Commands opted on, so the command actually runs and the assertion below is about
+    // its SCOPE. With them off the outer gate refuses it and this passes vacuously.
+    cfg.allow_channel_commands = true;
+    const std::string original = cfg.model;
+
+    auto reply = run_command(cfg, "/model claude-haiku-4-5-20251001",
+                             "telegram_12345");
+
+    REQUIRE(reply.find("Model set to") != std::string::npos);
+    REQUIRE(cfg.model == original);
+
+    auto persisted = home.read_config();
+    REQUIRE(persisted["model"] != "claude-haiku-4-5-20251001");
+}
+
+TEST_CASE("SessionManager: /model on the CLI session persists", "[session]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    auto reply = run_command(cfg, "/model claude-haiku-4-5-20251001",
+                             SessionManager::kCliSessionId, /*from_cli=*/true);
+
+    REQUIRE(reply.find("Model set to") != std::string::npos);
+    REQUIRE(cfg.model == "claude-haiku-4-5-20251001");
+
+    auto persisted = home.read_config();
+    REQUIRE(persisted["model"] == "claude-haiku-4-5-20251001");
+}
+
+TEST_CASE("SessionManager: /model on one channel session leaves others alone",
+          "[session]") {
+    // The cross-tenant half: two sessions, one Config, one /model.
+    auto cfg = make_test_config();
+    cfg.allow_channel_commands = true;  // as above: so the command runs at all
+
+    EventBus bus;
+    SessionManager mgr(cfg, test_http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    Agent& alice = mgr.get_session("alice");
+    Agent& bob = mgr.get_session("bob");
+    const std::string bob_model = bob.model();
+
+    MessageReceivedEvent ev;
+    ev.session_id = "alice";
+    ev.message.content = "/model claude-haiku-4-5-20251001";
+    bus.publish(ev);
+
+    REQUIRE(alice.model() == "claude-haiku-4-5-20251001");
+    REQUIRE(bob.model() == bob_model);
+    REQUIRE(cfg.model != "claude-haiku-4-5-20251001");
+}
 
 // ── Pushed conversation history ─────────────────────────────────
 //

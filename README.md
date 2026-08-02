@@ -165,6 +165,7 @@ Create `~/.ptrclaw/config.json`:
   "model": "claude-sonnet-4-6",
   "temperature": 0.7,
   "base_url": "",
+  "workers": 1,
   "providers": {
     "anthropic": { "api_key": "sk-ant-..." },
     "openai": { "api_key": "sk-..." },
@@ -184,6 +185,7 @@ Create `~/.ptrclaw/config.json`:
   "memory": {
     "backend": "sqlite",
     "path": "~/.ptrclaw/memory.db",
+    "isolation": "shared",
     "enrich_depth": 1,
     "synthesis": true,
     "synthesis_interval": 5,
@@ -216,6 +218,16 @@ Create `~/.ptrclaw/config.json`:
   }
 }
 ```
+
+Two keys matter for serving more than one user:
+
+- **`workers`** (default `1`) — worker threads running agent turns, in channel modes.
+  At `1`, turns run inline on the poll loop, one at a time for the whole process. Above
+  `1`, turns for different sessions run in parallel; turns for a single session stay
+  serialised and in order, because the pool shards by session id.
+- **`memory.isolation`** (default `"shared"`) — set to `"session"` to give each session
+  its own memory store under `~/.ptrclaw/sessions/`, so keys and recall never cross
+  between users. See [docs/memory.md](docs/memory.md#session-isolation).
 
 Minimal config (Anthropic only):
 

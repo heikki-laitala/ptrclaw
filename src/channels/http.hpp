@@ -21,8 +21,9 @@ struct HttpChannelConfig {
     // Empty means no authentication — only safe on a loopback or in-cluster address.
     std::string secret;
     uint32_t    max_body = 65536;
-    // Concurrent connections. Turns still run one at a time (see the class comment), so
-    // this governs how many callers can be *waiting* rather than how many are served.
+    // Concurrent connections. Turns run in parallel only up to the `workers` config key
+    // (see the class comment), so above that this governs how many callers can be
+    // *waiting* rather than how many are served.
     uint32_t    max_connections = 8;
     // How long a single turn may take before the stream is closed with an error. Without
     // it a provider that never answers would hold a connection open forever.
@@ -43,14 +44,17 @@ struct HttpChannelConfig {
 // agent stays a stateless consumer.
 //
 // ⚠ Threading, and it is the whole design constraint. A request arrives on a
-// WebhookServer connection thread, but the turn runs on the poll-loop thread, and
-// `EventBus::publish` is synchronous — so PtrClaw executes **one turn at a time for the
-// whole process**. Several callers can therefore be connected and streaming, while their
-// turns queue behind one another. Nothing here can change that; it lives in the poll loop.
+// WebhookServer connection thread, but the turn runs elsewhere: the poll loop hands it
+// to TurnPool, which shards by session id. So turns for *different* sessions run in
+// parallel (up to the `workers` config key, 1 by default — at 1 the pool dispatches
+// inline and the process still runs one turn at a time), while turns for *one* session
+// are serialised on that session's worker. The 409 above is the other half of that: it
+// refuses a second concurrent turn on a session rather than queueing it, because two
+// turns interleaving over one Agent and one history is not a conversation.
 //
-// Deltas cross between the two threads through `turns_`: the poll thread appends, the
-// connection thread drains and writes. No Agent state is touched from a connection
-// thread, which matters because Agent has no synchronisation of its own.
+// Deltas cross between the two threads through `turns_`: the worker running the turn
+// appends, the connection thread drains and writes. No Agent state is touched from a
+// connection thread, which matters because Agent has no synchronisation of its own.
 class HttpChannel : public Channel {
 public:
     explicit HttpChannel(HttpChannelConfig config);

@@ -1,7 +1,10 @@
 #include "memory.hpp"
 #include "config.hpp"
 #include "plugin.hpp"
+#include "util.hpp"
 #include <algorithm>
+#include <cstdio>
+#include <filesystem>
 #include <sstream>
 #include <unordered_set>
 
@@ -86,7 +89,41 @@ std::string memory_enrich(Memory* memory, const std::string& user_message,
     return ss.str();
 }
 
-std::unique_ptr<Memory> create_memory(const Config& config) {
+std::string default_memory_path(const std::string& backend) {
+    if (backend == "sqlite") return expand_home("~/.ptrclaw/memory.db");
+    return expand_home("~/.ptrclaw/memory.json");
+}
+
+std::string session_store_path(const std::string& base_path,
+                               const std::string& session_id) {
+    // Leading hash: two ids that sanitize to the same text still get distinct
+    // directories, and no id can produce a component of "." or "..".
+    char hash[17];
+    std::snprintf(hash, sizeof(hash), "%016llx",
+                  static_cast<unsigned long long>(fnv1a(session_id)));
+
+    std::string key(hash, 8);
+    key += '-';
+
+    constexpr size_t kMaxIdChars = 32;
+    size_t taken = 0;
+    for (char c : session_id) {
+        if (taken++ == kMaxIdChars) break;
+        bool safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+        key += safe ? c : '_';
+    }
+
+    std::filesystem::path base(base_path);
+    std::filesystem::path dir = base.parent_path();
+    std::filesystem::path name = base.filename();
+    if (name.empty()) name = "memory.json";
+
+    return (dir / "sessions" / key / name).string();
+}
+
+std::unique_ptr<Memory> create_memory(const Config& config,
+                                      const std::string& session_id) {
     const auto& backend = config.memory.backend;
     auto& registry = PluginRegistry::instance();
 
@@ -96,6 +133,17 @@ std::unique_ptr<Memory> create_memory(const Config& config) {
             return registry.create_memory("none", config);
         }
         return nullptr;
+    }
+
+    if (config.memory.isolation == "session" && !session_id.empty()) {
+        // A copy so the backend factory can read memory.path as it always has,
+        // rather than every backend growing a path-override parameter.
+        Config scoped = config;
+        std::string base = config.memory.path.empty()
+            ? default_memory_path(backend)
+            : expand_home(config.memory.path);
+        scoped.memory.path = session_store_path(base, session_id);
+        return registry.create_memory(backend, scoped);
     }
 
     return registry.create_memory(backend, config);

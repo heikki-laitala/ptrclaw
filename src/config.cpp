@@ -1,6 +1,7 @@
 #include "config.hpp"
 #include "util.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -16,6 +17,7 @@ nlohmann::json Config::defaults_json() {
         {"dev", false},
         {"allow_channel_commands", false},
         {"base_url", ""},
+        {"workers", 1},
         {"providers", {
             {"anthropic", {{"api_key", ""}, {"prompt_caching", true}}},
             {"openai", {
@@ -61,6 +63,7 @@ nlohmann::json Config::defaults_json() {
             {"cache_ttl", 3600},
             {"cache_max_entries", 100},
             {"enrich_depth", 1},
+            {"isolation", "shared"},
             {"synthesis", true},
             {"synthesis_interval", 5},
             {"recency_half_life", 0},
@@ -132,6 +135,14 @@ Config Config::load() {
 
     if (j.contains("base_url") && j["base_url"].is_string())
         cfg.base_url = j["base_url"].get<std::string>();
+
+    if (j.contains("workers") && j["workers"].is_number_unsigned()) {
+        // Capped: each worker can hold a provider connection and a turn's worth of
+        // history, and a typo of 1000 would be a memory problem rather than a
+        // throughput win.
+        uint32_t n = j["workers"].get<uint32_t>();
+        cfg.workers = (n == 0) ? 1 : std::min(n, kMaxWorkers);
+    }
 
     if (j.contains("providers") && j["providers"].is_object()) {
         for (auto& [name, obj] : j["providers"].items()) {
@@ -205,6 +216,12 @@ Config Config::load() {
             cfg.memory.backend = m["backend"].get<std::string>();
         if (m.contains("path") && m["path"].is_string())
             cfg.memory.path = m["path"].get<std::string>();
+        if (m.contains("isolation") && m["isolation"].is_string()) {
+            auto mode = m["isolation"].get<std::string>();
+            if (mode == "shared" || mode == "session") {
+                cfg.memory.isolation = mode;
+            }
+        }
         if (m.contains("auto_save") && m["auto_save"].is_boolean())
             cfg.memory.auto_save = m["auto_save"].get<bool>();
         if (m.contains("recall_limit") && m["recall_limit"].is_number_unsigned())
@@ -313,6 +330,11 @@ Config Config::load() {
         cfg.memory.embeddings.api_key = v;
 
     return cfg;
+}
+
+std::mutex& provider_credentials_mutex() {
+    static std::mutex m;
+    return m;
 }
 
 std::string Config::api_key_for(const std::string& prov) const {
