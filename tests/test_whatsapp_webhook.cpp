@@ -6,6 +6,10 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+// struct timeval, for the SO_RCVTIMEO below — the same omission #110 fixed in
+// webhook_server.cpp and the http channel's test. glibc's <sys/socket.h> supplies it
+// transitively; musl does not, and this file fails to compile there.
+#include <sys/time.h>
 #include <unistd.h>
 
 #include <atomic>
