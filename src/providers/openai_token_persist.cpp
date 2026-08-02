@@ -28,6 +28,20 @@ bool persist_openai_oauth(const ProviderEntry& entry) {
 void setup_oauth_refresh(Provider* provider, Config& config) {
     auto* oai = dynamic_cast<OpenAIProvider*>(provider);
     if (!oai) return;
+    // Lets a provider that waited on oauth_refresh_mutex() adopt whatever another
+    // session's provider just rotated, instead of spending its own stale refresh
+    // token. Called from inside a refresh, so it takes only the credentials lock.
+    oai->set_on_token_reload(
+        [&config](std::string& at, std::string& rt, uint64_t& ea) {
+            std::lock_guard<std::mutex> lock(provider_credentials_mutex());
+            auto it = config.providers.find("openai");
+            if (it == config.providers.end()) return false;
+            at = it->second.oauth_access_token;
+            rt = it->second.oauth_refresh_token;
+            ea = it->second.oauth_expires_at;
+            return true;
+        });
+
     oai->set_on_token_refresh(
         [&config](const std::string& at, const std::string& rt, uint64_t ea) {
             // Every session's provider installs this callback over the same

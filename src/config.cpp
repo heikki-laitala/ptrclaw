@@ -337,6 +337,11 @@ std::mutex& provider_credentials_mutex() {
     return m;
 }
 
+std::mutex& oauth_refresh_mutex() {
+    static std::mutex m;
+    return m;
+}
+
 std::string Config::api_key_for(const std::string& prov) const {
     auto it = providers.find(prov);
     if (it != providers.end()) return it->second.api_key;
@@ -370,6 +375,18 @@ bool Config::persist_selection() const {
 }
 
 bool modify_config_json(const std::function<void(nlohmann::json&)>& modifier) {
+    // Every writer of config.json comes through here — persist_selection,
+    // persist_provider_key, persist_openai_oauth — and atomic_write_file derives
+    // its temp path from the target, so two of them running on different workers
+    // would interleave into one config.json.tmp and leave truncated JSON behind.
+    // Serialising the whole read-modify-write also stops one losing the other's
+    // change, which a rotated refresh token cannot afford.
+    //
+    // Its own mutex, not provider_credentials_mutex(): the OAuth refresh callback
+    // holds that one and calls in here. Lock order is credentials, then this.
+    static std::mutex file_mutex;
+    std::lock_guard<std::mutex> lock(file_mutex);
+
     std::string path = expand_home("~/.ptrclaw/config.json");
     nlohmann::json j;
     {

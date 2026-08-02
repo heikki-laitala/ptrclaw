@@ -73,9 +73,13 @@ TEST_CASE("session_store_path: hostile session ids cannot escape",
         REQUIRE(component.find('\\') == std::string::npos);
         REQUIRE(component != ".");
         REQUIRE(component != "..");
-        // Never a dotfile, and never long enough to be a problem: 8 hex + '-' + 32.
+        // Never a dotfile, and never long enough to be a problem:
+        // 16 hex + '-' + 32.
         REQUIRE(component[0] != '.');
-        REQUIRE(component.size() <= 41);
+        REQUIRE(component.size() <= 49);
+        // The full 64-bit hash, not a prefix — a truncated key would be brute
+        // forceable by a caller who knows a victim's first kMaxIdChars.
+        REQUIRE(component.find('-') == 16);
 
         // And the result really is inside the sessions directory.
         auto p = std::filesystem::path(

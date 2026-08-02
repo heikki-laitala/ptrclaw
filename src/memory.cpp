@@ -98,11 +98,18 @@ std::string session_store_path(const std::string& base_path,
                                const std::string& session_id) {
     // Leading hash: two ids that sanitize to the same text still get distinct
     // directories, and no id can produce a component of "." or "..".
+    //
+    // All 16 hex digits, not a prefix. Ids longer than kMaxIdChars that share a
+    // prefix sanitize to the same text, so this is the only thing separating
+    // their stores — and it is the boundary the isolation mode promises. FNV-1a
+    // is offline-computable, so a truncated 32-bit key would let a caller who
+    // knows a victim's prefix search suffixes until it collides and be routed
+    // into that session's memory and response cache.
     char hash[17];
     std::snprintf(hash, sizeof(hash), "%016llx",
                   static_cast<unsigned long long>(fnv1a(session_id)));
 
-    std::string key(hash, 8);
+    std::string key(hash);
     key += '-';
 
     constexpr size_t kMaxIdChars = 32;

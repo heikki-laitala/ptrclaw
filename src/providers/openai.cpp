@@ -1,5 +1,6 @@
 #include "openai.hpp"
 #include "sse.hpp"
+#include "../config.hpp"
 #include "../http.hpp"
 #ifdef PTRCLAW_HAS_OPENAI_OAUTH
 #include "oauth_openai.hpp"
@@ -9,6 +10,7 @@
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <map>
+#include <mutex>
 #include <chrono>
 #include <sys/utsname.h>
 
@@ -231,15 +233,43 @@ std::string OpenAIProvider::bearer_token() {
 void OpenAIProvider::refresh_oauth_if_needed() {
     if (!use_oauth_) return;
 
-    auto now = static_cast<uint64_t>(
-        std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+    auto seconds_now = [] {
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+    };
 
     // Keep 60s safety buffer.
-    bool expired_or_missing = oauth_access_token_.empty() ||
-        (oauth_expires_at_ > 0 && now + 60 >= oauth_expires_at_);
+    auto expired = [&](uint64_t at_time) {
+        return oauth_access_token_.empty() ||
+               (oauth_expires_at_ > 0 && at_time + 60 >= oauth_expires_at_);
+    };
 
-    if (!expired_or_missing) return;
+    if (!expired(seconds_now())) return;
+
+    // One refresh at a time across every session's provider. Without it two
+    // sessions expiring together each POST the refresh token they snapshotted at
+    // construction, and the second is rejected — see set_on_token_reload().
+    //
+    // Ordered outside provider_credentials_mutex(), which the reload and persist
+    // callbacks take; nothing acquires them the other way round.
+    std::lock_guard<std::mutex> refresh_lock(oauth_refresh_mutex());
+
+    // Re-read under the lock: another provider may have rotated the credentials
+    // while we waited, in which case there is nothing left to do.
+    if (on_token_reload_) {
+        std::string access, refresh;
+        uint64_t expires = 0;
+        if (on_token_reload_(access, refresh, expires) && !access.empty()) {
+            oauth_access_token_ = access;
+            oauth_refresh_token_ = refresh;
+            oauth_expires_at_ = expires;
+        }
+    }
+
+    auto now = seconds_now();
+    if (!expired(now)) return;
+
     if (oauth_refresh_token_.empty()) {
         throw std::runtime_error("OpenAI OAuth access token expired and no refresh token is configured");
     }
