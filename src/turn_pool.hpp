@@ -44,7 +44,8 @@ public:
     TurnPool& operator=(const TurnPool&) = delete;
 
     // Queue a turn on the shard owning ev.session_id. Returns immediately unless
-    // the pool is running inline (workers <= 1).
+    // the pool is running inline (workers <= 1), or the shard's queue is full —
+    // see kMaxQueuedPerShard.
     void submit(MessageReceivedEvent ev);
 
     // True when no shard has queued events or a turn in flight. Does not block.
@@ -60,9 +61,9 @@ public:
     // another thread could enqueue work into a shard already checked. In PtrClaw
     // that thread is the poll loop, which is the only caller of submit().
     //
-    // Callers on a latency path should gate on idle() first: this blocks for as
-    // long as the slowest turn in flight, and the poll loop is not reading the
-    // channel while it waits.
+    // Callers on a latency path should gate on idle() first: this waits out the
+    // whole queue, not just the turn in flight, and the poll loop is not reading
+    // the channel while it waits.
     void drain();
 
     // Stop the workers and join them. Queued turns that have not started are
@@ -76,10 +77,21 @@ public:
     static size_t shard_for(const std::string& session_id, uint32_t workers);
 
 private:
+    // Queue depth per shard, above which submit() blocks.
+    //
+    // Back-pressure, and the pool has to supply it: publishing inline used to
+    // bound intake to one turn at a time, so an unbounded queue would let a
+    // channel with no per-session gate — Telegram and WhatsApp both lack
+    // HttpChannel's 409 — grow without limit while one turn runs, each entry
+    // holding a whole ChannelMessage and its history window. Blocking the poll
+    // thread is the honest response: it is what the old inline path did.
+    static constexpr size_t kMaxQueuedPerShard = 64;
+
     struct Shard {
         std::mutex                        mutex;
-        std::condition_variable           work_cv;  // worker waits for a turn
-        std::condition_variable           idle_cv;  // drain() waits for quiet
+        std::condition_variable           work_cv;   // worker waits for a turn
+        std::condition_variable           space_cv;  // submit() waits for room
+        std::condition_variable           idle_cv;   // drain() waits for quiet
         std::deque<MessageReceivedEvent>  queue;
         bool                              busy = false;
     };

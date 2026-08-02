@@ -51,6 +51,10 @@ struct MessageReceivedEvent : Event {
     // it carries no trust at all.
     //
     // Default false, so a channel gets the untrusted answer by doing nothing.
+    //
+    // Two things are gated on it: the commands that write the process-wide Config and
+    // ~/.ptrclaw/config.json, and whether a failed turn is rethrown rather than answered
+    // — `ptrclaw -m` and pipe mode have no other failure signal.
     bool from_cli = false;
 
     MessageReceivedEvent() { type_tag = TAG; }

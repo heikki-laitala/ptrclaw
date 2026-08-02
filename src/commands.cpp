@@ -65,6 +65,14 @@ std::string cmd_hatch(Agent& agent) {
     return agent.process("Begin the hatching interview.");
 }
 
+// A non-persisting change lives only in this session's Agent, so it is gone once
+// the session is evicted (agent.session_max_idle_seconds, an hour by default) and
+// the next message rebuilds from the configured default. Say so rather than let
+// the conversation quietly revert to a different model later.
+static std::string scope_note(bool persist) {
+    return persist ? "" : " (this conversation only — resets when it goes idle)";
+}
+
 std::string cmd_model(const std::string& new_model, Agent& agent,
                        Config& config, HttpClient& http, bool persist) {
     // On openai every model change goes through switch_provider, not only the ones that
@@ -88,7 +96,7 @@ std::string cmd_model(const std::string& new_model, Agent& agent,
             config.model = agent.model();
             config.persist_selection();
         }
-        return "Model set to: " + agent.model();
+        return "Model set to: " + agent.model() + scope_note(persist);
     }
 #endif
     agent.set_model(new_model);
@@ -96,7 +104,7 @@ std::string cmd_model(const std::string& new_model, Agent& agent,
         config.model = new_model;
         config.persist_selection();
     }
-    return "Model set to: " + new_model;
+    return "Model set to: " + new_model + scope_note(persist);
 }
 
 std::string cmd_provider(const std::string& args_str, Agent& agent,
@@ -118,7 +126,8 @@ std::string cmd_provider(const std::string& args_str, Agent& agent,
         config.model = agent.model();
         config.persist_selection();
     }
-    return "Switched to " + prov_name + " | Model: " + agent.model();
+    return "Switched to " + prov_name + " | Model: " + agent.model() +
+           scope_note(persist);
 }
 
 std::string cmd_skill(const std::string& args, Agent& agent) {

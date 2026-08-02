@@ -164,4 +164,13 @@ bool modify_config_json(const std::function<void(nlohmann::json&)>& modifier);
 // composite operations below, which call them while holding it.
 std::mutex& provider_credentials_mutex();
 
+// Serialises the OAuth refresh itself, so only one of a process's providers
+// performs the token round trip at a time and the others adopt its result
+// instead of re-spending a refresh token that has already been rotated.
+//
+// Lock order: this one first, then provider_credentials_mutex(), which the
+// reload and persist callbacks take from inside a refresh. Nothing takes them
+// the other way round.
+std::mutex& oauth_refresh_mutex();
+
 } // namespace ptrclaw

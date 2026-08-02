@@ -17,6 +17,7 @@
 #include "embedder.hpp"
 #endif
 #include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <string>
 #include <cstring>
@@ -278,7 +279,10 @@ int main(int argc, char* argv[]) try {
         // How long we will keep deferring eviction for a busy pool before waiting.
         const uint64_t evict_deadline = evict_interval * kEvictionDeadlineFactor;
 
-        uint64_t last_eviction = ptrclaw::epoch_seconds();
+        // steady_clock, not epoch_seconds(): an NTP step backwards would make an
+        // unsigned wall-clock difference wrap past every threshold below and force
+        // a blocking drain, and a step forwards would evict live conversations.
+        auto last_eviction = std::chrono::steady_clock::now();
 
         while (!g_shutdown.load()) {
             auto messages = channel->poll_updates();
@@ -299,8 +303,9 @@ int main(int argc, char* argv[]) try {
             // only one that submits, so no shard can refill behind us.
             //
             // Normally we only evict when the pool is already idle, so drain()
-            // returns at once. Blocking here would stop the channel being read for
-            // as long as the slowest turn in flight — a latency spike for everyone,
+            // returns at once. Blocking here would stop the channel being read
+            // until the whole queue has run, not just the turn in flight — a
+            // latency spike for everyone,
             // once a minute. Under sustained load that could defer eviction
             // forever, hence the deadline: past it we do wait.
             //
@@ -308,8 +313,9 @@ int main(int argc, char* argv[]) try {
             // count would barrier constantly. A clock cannot starve either — and it
             // is what makes the check interval independent of poll rate, so a short
             // agent.session_max_idle_seconds is actually honoured on that timescale.
-            uint64_t now = ptrclaw::epoch_seconds();
-            uint64_t since = now - last_eviction;
+            auto now = std::chrono::steady_clock::now();
+            auto since = static_cast<uint64_t>(std::chrono::duration_cast<
+                std::chrono::seconds>(now - last_eviction).count());
             if (since >= evict_interval &&
                 (pool.idle() || since >= evict_deadline)) {
                 pool.drain();

@@ -68,6 +68,20 @@ public:
                                                      uint64_t expires_at)>;
     void set_on_token_refresh(TokenRefreshCallback cb) { on_token_refresh_ = std::move(cb); }
 
+    // Adopt the credentials another provider may have rotated since this one was
+    // built. Returns false if none are available.
+    //
+    // Each session gets its own OpenAIProvider, and each snapshots the refresh
+    // token at construction. Without this, two sessions whose access tokens
+    // expire together both POST the same refresh token: the second is rejected
+    // with invalid_grant, and under refresh-token reuse detection that revokes
+    // the whole family — including the token the first one just persisted,
+    // locking every session out until the operator re-runs /auth.
+    using TokenReloadCallback = std::function<bool(std::string& access_token,
+                                                   std::string& refresh_token,
+                                                   uint64_t& expires_at)>;
+    void set_on_token_reload(TokenReloadCallback cb) { on_token_reload_ = std::move(cb); }
+
 protected:
     nlohmann::json build_request(const std::vector<ChatMessage>& messages,
                                  const std::vector<ToolSpec>& tools,
@@ -112,6 +126,7 @@ private:
     std::string oauth_client_id_;
     std::string oauth_token_url_;
     TokenRefreshCallback on_token_refresh_;
+    TokenReloadCallback  on_token_reload_;
 };
 
 } // namespace ptrclaw

@@ -102,14 +102,16 @@ TEST_CASE("SessionManager: evict_idle keeps recent sessions", "[session]") {
 // Driven through the public route — bus in, reply event out — rather than the
 // private handler, so this exercises the path a real channel takes.
 // Defaults to CLI origin: /auth writes the shared Config and the config file, so it is
-// refused anywhere else — most of the tests below are about the guard inside the
-// command, which only a CLI-origin message reaches.
+// refused anywhere else — most of the tests below are about the guard inside the command,
+// which only a CLI-origin message reaches.
 //
-// The session id is always the CLI's, while `from_cli` varies. That pairing is the point:
-// the id is a routing key the caller picks, so a message *claiming* to be the CLI session
-// must still be refused when it did not come from one.
-static std::string run_auth_command(Config& cfg, const std::string& line,
-                                    bool from_cli = true) {
+// `from_cli` is what the guard keys off, never the session id: a channel copies the
+// session id out of the request, so an id-based check would be spoofable. The two vary
+// independently here on purpose, so a caller can be made to *claim* the CLI's id without
+// having its origin.
+static std::string run_auth_command(
+    Config& cfg, const std::string& line, bool from_cli = true,
+    const std::string& session_id = SessionManager::kCliSessionId) {
     EventBus bus;
     SessionManager mgr(cfg, test_http);
     mgr.set_event_bus(&bus);
@@ -120,7 +122,7 @@ static std::string run_auth_command(Config& cfg, const std::string& line,
         bus, [&reply](const MessageReadyEvent& e) { reply = e.content; });
 
     MessageReceivedEvent ev;
-    ev.session_id = SessionManager::kCliSessionId;
+    ev.session_id = session_id;
     ev.from_cli = from_cli;
     ev.message.content = line;
     bus.publish(ev);
@@ -311,16 +313,42 @@ TEST_CASE("SessionManager: /auth is refused on a channel session", "[session]") 
     // command and this would pass without /auth's own guard existing at all. What is
     // under test is that opting a channel into commands still does not buy /auth.
     cfg.allow_channel_commands = true;
-    // Claiming the CLI's session id while not being the CLI — the f6d68fc bypass,
-    // aimed at the one command that writes a credential.
+    // An ordinary channel id here; the test below does the same with the CLI's own id.
     auto reply = run_auth_command(cfg, "/auth openai sk-should-not-stick",
-                                  /*from_cli=*/false);
+                                  /*from_cli=*/false, "telegram_12345");
 
     REQUIRE(cfg.providers["openai"].api_key == "test-key");
     REQUIRE(reply.find("only available on the local CLI") != std::string::npos);
 
     auto persisted = home.read_config();
     REQUIRE(persisted["providers"]["openai"]["api_key"] != "sk-should-not-stick");
+}
+
+TEST_CASE("SessionManager: a channel caller claiming session id 'cli' is still refused",
+          "[session]") {
+    // The HTTP channel copies `session` verbatim out of the request body, so a
+    // guard keyed on the session id would let any caller POST
+    // {"session":"cli","message":"/auth ..."} and set credentials for the whole
+    // process. The guard keys off MessageReceivedEvent::from_cli, which nothing that
+    // reads a socket sets.
+    //
+    // Same id as the CLI test above, opposite expectation — that pairing is the point.
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    // Opted on, as in the test above: otherwise the outer gate refuses this before
+    // /auth's own guard is reached, and the assertion below would pass vacuously.
+    cfg.allow_channel_commands = true;
+    auto reply = run_auth_command(cfg, "/auth openai sk-spoofed",
+                                  /*from_cli=*/false,
+                                  SessionManager::kCliSessionId);
+
+    REQUIRE(cfg.providers["openai"].api_key == "test-key");
+    REQUIRE(reply.find("only available on the local CLI") != std::string::npos);
+
+    auto persisted = home.read_config();
+    REQUIRE(persisted["providers"]["openai"]["api_key"] != "sk-spoofed");
 }
 #endif // PTRCLAW_HAS_OPENAI
 
@@ -353,6 +381,25 @@ TEST_CASE("SessionManager: a failing turn answers rather than hanging",
 
     REQUIRE(got_reply);
     REQUIRE(reply.find("failed") != std::string::npos);
+}
+
+TEST_CASE("SessionManager: a failing local turn still propagates", "[session]") {
+    // The exit code is the only failure signal `ptrclaw -m` and pipe mode have.
+    // Turning a missing API key into a reply would make them print an apology to
+    // stdout and exit 0, which a cron job or CI step reads as the model's answer.
+    Config cfg;
+    cfg.provider = "definitely-not-a-registered-provider";
+
+    EventBus bus;
+    SessionManager mgr(cfg, test_http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    MessageReceivedEvent ev;
+    ev.session_id = SessionManager::kCliSessionId;
+    ev.message.content = "hello";
+    ev.from_cli = true;
+    REQUIRE_THROWS(bus.publish(ev));
 }
 
 TEST_CASE("SessionManager: a new session knows its id before it subscribes",
@@ -428,9 +475,11 @@ TEST_CASE("SessionManager: /model on a channel session does not touch Config",
     const std::string original = cfg.model;
 
     auto reply = run_command(cfg, "/model claude-haiku-4-5-20251001",
-                             "telegram_12345");
+                             "telegram_12345", /*from_cli=*/false);
 
     REQUIRE(reply.find("Model set to") != std::string::npos);
+    // And says so, rather than silently reverting when the session is evicted.
+    REQUIRE(reply.find("this conversation only") != std::string::npos);
     REQUIRE(cfg.model == original);
 
     auto persisted = home.read_config();
@@ -446,6 +495,7 @@ TEST_CASE("SessionManager: /model on the CLI session persists", "[session]") {
                              SessionManager::kCliSessionId, /*from_cli=*/true);
 
     REQUIRE(reply.find("Model set to") != std::string::npos);
+    REQUIRE(reply.find("this conversation only") == std::string::npos);
     REQUIRE(cfg.model == "claude-haiku-4-5-20251001");
 
     auto persisted = home.read_config();

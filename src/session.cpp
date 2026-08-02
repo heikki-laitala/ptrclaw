@@ -81,9 +81,18 @@ Session SessionManager::create_session(const std::string& session_id) {
 
     Session session;
     session.id = session_id;
-    session.agent = std::make_unique<Agent>(std::move(sr.provider), config_,
-                                            memory_for(session_id),
-                                            cache_for(session_id));
+    {
+        // Agent holds `Config config_` by value and create_memory() copies it
+        // again, so constructing a session deep-copies config_.providers —
+        // reading the very strings the OAuth refresh callback rewrites from
+        // another worker. Copying them unlocked can read a heap buffer mid
+        // reallocation. Taken after switch_provider() above, which takes and
+        // releases the same non-recursive mutex itself.
+        std::lock_guard<std::mutex> lock(provider_credentials_mutex());
+        session.agent = std::make_unique<Agent>(std::move(sr.provider), config_,
+                                                memory_for(session_id),
+                                                cache_for(session_id));
+    }
     session.last_active = epoch_seconds();
 
     if (!binary_path_.empty()) {
@@ -227,8 +236,10 @@ void SessionManager::handle_message(const MessageReceivedEvent& ev) {
         dispatch_message(ev);
         return;
     } catch (const std::exception& e) {
+        if (ev.from_cli) throw;
         failure = e.what();
     } catch (...) {
+        if (ev.from_cli) throw;
         failure = "unknown error";
     }
 
@@ -237,6 +248,11 @@ void SessionManager::handle_message(const MessageReceivedEvent& ev) {
     // poll loop that reached main()'s handler and exited, dropping the caller's
     // connection with it. On a worker it is caught, so without this the caller
     // waits out turn_timeout_seconds — two minutes of nothing, by default.
+    //
+    // Rethrown for the local CLI above, deliberately. `ptrclaw -m` and pipe mode
+    // have no other failure signal: swallowing this would make a missing API key
+    // exit 0 with the apology on stdout, which a cron job or CI step reads as the
+    // model's answer.
     std::cerr << "[session] turn failed for " << ev.session_id << ": "
               << failure << "\n";
     if (!event_bus_) return;
@@ -571,6 +587,10 @@ bool SessionManager::handle_auth_command(
                            "Set base_url in ~/.ptrclaw/config.json");
             } else {
                 const std::string& api_key = parts[2];
+                // Same map and same config.json the OAuth refresh callback
+                // rewrites — see provider_credentials_mutex(). operator[] can
+                // rehash, and persist_provider_key shares config.json's temp path.
+                std::lock_guard<std::mutex> lock(provider_credentials_mutex());
                 config_.providers[prov].api_key = api_key;
                 persist_provider_key(prov, api_key);
                 send_reply("API key saved for " + std::string(provider_label(prov)) + ".");

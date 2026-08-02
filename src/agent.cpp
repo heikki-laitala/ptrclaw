@@ -284,11 +284,24 @@ std::string Agent::process(const std::string& user_message) {
         std::string xml_results;
         if (event_bus_) {
             std::string batch_id = generate_id();
-            BatchCollector collector(batch_id, response.tool_calls.size());
+            // shared_ptr, not a stack object captured by reference. Tool results
+            // are published from ToolManager's std::async threads, and
+            // EventBus::publish snapshots the handler list and calls it with the
+            // bus lock released — so a result arriving after the wait below times
+            // out and unsubscribes would run this handler against a destroyed
+            // collector on a stack frame that no longer exists. unsubscribe()
+            // cannot prevent that; owning the collector from the handler can.
+            auto collector = std::make_shared<BatchCollector>(
+                batch_id, response.tool_calls.size());
             uint64_t sub_id = subscribe<ToolCallResultEvent>(*event_bus_,
                 std::function<void(const ToolCallResultEvent&)>(
-                    [&collector](const ToolCallResultEvent& ev) {
-                        collector.on_result(ev);
+                    [collector, this](const ToolCallResultEvent& ev) {
+                        // Every session's collector is on one global handler list;
+                        // batch_id would sort it out, but not before touching this
+                        // collector from another session's worker thread.
+                        if (!session_id_.empty() && !ev.session_id.empty() &&
+                            ev.session_id != session_id_) return;
+                        collector->on_result(ev);
                     }));
 
             for (const auto& call : response.tool_calls) {
@@ -302,11 +315,11 @@ std::string Agent::process(const std::string& user_message) {
             }
 
             auto timeout = std::chrono::seconds(config_.agent.tool_timeout);
-            bool completed = collector.wait(timeout);
+            bool completed = collector->wait(timeout);
             event_bus_->unsubscribe(sub_id);
 
             if (!completed) {
-                std::cerr << "[tool] timeout: " << collector.missing()
+                std::cerr << "[tool] timeout: " << collector->missing()
                           << " tool call(s) did not complete within "
                           << config_.agent.tool_timeout << "s\n";
                 // Signal cancellation to running tools
@@ -315,7 +328,7 @@ std::string Agent::process(const std::string& user_message) {
                 event_bus_->publish(cancel_ev);
                 // Synthesize timeout results for missing calls
                 std::unordered_set<std::string> received_ids;
-                for (const auto& r : collector.results())
+                for (const auto& r : collector->results())
                     received_ids.insert(r.tool_call_id);
                 for (const auto& call : response.tool_calls) {
                     if (received_ids.count(call.id) == 0) {
@@ -326,12 +339,12 @@ std::string Agent::process(const std::string& user_message) {
                         timeout_ev.success = false;
                         timeout_ev.output = "Tool call timed out after "
                             + std::to_string(config_.agent.tool_timeout) + "s";
-                        collector.on_result(timeout_ev);
+                        collector->on_result(timeout_ev);
                     }
                 }
             }
 
-            for (const auto& r : collector.results()) {
+            for (const auto& r : collector->results()) {
                 if (provider_->supports_native_tools()) {
                     history_.push_back(
                         format_tool_result_message(r.tool_call_id, r.tool_name,

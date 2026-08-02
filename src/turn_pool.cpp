@@ -36,7 +36,10 @@ void TurnPool::submit(MessageReceivedEvent ev) {
 
     Shard& shard = *shards_[shard_for(ev.session_id, workers())];
     {
-        std::lock_guard<std::mutex> lock(shard.mutex);
+        std::unique_lock<std::mutex> lock(shard.mutex);
+        shard.space_cv.wait(lock, [&] {
+            return stopping_.load() || shard.queue.size() < kMaxQueuedPerShard;
+        });
         if (stopping_.load()) return;
         shard.queue.push_back(std::move(ev));
     }
@@ -69,6 +72,7 @@ void TurnPool::stop() {
             shard->queue.clear();
         }
         shard->work_cv.notify_all();
+        shard->space_cv.notify_all();
         shard->idle_cv.notify_all();
     }
 
@@ -96,6 +100,7 @@ void TurnPool::run(size_t index) {
             shard.queue.pop_front();
             shard.busy = true;
         }
+        shard.space_cv.notify_one();  // a submitter may be waiting for room
 
         // A turn must not take the process down. Inline on the poll loop an
         // exception reached main()'s handler and exited; on a worker thread it

@@ -164,6 +164,76 @@ TEST_CASE("TurnPool: turns for different sessions run in parallel",
 
 // ── drain() ─────────────────────────────────────────────────────
 
+TEST_CASE("TurnPool: a full shard applies back-pressure to the submitter",
+          "[turn_pool]") {
+    // Publishing inline used to bound intake to one turn at a time. An unbounded
+    // queue would let a channel with no per-session gate grow without limit while
+    // one turn runs, each entry holding a whole ChannelMessage.
+    EventBus bus;
+    TurnPool pool(bus, 2);
+
+    std::atomic<bool> release{false};
+    std::atomic<int> started{0};
+    subscribe<MessageReceivedEvent>(bus, [&](const MessageReceivedEvent&) {
+        ++started;
+        while (!release.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    // All on one shard, so they queue behind the blocked turn.
+    const std::string session = "one-session";
+    std::atomic<int> submitted{0};
+    std::thread producer([&] {
+        for (int i = 0; i < 500; ++i) {
+            pool.submit(make_event(session));
+            ++submitted;
+        }
+    });
+
+    REQUIRE(wait_for([&] { return started.load() == 1; }));
+    // Give the producer every chance to run away if the queue were unbounded.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // One in flight plus a bounded queue — nowhere near all 500.
+    REQUIRE(submitted.load() < 500);
+    REQUIRE(submitted.load() <= 1 + 64 + 1);
+
+    release = true;
+    producer.join();
+    pool.drain();
+    REQUIRE(submitted.load() == 500);
+}
+
+TEST_CASE("TurnPool: stop releases a submitter blocked on a full shard",
+          "[turn_pool]") {
+    // Otherwise shutdown deadlocks: stop() joins the workers while the poll
+    // thread is still parked waiting for room that will never come.
+    EventBus bus;
+    auto pool = std::make_unique<TurnPool>(bus, 2);
+
+    std::atomic<bool> release{false};
+    subscribe<MessageReceivedEvent>(bus, [&](const MessageReceivedEvent&) {
+        while (!release.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    std::atomic<bool> producer_done{false};
+    std::thread producer([&] {
+        for (int i = 0; i < 500; ++i) pool->submit(make_event("one-session"));
+        producer_done = true;
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    REQUIRE_FALSE(producer_done.load());  // parked on a full shard
+
+    release = true;
+    pool->stop();
+    producer.join();
+    REQUIRE(producer_done.load());
+}
+
 TEST_CASE("TurnPool: idle reports work in flight without blocking",
           "[turn_pool]") {
     // The poll loop gates eviction on this so it does not block reading the
