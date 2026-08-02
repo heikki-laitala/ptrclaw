@@ -224,6 +224,44 @@ TEST_CASE("OpenAIProvider: chat sends correct request", "[providers][openai]") {
     REQUIRE(result.usage.total_tokens == 15);
 }
 
+TEST_CASE("OpenAIProvider: user is omitted unless set", "[providers][openai]") {
+    // Asserted on the body that actually goes over the wire, not on the builder's return
+    // value: the builder is protected, and what matters to a gateway counting requests is
+    // what arrived. The omission is the compatibility guarantee — a deployment that never
+    // sets a user must send exactly the request it sent before, so a provider that
+    // rejects unknown fields cannot start failing because this option exists.
+    MockHttpClient mock;
+    mock.next_response = {200, R"({"choices":[{"message":{"content":"ok"}}]})"};
+    OpenAIProvider provider("key", mock, "");
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.7);
+    REQUIRE_FALSE(nlohmann::json::parse(mock.last_body).contains("user"));
+}
+
+TEST_CASE("OpenAIProvider: user is sent when set", "[providers][openai]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({"choices":[{"message":{"content":"ok"}}]})"};
+    OpenAIProvider provider("key", mock, "");
+    provider.set_user("pub_ab12");
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.7);
+    REQUIRE(nlohmann::json::parse(mock.last_body)["user"] == "pub_ab12");
+}
+
+TEST_CASE("OpenAIProvider: user reaches the Responses API request too",
+          "[providers][openai]") {
+    // Both request shapes or neither. A `user` honoured on one path and dropped on the
+    // other is worse than one that does not exist: the caller relying on it for
+    // attribution sees some traffic identified and some anonymous, with nothing saying
+    // why. A "codex" model is what selects that path (use_responses_api).
+    MockHttpClient mock;
+    mock.next_response = {200, R"({"output":[{"type":"message","content":[]}]})"};
+    OpenAIProvider provider("key", mock, "");
+    provider.set_user("pub_ab12");
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {},
+                  "gpt-5-codex", 0.7);
+    REQUIRE(mock.last_url.find("/responses") != std::string::npos);
+    REQUIRE(nlohmann::json::parse(mock.last_body)["user"] == "pub_ab12");
+}
+
 TEST_CASE("OpenAIProvider: chat parses tool calls", "[providers][openai]") {
     MockHttpClient mock;
     mock.next_response = {200, R"({

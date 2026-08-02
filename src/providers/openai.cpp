@@ -14,7 +14,7 @@
 static ptrclaw::ProviderRegistrar reg_openai("openai",
     [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url,
        bool /* prompt_caching */, const ptrclaw::ProviderEntry& entry) {
-        return std::make_unique<ptrclaw::OpenAIProvider>(
+        auto p = std::make_unique<ptrclaw::OpenAIProvider>(
             key,
             http,
             base_url,
@@ -24,6 +24,8 @@ static ptrclaw::ProviderRegistrar reg_openai("openai",
             entry.oauth_expires_at,
             entry.oauth_client_id,
             entry.oauth_token_url);
+        p->set_user(entry.user);
+        return p;
     });
 
 using json = nlohmann::json;
@@ -70,6 +72,9 @@ json OpenAIProvider::build_request(const std::vector<ChatMessage>& messages,
     json request;
     request["model"] = model;
     request["temperature"] = temperature;
+    // Omitted entirely when unset, so a provider that does not know the field is
+    // unaffected and existing deployments send byte-identical requests.
+    if (!user_.empty()) request["user"] = user_;
 
     // Build messages array
     json msgs = json::array();
@@ -218,6 +223,10 @@ json OpenAIProvider::build_responses_request(
     json request;
     request["model"] = model;
     request["store"] = false;
+    // Also here, not only on the chat-completions path: a `user` that worked on one of
+    // two request shapes and silently vanished on the other is worse than one that does
+    // not exist, because the deployment relying on it for attribution cannot see the gap.
+    if (!user_.empty()) request["user"] = user_;
 
     // Extract system prompt → "instructions"
     std::string instructions;
@@ -656,6 +665,9 @@ std::string OpenAIProvider::chat_simple(const std::string& system_prompt,
     json request;
     request["model"] = model;
     request["temperature"] = temperature;
+    // Omitted entirely when unset, so a provider that does not know the field is
+    // unaffected and existing deployments send byte-identical requests.
+    if (!user_.empty()) request["user"] = user_;
 
     json msgs = json::array();
     if (!system_prompt.empty()) {

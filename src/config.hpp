@@ -10,6 +10,12 @@ namespace ptrclaw {
 struct ProviderEntry {
     std::string api_key;
     std::string base_url;
+    // OpenAI's `user` request field: a stable, opaque identifier for the end user or
+    // tenant this process speaks for. OpenAI documents it for abuse signals; a gateway in
+    // front of one can also use it to attribute and budget spend, which is not possible if
+    // every request looks identical. Empty means the field is omitted entirely, so a
+    // provider that has never heard of it sees no change.
+    std::string user;
     bool prompt_caching = false; // Anthropic-only, provider-side prompt caching
 
     // OpenAI subscription OAuth (Codex) support

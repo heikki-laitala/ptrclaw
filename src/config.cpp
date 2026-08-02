@@ -140,6 +140,8 @@ Config Config::load() {
                 entry.base_url = obj["base_url"].get<std::string>();
             if (obj.contains("prompt_caching") && obj["prompt_caching"].is_boolean())
                 entry.prompt_caching = obj["prompt_caching"].get<bool>();
+            if (obj.contains("user") && obj["user"].is_string())
+                entry.user = obj["user"].get<std::string>();
             if (obj.contains("use_oauth") && obj["use_oauth"].is_boolean())
                 entry.use_oauth = obj["use_oauth"].get<bool>();
             if (obj.contains("oauth_access_token") && obj["oauth_access_token"].is_string())
@@ -241,6 +243,11 @@ Config Config::load() {
         cfg.providers["anthropic"].api_key = v;
     if (const char* v = std::getenv("OPENAI_API_KEY"))
         cfg.providers["openai"].api_key = v;
+    // Deliberately env-settable: the deployment that needs this runs one process per
+    // tenant and sets the identifier when it creates the process, where a config file
+    // would be a second thing to render and keep in step.
+    if (const char* v = std::getenv("OPENAI_USER"))
+        cfg.providers["openai"].user = v;
     if (const char* v = std::getenv("OPENAI_USE_OAUTH"))
         cfg.providers["openai"].use_oauth =
             (std::string(v) == "1" || std::string(v) == "true" || std::string(v) == "TRUE");
