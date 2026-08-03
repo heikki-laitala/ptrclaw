@@ -135,6 +135,11 @@ The HTTP channel carries traffic from whoever can reach it, so PtrClaw's slash c
 are not dispatched for it unless `allow_channel_commands` is set to `true` in the config
 (see the README). A message beginning with `/` is passed to the agent as ordinary text.
 
+The `session` field in the request body is a **routing key, not an identity**: the caller
+picks it, so it confers nothing. In particular, naming a session `cli` does not make a
+request local — commands are enabled by trusted, channel-side metadata, never by the
+session string.
+
 Leave it off for anything public. The commands include `/model` and `/provider`, which
 change what the agent runs on, `/memory import`, which writes memory entries — including
 the `soul:identity` entry that gives a provisioned agent its identity — and `/auth`, which

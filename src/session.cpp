@@ -161,7 +161,11 @@ void SessionManager::handle_message(const MessageReceivedEvent& ev) {
     // soul:identity among them — and /start clears history and restarts the hatching
     // interview. The CLI is a shell the operator already owns, so commands stay on
     // there unconditionally; anywhere else they are opt-in.
-    if (ev.session_id == kCliSessionId || config_.allow_channel_commands) {
+    //
+    // Keyed on from_cli, NOT on session_id: for a channel message session_id is the
+    // caller's own `session` string, so testing it against "cli" would have let anyone
+    // reopen the whole command surface by asking for that session name.
+    if (ev.from_cli || config_.allow_channel_commands) {
         if (handle_command(ev, agent, send_reply, begin_hatch)) return;
     }
     // Falling through is deliberate: with commands off, "/model gpt-4" is just something

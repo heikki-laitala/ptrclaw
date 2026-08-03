@@ -289,9 +289,13 @@ static Config command_test_config(bool allow_channel_commands) {
 
 // Sends one message and returns the reply. History is supplied (empty is enough, since
 // PtrClaw checks the field's presence) so auto-hatch stays out of the way.
+//
+// `from_cli` is passed explicitly rather than derived from the session id, because that
+// distinction is the thing under test.
 static std::string reply_to(Config& cfg,
                             const std::string& session_id,
-                            const std::string& line) {
+                            const std::string& line,
+                            bool from_cli = false) {
     EventBus bus;
     SessionManager mgr(cfg, test_http);
     mgr.set_event_bus(&bus);
@@ -303,6 +307,7 @@ static std::string reply_to(Config& cfg,
 
     MessageReceivedEvent ev;
     ev.session_id = session_id;
+    ev.from_cli = from_cli;
     ev.message.content = line;
     ev.message.history = std::vector<ChatMessage>{};
     bus.publish(ev);
@@ -332,8 +337,22 @@ TEST_CASE("SessionManager: the CLI keeps its commands regardless", "[session]") 
     // The operator already owns the shell the CLI runs in, so gating it there would
     // remove the command surface without protecting anything.
     auto cfg = command_test_config(false);
-    auto reply = reply_to(cfg, SessionManager::kCliSessionId, "/status");
+    auto reply = reply_to(cfg, SessionManager::kCliSessionId, "/status", /*from_cli=*/true);
     REQUIRE(reply.find("Provider: ") != std::string::npos);
+}
+
+TEST_CASE("SessionManager: a caller cannot claim the CLI by naming its session",
+          "[session]") {
+    // The bypass this gate was first written with. A channel message's session_id is
+    // ChannelMessage::sender, and on the HTTP channel that is the caller's own `session`
+    // field — so POSTing {"session":"cli","message":"/auth openai <key>"} reopened the
+    // entire command surface while allow_channel_commands was false.
+    //
+    // Same session id as the test above, opposite expectation: the id is a routing key
+    // chosen by whoever is speaking, and carries no trust.
+    auto cfg = command_test_config(false);
+    auto reply = reply_to(cfg, SessionManager::kCliSessionId, "/status", /*from_cli=*/false);
+    REQUIRE(reply.find("Provider: ") == std::string::npos);
 }
 
 TEST_CASE("SessionManager: a blocked command is answered, not rejected", "[session]") {

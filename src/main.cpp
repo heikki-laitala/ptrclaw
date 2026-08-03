@@ -113,6 +113,9 @@ static void publish_cli_message(ptrclaw::EventBus& bus, const std::string& conte
     ptrclaw::MessageReceivedEvent ev;
     ev.session_id = ptrclaw::SessionManager::kCliSessionId;
     ev.message.sender = ptrclaw::SessionManager::kCliSessionId;
+    // Set here and nowhere else: this function is the only path from a local operator
+    // (REPL, -m, stdin pipe) into the bus.
+    ev.from_cli = true;
     ev.message.content = content;
     bus.publish(ev);
 }
