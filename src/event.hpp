@@ -41,6 +41,17 @@ struct MessageReceivedEvent : Event {
     static constexpr const char* TAG = event_tags::MessageReceived;
     std::string session_id;
     ChannelMessage message;
+    // True only for messages the operator typed locally — the REPL, `-m`, or the stdin
+    // pipe. Every channel leaves it false.
+    //
+    // Do NOT infer this from session_id. For a channel message that field is
+    // ChannelMessage::sender, which on the HTTP channel is the caller's own `session`
+    // string: a client posting {"session":"cli"} would otherwise be indistinguishable
+    // from the local operator. It is a routing key, chosen by whoever is speaking, and
+    // it carries no trust at all.
+    //
+    // Default false, so a channel gets the untrusted answer by doing nothing.
+    bool from_cli = false;
 
     MessageReceivedEvent() { type_tag = TAG; }
 };
