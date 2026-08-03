@@ -128,3 +128,14 @@ Two practical consequences:
 Same guidance as [reverse-proxy.md](./reverse-proxy.md), with one addition: do not let
 the proxy buffer or rewrite `text/event-stream` responses. The `X-Accel-Buffering`
 header covers nginx; other proxies may need `proxy_buffering off` or an equivalent.
+
+## Slash commands are off on this channel
+
+The HTTP channel carries traffic from whoever can reach it, so PtrClaw's slash commands
+are not dispatched for it unless `allow_channel_commands` is set to `true` in the config
+(see the README). A message beginning with `/` is passed to the agent as ordinary text.
+
+Leave it off for anything public. The commands include `/model` and `/provider`, which
+change what the agent runs on, `/memory import`, which writes memory entries — including
+the `soul:identity` entry that gives a provisioned agent its identity — and `/auth`, which
+sets a provider API key.

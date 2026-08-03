@@ -14,6 +14,7 @@ nlohmann::json Config::defaults_json() {
         {"model", "claude-sonnet-4-6"},
         {"temperature", 0.7},
         {"dev", false},
+        {"allow_channel_commands", false},
         {"base_url", ""},
         {"providers", {
             {"anthropic", {{"api_key", ""}, {"prompt_caching", true}}},
@@ -126,6 +127,8 @@ Config Config::load() {
         cfg.temperature = j["temperature"].get<double>();
     if (j.contains("dev") && j["dev"].is_boolean())
         cfg.dev = j["dev"].get<bool>();
+    if (j.contains("allow_channel_commands") && j["allow_channel_commands"].is_boolean())
+        cfg.allow_channel_commands = j["allow_channel_commands"].get<bool>();
 
     if (j.contains("base_url") && j["base_url"].is_string())
         cfg.base_url = j["base_url"].get<std::string>();
