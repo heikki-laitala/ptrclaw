@@ -78,6 +78,19 @@ struct Config {
     std::string model = "claude-sonnet-4-6";
     double temperature = 0.7;
     bool dev = false;      // Enables developer-only commands (e.g. /soul)
+    // Whether slash commands are dispatched for messages arriving over a channel.
+    //
+    // Off by default, and the default is the point. The command surface is the
+    // operator's: /model and /provider change what the model is, /memory import writes
+    // memory entries — including soul:identity — and /start clears history and restarts
+    // the hatching interview. On a CLI that is exactly right; on a channel it means
+    // whoever can send a message can do all of it, unauthenticated, because a channel
+    // has no notion of who is speaking.
+    //
+    // A deployment that puts an agent in front of the public therefore gets the safe
+    // behaviour by doing nothing, and every future channel inherits it. Turn it on for
+    // a personal bot, where the only person messaging it is the operator.
+    bool allow_channel_commands = false;
     std::string base_url;  // Global override — applies to the active provider
 
     std::unordered_map<std::string, ProviderEntry> providers;

@@ -322,6 +322,25 @@ For details on the PKCE flow, token refresh, environment variables, and config f
 
 Provider and model changes are persisted to `~/.ptrclaw/config.json`.
 
+### Slash commands over channels
+
+Slash commands (`/status`, `/model`, `/provider`, `/memory`, `/clear`, `/auth`, ...) are
+the **operator's** surface. They always work in the CLI, where the operator already owns
+the shell. Over a channel they are **off by default**, because a channel has no notion of
+who is speaking: whoever can send the bot a message would otherwise be able to change the
+model, read the provider and token counts, write memory entries, or set an API key.
+
+Turn them on for a bot only you talk to:
+
+```json
+{ "allow_channel_commands": true }
+```
+
+Note `/auth` is one of them, so setting credentials from a chat needs this enabled.
+
+With commands off, a message beginning with `/` is simply passed to the agent as ordinary
+text and answered — nothing is rejected.
+
 ### Configuration notes
 
 - There is currently no `COMPATIBLE_API_KEY` env var; set `providers.compatible.api_key` in `~/.ptrclaw/config.json` when using the `compatible` provider.

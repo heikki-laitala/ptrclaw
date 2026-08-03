@@ -70,6 +70,14 @@ private:
     // Dispatch a slash command or regular message
     void handle_message(const MessageReceivedEvent& ev);
 
+    // Dispatch a slash command. Returns true if the message was one and was handled.
+    // Only called when commands are permitted for this session — see
+    // Config::allow_channel_commands.
+    bool handle_command(const MessageReceivedEvent& ev,
+                        Agent& agent,
+                        const std::function<void(const std::string&)>& send_reply,
+                        const std::function<void()>& begin_hatch);
+
     // Handle /auth commands (API key setting + OAuth if available)
     bool handle_auth_command(const MessageReceivedEvent& ev,
                              Agent& agent,

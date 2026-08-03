@@ -155,102 +155,18 @@ void SessionManager::handle_message(const MessageReceivedEvent& ev) {
         send_reply(agent.process("Begin the hatching interview."));
     };
 
-    // Handle /start command
-    if (ev.message.content == "/start") {
-        if (agent.memory() && !agent.is_hatched()) {
-            begin_hatch();
-        } else {
-            std::string greeting = "Hello";
-            if (ev.message.first_name) greeting += " " + *ev.message.first_name;
-            greeting += "! I'm PtrClaw, an AI assistant. How can I help you?";
-            send_reply(greeting);
-        }
-        return;
+    // Slash commands are the operator's surface, not a visitor's, and a channel cannot
+    // tell the two apart: it has no notion of who is speaking. /model and /provider
+    // change what the buyer is billed for, /memory import writes memory entries —
+    // soul:identity among them — and /start clears history and restarts the hatching
+    // interview. The CLI is a shell the operator already owns, so commands stay on
+    // there unconditionally; anywhere else they are opt-in.
+    if (ev.session_id == kCliSessionId || config_.allow_channel_commands) {
+        if (handle_command(ev, agent, send_reply, begin_hatch)) return;
     }
-
-    // Handle /new and /clear commands
-    if (ev.message.content == "/new" || ev.message.content == "/clear") {
-        agent.clear_history();
-        send_reply("Conversation history cleared. What would you like to discuss?");
-        return;
-    }
-
-    // Handle /soul command — developer-only
-    if (ev.message.content == "/soul") {
-        send_reply(cmd_soul(agent, config_.dev));
-        return;
-    }
-
-    // Handle /hatch command
-    if (ev.message.content == "/hatch") {
-        send_reply(cmd_hatch(agent));
-        return;
-    }
-
-    // Handle /status command
-    if (ev.message.content == "/status") {
-        send_reply(cmd_status(agent));
-        return;
-    }
-
-    // Handle /model command
-    if (ev.message.content.rfind("/model ", 0) == 0) {
-        send_reply(cmd_model(trim(ev.message.content.substr(7)),
-                             agent, config_, http_));
-        return;
-    }
-
-    // Handle /memory commands
-    if (ev.message.content == "/memory") {
-        send_reply(cmd_memory(agent));
-        return;
-    }
-    if (ev.message.content == "/memory export") {
-        send_reply(cmd_memory_export(agent));
-        return;
-    }
-    if (ev.message.content.rfind("/memory import ", 0) == 0) {
-        send_reply(cmd_memory_import(agent, trim(ev.message.content.substr(15))));
-        return;
-    }
-
-    // Handle /skill command
-    if (ev.message.content == "/skill" ||
-        ev.message.content.rfind("/skill ", 0) == 0) {
-        std::string args = (ev.message.content.size() > 7)
-            ? ev.message.content.substr(7) : "";
-        send_reply(cmd_skill(args, agent));
-        return;
-    }
-
-    // Handle /help command
-    if (ev.message.content == "/help") {
-        bool is_channel = (ev.session_id != kCliSessionId);
-        send_reply(cmd_help(config_.dev, is_channel));
-        return;
-    }
-
-    // Handle /models command
-    if (ev.message.content == "/models") {
-        send_reply(cmd_models(agent, config_));
-        return;
-    }
-
-    // Handle /provider command
-    if (ev.message.content.rfind("/provider ", 0) == 0) {
-        send_reply(cmd_provider(ev.message.content.substr(10),
-                                agent, config_, http_));
-        return;
-    }
-
-    // Handle auth commands + raw OAuth paste
-    if (ev.message.content.rfind("/auth", 0) == 0
-#ifdef PTRCLAW_HAS_OPENAI_OAUTH
-        || get_pending_oauth(ev.session_id).has_value()
-#endif
-    ) {
-        if (handle_auth_command(ev, agent, send_reply)) return;
-    }
+    // Falling through is deliberate: with commands off, "/model gpt-4" is just something
+    // a visitor said, and the agent answers it as text. Rejecting it instead would make
+    // an ordinary message starting with a slash fail for no reason the visitor can see.
 
     // Auto-hatch: if memory exists but no soul, enter hatching
     // so the user's first message kicks off the interview.
@@ -266,6 +182,112 @@ void SessionManager::handle_message(const MessageReceivedEvent& ev) {
     }
 
     send_reply(agent.process(ev.message.content));
+}
+
+bool SessionManager::handle_command(
+    const MessageReceivedEvent& ev,
+    Agent& agent,
+    const std::function<void(const std::string&)>& send_reply,
+    const std::function<void()>& begin_hatch) {
+
+    // Handle /start command
+    if (ev.message.content == "/start") {
+        if (agent.memory() && !agent.is_hatched()) {
+            begin_hatch();
+        } else {
+            std::string greeting = "Hello";
+            if (ev.message.first_name) greeting += " " + *ev.message.first_name;
+            greeting += "! I'm PtrClaw, an AI assistant. How can I help you?";
+            send_reply(greeting);
+        }
+        return true;
+    }
+
+    // Handle /new and /clear commands
+    if (ev.message.content == "/new" || ev.message.content == "/clear") {
+        agent.clear_history();
+        send_reply("Conversation history cleared. What would you like to discuss?");
+        return true;
+    }
+
+    // Handle /soul command — developer-only
+    if (ev.message.content == "/soul") {
+        send_reply(cmd_soul(agent, config_.dev));
+        return true;
+    }
+
+    // Handle /hatch command
+    if (ev.message.content == "/hatch") {
+        send_reply(cmd_hatch(agent));
+        return true;
+    }
+
+    // Handle /status command
+    if (ev.message.content == "/status") {
+        send_reply(cmd_status(agent));
+        return true;
+    }
+
+    // Handle /model command
+    if (ev.message.content.rfind("/model ", 0) == 0) {
+        send_reply(cmd_model(trim(ev.message.content.substr(7)),
+                             agent, config_, http_));
+        return true;
+    }
+
+    // Handle /memory commands
+    if (ev.message.content == "/memory") {
+        send_reply(cmd_memory(agent));
+        return true;
+    }
+    if (ev.message.content == "/memory export") {
+        send_reply(cmd_memory_export(agent));
+        return true;
+    }
+    if (ev.message.content.rfind("/memory import ", 0) == 0) {
+        send_reply(cmd_memory_import(agent, trim(ev.message.content.substr(15))));
+        return true;
+    }
+
+    // Handle /skill command
+    if (ev.message.content == "/skill" ||
+        ev.message.content.rfind("/skill ", 0) == 0) {
+        std::string args = (ev.message.content.size() > 7)
+            ? ev.message.content.substr(7) : "";
+        send_reply(cmd_skill(args, agent));
+        return true;
+    }
+
+    // Handle /help command
+    if (ev.message.content == "/help") {
+        bool is_channel = (ev.session_id != kCliSessionId);
+        send_reply(cmd_help(config_.dev, is_channel));
+        return true;
+    }
+
+    // Handle /models command
+    if (ev.message.content == "/models") {
+        send_reply(cmd_models(agent, config_));
+        return true;
+    }
+
+    // Handle /provider command
+    if (ev.message.content.rfind("/provider ", 0) == 0) {
+        send_reply(cmd_provider(ev.message.content.substr(10),
+                                agent, config_, http_));
+        return true;
+    }
+
+    // Handle auth commands + raw OAuth paste
+    if (ev.message.content.rfind("/auth", 0) == 0
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
+        || get_pending_oauth(ev.session_id).has_value()
+#endif
+    ) {
+        if (handle_auth_command(ev, agent, send_reply)) return true;
+    }
+
+    return false;
 }
 
 void SessionManager::subscribe_events() {

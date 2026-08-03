@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "config.hpp"
+#include "test_helpers.hpp"
 #include <fstream>
 #include <filesystem>
 #include <cstdlib>
@@ -348,4 +349,32 @@ TEST_CASE("Config::load: defaults roundtrip without re-migration", "[config]") {
                       std::istreambuf_iterator<char>());
     }
     REQUIRE(first == second);
+}
+
+// ── Channel command gating ──────────────────────────────────────
+
+TEST_CASE("Config: channel commands are off unless asked for", "[config]") {
+    // The default is the security property. An operator who never reads this option
+    // gets an agent whose command surface is unreachable from a channel, and so does
+    // every channel added later.
+    Config cfg;
+    REQUIRE_FALSE(cfg.allow_channel_commands);
+    REQUIRE_FALSE(Config::defaults_json()["allow_channel_commands"].get<bool>());
+}
+
+TEST_CASE("Config: allow_channel_commands is read from the file", "[config]") {
+    HomeGuard home;
+    home.write_default_config();
+    modify_config_json([](nlohmann::json& j) { j["allow_channel_commands"] = true; });
+    REQUIRE(Config::load().allow_channel_commands);
+}
+
+TEST_CASE("Config: a non-boolean allow_channel_commands leaves the safe default",
+          "[config]") {
+    // Fail closed on malformed config rather than coercing a truthy value: "false" as a
+    // string must not read as true, which is how this kind of flag gets silently flipped.
+    HomeGuard home;
+    home.write_default_config();
+    modify_config_json([](nlohmann::json& j) { j["allow_channel_commands"] = "true"; });
+    REQUIRE_FALSE(Config::load().allow_channel_commands);
 }

@@ -99,6 +99,11 @@ TEST_CASE("SessionManager: evict_idle keeps recent sessions", "[session]") {
 // Driven through the public route — bus in, reply event out — rather than the
 // private handler, so this exercises the path a real channel takes.
 static std::string run_auth_command(Config& cfg, const std::string& line) {
+    // /auth is a channel command, and channel commands are off by default — it sets a
+    // provider API key from a chat message, which is the last thing a public agent
+    // should accept. These tests are about what /auth does once it is reached, so they
+    // opt in explicitly; the gate itself is covered below.
+    cfg.allow_channel_commands = true;
     EventBus bus;
     SessionManager mgr(cfg, test_http);
     mgr.set_event_bus(&bus);
@@ -262,4 +267,78 @@ TEST_CASE("SessionManager: a pushed window replaces what the session accumulated
     REQUIRE(msgs.size() == 2);
     REQUIRE(msgs[0]["content"] == "unrelated earlier turn");
     REQUIRE(msgs[1]["content"] == "a brand new topic");
+}
+
+// ── Channel command gating ──────────────────────────────────────
+//
+// Tested by what is REFUSED, not by what works: the property is that a visitor cannot
+// reach the operator's command surface, and only a blocked command demonstrates it.
+//
+// The probe is the REPLY rather than a state change, because the obvious state probes
+// are confounded. Sending a second message with no history to see whether /clear wiped
+// it also triggers auto-hatch — which clears history too, for an entirely different
+// reason — and setting memory.backend to "none" does not prevent that: NoneMemory is
+// still an object, so agent.memory() is non-null and is_hatched() is false. A test
+// built that way passes whether or not the gate works.
+
+static Config command_test_config(bool allow_channel_commands) {
+    auto cfg = make_test_config();
+    cfg.allow_channel_commands = allow_channel_commands;
+    return cfg;
+}
+
+// Sends one message and returns the reply. History is supplied (empty is enough, since
+// PtrClaw checks the field's presence) so auto-hatch stays out of the way.
+static std::string reply_to(Config& cfg,
+                            const std::string& session_id,
+                            const std::string& line) {
+    EventBus bus;
+    SessionManager mgr(cfg, test_http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    std::string reply;
+    subscribe<MessageReadyEvent>(
+        bus, [&reply](const MessageReadyEvent& e) { reply = e.content; });
+
+    MessageReceivedEvent ev;
+    ev.session_id = session_id;
+    ev.message.content = line;
+    ev.message.history = std::vector<ChatMessage>{};
+    bus.publish(ev);
+    return reply;
+}
+
+TEST_CASE("SessionManager: a channel cannot run /status by default", "[session]") {
+    // cmd_status reports the provider, the model and the token estimate — the agent's
+    // internals, to whoever typed into a chat box.
+    auto cfg = command_test_config(false);
+    REQUIRE(reply_to(cfg, "visitor", "/status").find("Provider: ") == std::string::npos);
+}
+
+TEST_CASE("SessionManager: a channel cannot run /models by default", "[session]") {
+    auto cfg = command_test_config(false);
+    REQUIRE(reply_to(cfg, "visitor", "/models").find("Providers:") == std::string::npos);
+}
+
+TEST_CASE("SessionManager: allow_channel_commands re-enables them", "[session]") {
+    // The control. Without it the two tests above would also pass if /status had simply
+    // stopped working, or if the reply never arrived at all.
+    auto cfg = command_test_config(true);
+    REQUIRE(reply_to(cfg, "visitor", "/status").find("Provider: ") != std::string::npos);
+}
+
+TEST_CASE("SessionManager: the CLI keeps its commands regardless", "[session]") {
+    // The operator already owns the shell the CLI runs in, so gating it there would
+    // remove the command surface without protecting anything.
+    auto cfg = command_test_config(false);
+    auto reply = reply_to(cfg, SessionManager::kCliSessionId, "/status");
+    REQUIRE(reply.find("Provider: ") != std::string::npos);
+}
+
+TEST_CASE("SessionManager: a blocked command is answered, not rejected", "[session]") {
+    // It falls through to the agent as ordinary text. Refusing it instead would make an
+    // ordinary message that happens to start with a slash fail for no visible reason.
+    auto cfg = command_test_config(false);
+    REQUIRE_FALSE(reply_to(cfg, "visitor", "/status").empty());
 }
