@@ -12,9 +12,13 @@ using json = nlohmann::json;
 
 // ── Model to run after connecting ────────────────────────────────
 
-std::string oauth_model_after_connect(const std::string& current_model,
+std::string oauth_model_after_connect(const std::string& current_provider,
+                                      const std::string& current_model,
                                       const ProviderEntry& openai_entry) {
-    if (openai_oauth_eligible(current_model, openai_entry)) return current_model;
+    if (current_provider == "openai" &&
+        openai_oauth_eligible(current_model, openai_entry)) {
+        return current_model;
+    }
     return kDefaultOAuthModel;
 }
 

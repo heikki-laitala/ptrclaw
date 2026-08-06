@@ -46,7 +46,7 @@ bool is_chatgpt_base_url(const std::string& url) {
            url == "https://chatgpt.com/backend-api/codex/responses";
 }
 
-// Identifies the client and the host it runs on, e.g. "ptrclaw (Darwin 24.6.0; arm64)".
+// Identifies the client and the host it runs on, e.g. "pi (Darwin 24.6.0; arm64)".
 // Resolved once — uname does not change while the process lives.
 const std::string& user_agent() {
     static const std::string cached = [] {
@@ -262,13 +262,16 @@ void OpenAIProvider::refresh_oauth_if_needed() {
         {{"Content-Type", "application/x-www-form-urlencoded"}},
         kOAuthTokenTimeoutSeconds);
 
+    // Before the status branch, which puts the body in the message: that message becomes
+    // the user's reply, and a channel cannot deliver a multi-megabyte one.
+    if (refresh_resp.body.size() > kOAuthTokenBodyLimitBytes) {
+        throw std::runtime_error("OpenAI OAuth refresh response too large: " +
+            std::to_string(refresh_resp.body.size()) + " bytes (HTTP " +
+            std::to_string(refresh_resp.status_code) + ")");
+    }
     if (refresh_resp.status_code < 200 || refresh_resp.status_code >= 300) {
         throw std::runtime_error("OpenAI OAuth refresh failed (HTTP " +
             std::to_string(refresh_resp.status_code) + "): " + refresh_resp.body);
-    }
-    if (refresh_resp.body.size() > kOAuthTokenBodyLimitBytes) {
-        throw std::runtime_error("OpenAI OAuth refresh response too large: " +
-            std::to_string(refresh_resp.body.size()) + " bytes");
     }
 
     auto token_json = json::parse(refresh_resp.body);
@@ -320,9 +323,12 @@ bool OpenAIProvider::uses_chatgpt_backend() const {
 }
 
 bool OpenAIProvider::use_responses_api(const std::string& model) const {
-    // The subscription backend only speaks the Responses API, whatever the model; codex
-    // models speak it on api.openai.com too.
-    return model.find("codex") != std::string::npos || uses_chatgpt_backend();
+    // The subscription backend only speaks the Responses API, whatever the model. On
+    // api.openai.com the model decides, and openai_model_route is what knows which ones
+    // are Responses models — including the ids with no "codex" in the name. Anything it
+    // does not recognise keeps Chat Completions, which is what older models speak.
+    return uses_chatgpt_backend() ||
+           openai_model_route(model) != OpenAIModelRoute::Unknown;
 }
 
 std::string OpenAIProvider::responses_url() const {

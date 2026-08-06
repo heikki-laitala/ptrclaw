@@ -8,8 +8,9 @@
 namespace ptrclaw {
 
 // Identifies this client to OpenAI: on the authorize request and on every subscription
-// request. Own name only — naming another client attributes PtrClaw's traffic to it.
-constexpr const char* kOpenAIOriginator = "ptrclaw";
+// request. Paired with the built-in client_id, so it is not a free label — changing it
+// risks the authorize page refusing a value that id is not registered for.
+constexpr const char* kOpenAIOriginator = "pi";
 
 // Guards on the OAuth token endpoint. The response is a small JSON document, so anything
 // larger is not one; and a token request is part of an interactive login, so it must not sit

@@ -1,6 +1,7 @@
 #include "provider.hpp"
 #include "plugin.hpp"
 #include "config.hpp"
+#include "util.hpp"
 #include <cctype>
 #ifdef PTRCLAW_HAS_OPENAI
 #include "providers/openai_token_persist.hpp"
@@ -92,9 +93,14 @@ OpenAIModelRoute openai_model_route(const std::string& model) {
 
 bool openai_oauth_eligible(const std::string& model, const ProviderEntry& entry) {
     if (!entry.oauth_models.empty()) {
+        // Case-insensitively, like the routes below: a config that writes "GPT-5.7" means
+        // the same model, and silently matching nothing would look like the override
+        // being ignored.
+        std::string id = to_lower(model);
         for (const auto& pattern : entry.oauth_models) {
             if (pattern == "*") return true;
-            if (!pattern.empty() && model.find(pattern) != std::string::npos) return true;
+            if (pattern.empty()) continue;
+            if (id.find(to_lower(pattern)) != std::string::npos) return true;
         }
         return false;
     }
@@ -148,8 +154,13 @@ SwitchProviderResult switch_provider(const std::string& name,
             // transport does not accept: the failure would otherwise surface as an opaque
             // error from OpenAI on the next turn.
             if (openai_model_route(effective) == OpenAIModelRoute::SubscriptionOnly) {
-                result.error = effective + " is served only by the ChatGPT subscription. "
-                    "Run /auth openai start for OAuth.";
+                // With tokens present, oauth_models is the only thing that can have
+                // excluded it, and re-running the flow would change nothing.
+                result.error = has_oauth
+                    ? effective + " is served only by the ChatGPT subscription, which "
+                      "oauth_models excludes for this model."
+                    : effective + " is served only by the ChatGPT subscription. "
+                      "Run /auth openai start for OAuth.";
                 return result;
             }
             if (!has_key) {
@@ -163,11 +174,12 @@ SwitchProviderResult switch_provider(const std::string& name,
             }
         }
 
+        // On the local copy only. Config is shared by every session in the process, so
+        // recording this provider's mode there would let one session's model change pick
+        // another session's credential — and the same field is what the OAuth flow
+        // persists, which would put runtime state in the config file.
         ProviderEntry adjusted = entry;
         adjusted.use_oauth = use_oauth;
-        // Record the mode actually built: callers compare against this to decide whether a
-        // model change needs a new provider, and a stale flag skips that rebuild.
-        it->second.use_oauth = use_oauth;
         result.provider = create_provider("openai", config.api_key_for("openai"), http,
             config.base_url_for("openai"), config.prompt_caching_for("openai"), &adjusted);
         result.model = model_arg.empty() ? effective : model_arg;

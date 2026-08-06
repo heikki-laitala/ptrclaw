@@ -19,10 +19,13 @@ constexpr const char* kDefaultAuthorizeBaseUrl = "https://auth.openai.com/oauth/
 constexpr const char* kDefaultOAuthModel = "gpt-5.6-sol";
 
 // ── Model to run after connecting ────────────────────────────────
-// Keeps the current model when the subscription can serve it, so connecting OAuth while
-// on a model like gpt-5 is not a silent downgrade. Falls back to kDefaultOAuthModel,
-// which the very next turn is guaranteed to be able to use.
-std::string oauth_model_after_connect(const std::string& current_model,
+// Keeps the current model when it is an OpenAI model the subscription can serve, so
+// connecting while on gpt-5.5 is not a silent downgrade. current_provider is what was
+// active before the switch: another provider's model would be kept by a permissive
+// oauth_models and then sent to the ChatGPT backend, which cannot serve it. Falls back to
+// kDefaultOAuthModel, which the very next turn is guaranteed to be able to use.
+std::string oauth_model_after_connect(const std::string& current_provider,
+                                      const std::string& current_model,
                                       const ProviderEntry& openai_entry);
 
 // ── Authorize URL builder ────────────────────────────────────────

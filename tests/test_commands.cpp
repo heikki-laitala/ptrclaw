@@ -2,10 +2,18 @@
 #include "agent.hpp"
 #include "commands.hpp"
 #include "memory/json_memory.hpp"
+#include "mock_http_client.hpp"
+#include "plugin.hpp"
 #include "test_helpers.hpp"
 #include <unistd.h>
 
 using namespace ptrclaw;
+
+static MockHttpClient test_http;
+
+// Helper: skip test if provider is not compiled in
+#define REQUIRE_PROVIDER(name) \
+    if (!PluginRegistry::instance().has_provider(name)) { SKIP(name " not compiled"); }
 
 static Agent make_cmd_agent() {
     auto provider = std::make_unique<StubProvider>();
@@ -14,6 +22,25 @@ static Agent make_cmd_agent() {
     cfg.memory.backend = "none";
     return Agent(std::move(provider), cfg);
 }
+
+// cmd_model's OpenAI branch is selected by the live provider's name, so exercising it
+// needs a stub that answers "openai" without reaching the network.
+namespace {
+
+class OpenAINamedStubProvider : public StubProvider {
+public:
+    std::string provider_name() const override { return "openai"; }
+};
+
+Agent make_openai_agent(const std::string& model) {
+    Config cfg;
+    cfg.agent.max_tool_iterations = 5;
+    cfg.memory.backend = "none";
+    cfg.model = model;   // Agent takes its model from the config
+    return Agent(std::make_unique<OpenAINamedStubProvider>(), cfg);
+}
+
+} // namespace
 
 // ── cmd_status ───────────────────────────────────────────────────
 
@@ -98,6 +125,60 @@ TEST_CASE("cmd_models: empty providers", "[commands]") {
     auto result = cmd_models(agent, cfg);
     REQUIRE(result.find("Current:") != std::string::npos);
     REQUIRE(result.find("Providers:") != std::string::npos);
+}
+
+// ── cmd_model ────────────────────────────────────────────────────
+
+// The refusal lives in switch_provider, so /model has to go through it for every model
+// change — not only when the credential mode flips. It does not flip here: no tokens are
+// configured, so both the old and the new model resolve to the API key.
+TEST_CASE("cmd_model: refuses a model the configured credential cannot serve",
+          "[commands][oauth]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto agent = make_openai_agent("gpt-4o");
+    Config cfg;
+    cfg.providers["openai"].api_key = "sk-test";
+
+    auto result = cmd_model("gpt-5.3-codex-spark", agent, cfg, test_http);
+
+    REQUIRE(result.find("subscription") != std::string::npos);
+    // Neither the live agent nor the config may keep the unusable model: it would be
+    // loaded again at the next start and fail there instead.
+    REQUIRE(agent.model() == "gpt-4o");
+    REQUIRE(cfg.model != "gpt-5.3-codex-spark");
+}
+
+TEST_CASE("cmd_model: switches to a model the credential can serve", "[commands][oauth]") {
+    REQUIRE_PROVIDER("openai");
+    HomeGuard home;
+    home.write_default_config();
+
+    auto agent = make_openai_agent("gpt-4o");
+    Config cfg;
+    cfg.providers["openai"].api_key = "sk-test";
+
+    auto result = cmd_model("gpt-5.6", agent, cfg, test_http);
+
+    REQUIRE(result.find("gpt-5.6") != std::string::npos);
+    REQUIRE(agent.model() == "gpt-5.6");
+    REQUIRE(cfg.model == "gpt-5.6");
+}
+
+// A non-OpenAI provider has one credential, so there is nothing to resolve and no reason
+// to rebuild it.
+TEST_CASE("cmd_model: other providers just take the model", "[commands]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto agent = make_cmd_agent();
+    Config cfg;
+
+    auto result = cmd_model("some-local-model", agent, cfg, test_http);
+
+    REQUIRE(result.find("some-local-model") != std::string::npos);
+    REQUIRE(agent.model() == "some-local-model");
 }
 
 // ── cmd_skill ────────────────────────────────────────────────────

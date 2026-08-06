@@ -313,13 +313,21 @@ bool SessionManager::handle_auth_command(
                              const std::string& code) {
         auto r = apply_oauth_result(code, pending, config_, http_);
         if (!r.success) { send_reply(r.error); return; }
+        // Before set_provider, which makes the name "openai" whatever it was.
+        std::string previous_provider = agent.provider_name();
         agent.set_provider(std::move(r.provider));
-        agent.set_model(oauth_model_after_connect(agent.model(),
+        agent.set_model(oauth_model_after_connect(previous_provider, agent.model(),
                                                   config_.providers["openai"]));
+        // The provider and model are half of what just changed, and apply_oauth_result
+        // only persists the token fields. Without this the next start comes back on the
+        // old provider — while the reply below claims it was saved.
+        config_.provider = "openai";
+        config_.model = agent.model();
+        bool saved = r.persisted && config_.persist_selection();
         clear_pending_oauth(ev.session_id);
         send_reply(std::string("OpenAI OAuth connected ✅ Model switched to ") +
                    agent.model() + "." +
-                   (r.persisted
+                   (saved
                     ? " Saved to ~/.ptrclaw/config.json"
                     : " (warning: could not persist to config file)"));
     };

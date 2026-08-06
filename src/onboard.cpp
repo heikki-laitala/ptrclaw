@@ -152,9 +152,9 @@ bool setup_openai_oauth(Config& config, HttpClient& http) {
         return false;
     }
 
-    config.provider = "openai";
-    config.model = oauth_model_after_connect(config.model,
+    config.model = oauth_model_after_connect(config.provider, config.model,
                                              config.providers["openai"]);
+    config.provider = "openai";
     config.persist_selection();
     std::cout << "OAuth connected. Provider: openai | Model: "
               << config.model << "\n";

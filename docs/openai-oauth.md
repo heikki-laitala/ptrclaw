@@ -69,12 +69,14 @@ Two details worth knowing:
 `gpt-5.4-codex` is accepted as an alias of `gpt-5.4`.
 
 A model whose only route rejects the credential you have is refused when you select it,
-rather than failing later with an opaque error from OpenAI.
+rather than failing later with an opaque error from OpenAI — and the refusal names what
+would fix it, `oauth_models` included when that is what excluded the model.
 
 ### API format
 
 Over OAuth it is always the Responses API — the ChatGPT backend speaks nothing else. Over an
-API key, codex models use the Responses API and the rest use Chat Completions.
+API key the route table decides: every model it lists uses the Responses API, and anything it
+does not recognise stays on Chat Completions.
 
 You can have both an API key and OAuth tokens configured and switch freely; `/model` rebuilds
 the provider whenever the switch changes which credential applies.
@@ -83,7 +85,7 @@ the provider whenever the switch changes which credential applies.
 
 The routes above need editing when OpenAI ships models, so `oauth_models` overrides them. It
 replaces the built-in routes rather than adding to them, so it can widen or narrow the set;
-entries match as substrings, and `"*"` matches any model:
+entries match as case-insensitive substrings, and `"*"` matches any model:
 
 ```json
 {
@@ -105,8 +107,8 @@ Requests to the subscription backend carry, besides the bearer token:
 | Header | Value |
 | --- | --- |
 | `chatgpt-account-id` | the `chatgpt_account_id` claim of the current access token, omitted when absent |
-| `originator` | `ptrclaw` |
-| `User-Agent` | `ptrclaw (<os> <release>; <arch>)` |
+| `originator` | `pi` — paired with the built-in client id, not a free label |
+| `User-Agent` | `pi (<os> <release>; <arch>)` |
 
 The account id is read from the live token rather than stored, so it follows the token across
 a refresh. A subscription covering more than one workspace needs it to route the request.

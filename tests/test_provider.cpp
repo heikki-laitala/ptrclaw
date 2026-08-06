@@ -362,6 +362,15 @@ TEST_CASE("auth_mode_label: openai honours oauth_models override", "[provider][o
     REQUIRE(auth_mode_label("openai", "gpt-5.5", cfg) == "API key");
 }
 
+TEST_CASE("openai_oauth_eligible: oauth_models matches case-insensitively",
+          "[provider][oauth]") {
+    ProviderEntry entry;
+    entry.oauth_models = {"GPT-5.7"};
+    REQUIRE(openai_oauth_eligible("gpt-5.7-mini", entry));
+    entry.oauth_models = {"codex"};
+    REQUIRE(openai_oauth_eligible("GPT-5.4-CODEX", entry));
+}
+
 // ── switch_provider: OAuth beyond codex ─────────────────────────
 
 TEST_CASE("switch_provider: openai gpt-5.5 uses oauth without api key", "[provider][oauth]") {
@@ -372,7 +381,6 @@ TEST_CASE("switch_provider: openai gpt-5.5 uses oauth without api key", "[provid
     REQUIRE(result.error.empty());
     REQUIRE(result.provider != nullptr);
     REQUIRE(result.model == "gpt-5.5");
-    REQUIRE(cfg.providers["openai"].use_oauth);
 }
 
 // Refusing beats silently sending it to a transport that will not serve it.
@@ -398,6 +406,22 @@ TEST_CASE("switch_provider: platform-only model without api key is refused",
     REQUIRE(result.error.find("API key") != std::string::npos);
 }
 
+// Re-running the OAuth flow cannot change this outcome, so the message must not send the
+// user there — oauth_models is the only thing that excluded the model.
+TEST_CASE("switch_provider: subscription-only refusal names oauth_models when that is why",
+          "[provider][oauth]") {
+    Config cfg;
+    cfg.providers["openai"].api_key = "sk-test";
+    cfg.providers["openai"].oauth_access_token = "token";
+    cfg.providers["openai"].oauth_models = {"gpt-5.6-sol"};
+
+    auto result = switch_provider("openai", "gpt-5.3-codex-spark", "gpt-5.6-sol",
+                                  cfg, test_http);
+    REQUIRE_FALSE(result.error.empty());
+    REQUIRE(result.error.find("oauth_models") != std::string::npos);
+    REQUIRE(result.error.find("/auth") == std::string::npos);
+}
+
 // A platform-only model must take the API key even when tokens are also present.
 TEST_CASE("switch_provider: platform-only model prefers the api key", "[provider][oauth]") {
     REQUIRE_PROVIDER("openai");
@@ -406,7 +430,7 @@ TEST_CASE("switch_provider: platform-only model prefers the api key", "[provider
     cfg.providers["openai"].oauth_access_token = "token";
     auto result = switch_provider("openai", "gpt-5.6", "gpt-5.5", cfg, test_http);
     REQUIRE(result.error.empty());
-    REQUIRE_FALSE(cfg.providers["openai"].use_oauth);
+    REQUIRE(result.provider != nullptr);
 }
 
 TEST_CASE("switch_provider: openai oauth_models override enables oauth", "[provider][oauth]") {
@@ -416,7 +440,6 @@ TEST_CASE("switch_provider: openai oauth_models override enables oauth", "[provi
     cfg.providers["openai"].oauth_models = {"o3"};
     auto result = switch_provider("openai", "o3-mini", "gpt-4", cfg, test_http);
     REQUIRE(result.error.empty());
-    REQUIRE(cfg.providers["openai"].use_oauth);
 }
 
 TEST_CASE("switch_provider: openai ineligible model with only oauth errors", "[provider][oauth]") {
@@ -427,10 +450,10 @@ TEST_CASE("switch_provider: openai ineligible model with only oauth errors", "[p
     REQUIRE(result.error.find("No API key") != std::string::npos);
 }
 
-// The live provider's auth mode is derived from the model, so config must record what
-// was actually built. Otherwise /model reads a stale flag and skips the rebuild that
-// switches credentials back — leaving an API-key provider serving an OAuth model.
-TEST_CASE("switch_provider: openai records the resolved auth mode", "[provider][oauth]") {
+// use_oauth is per-provider-instance runtime state, and Config is shared by every session
+// in the process. Writing the resolved mode there makes one session's model change decide
+// another session's credential.
+TEST_CASE("switch_provider: openai leaves the shared config alone", "[provider][oauth]") {
     REQUIRE_PROVIDER("openai");
     Config cfg;
     cfg.providers["openai"].api_key = "sk-test";
@@ -439,9 +462,7 @@ TEST_CASE("switch_provider: openai records the resolved auth mode", "[provider][
 
     auto to_key = switch_provider("openai", "gpt-4o", "gpt-5.5", cfg, test_http);
     REQUIRE(to_key.error.empty());
-    REQUIRE_FALSE(cfg.providers["openai"].use_oauth);
-
-    auto back_to_oauth = switch_provider("openai", "gpt-5.5", "gpt-4o", cfg, test_http);
-    REQUIRE(back_to_oauth.error.empty());
     REQUIRE(cfg.providers["openai"].use_oauth);
+    REQUIRE(cfg.providers["openai"].api_key == "sk-test");
+    REQUIRE(cfg.providers["openai"].oauth_access_token == "token");
 }
