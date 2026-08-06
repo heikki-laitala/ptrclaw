@@ -1,4 +1,5 @@
 #pragma once
+#include "workspace.hpp"
 #include <string>
 #include <memory>
 #include <vector>
@@ -71,6 +72,20 @@ public:
 protected:
     EventBus* event_bus_ = nullptr;
     std::string session_id_;
+};
+
+// Base class for tools confined to one session's filesystem scope.
+//
+// Wired once at construction by ToolManager, the same way EventBusAwareTool and
+// MemoryAwareTool are — a tool's execute() still receives nothing but its arguments.
+// Default-constructed the scope is empty, and resolve_in_workspace() then refuses
+// everything rather than falling back to the process cwd.
+class WorkspaceAwareTool : public Tool {
+public:
+    void set_workspace(const SessionWorkspace& scope) { workspace_ = scope; }
+
+protected:
+    SessionWorkspace workspace_;
 };
 
 } // namespace ptrclaw

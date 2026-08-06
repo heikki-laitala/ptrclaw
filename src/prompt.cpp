@@ -83,9 +83,28 @@ std::string build_system_prompt(const std::vector<ToolSpec>& tool_specs,
     }
 
     // ── Workspace ──
-    ss << "## Workspace\n"
-       << "Working directory: " << std::filesystem::current_path().string() << "\n"
-       << "Use this directory as the default workspace for file operations.\n\n";
+    //
+    // Two shapes, because the tools differ. Unscoped, file operations reach whatever the
+    // process can and the cwd is the useful default. Scoped, anything outside the roots is
+    // refused, so naming them is not decoration: a model told to use the cwd would spend
+    // its turns on refusals.
+    ss << "## Workspace\n";
+    if (!runtime.workspace.empty() || !runtime.context_dir.empty()) {
+        if (!runtime.workspace.empty()) {
+            ss << "Your workspace: " << runtime.workspace << "\n"
+               << "Read and write files here. Relative paths resolve against it, so "
+                  "prefer them.\n";
+        }
+        if (!runtime.context_dir.empty()) {
+            ss << "Shared context: " << runtime.context_dir << " (read-only)\n"
+               << "Files provided for this task live here, and every session sees the "
+                  "same ones. Reading is allowed; writing is refused.\n";
+        }
+        ss << "Paths outside these directories are refused, including absolute ones.\n\n";
+    } else {
+        ss << "Working directory: " << std::filesystem::current_path().string() << "\n"
+           << "Use this directory as the default workspace for file operations.\n\n";
+    }
 
     // ── Silent Replies ──
     if (!runtime.channel.empty()) {

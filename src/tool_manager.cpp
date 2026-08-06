@@ -57,11 +57,23 @@ ToolManager::ToolManager(std::vector<std::unique_ptr<Tool>> tools,
             [this](const ToolCallCancelEvent& ev) { on_tool_call_cancel(ev); }));
 
     // Wire EventBus and session identity into tools that need it
+    //
+    // The workspace joins them rather than being passed per call: execute() takes only
+    // arguments, and a tool that had to be told its scope on every call could be called
+    // without one. Derived here because this is where the session id and the config meet;
+    // with no serving config the scope is empty and the scoped tools refuse everything.
+    SessionWorkspace scope = session_workspace(config_.serving.workspace_root,
+                                               config_.serving.context_dir,
+                                               session_id_);
     for (auto& tool : tools_) {
         auto* ebt = dynamic_cast<EventBusAwareTool*>(tool.get());
         if (ebt) {
             ebt->set_event_bus(&bus_);
             ebt->set_session_id(session_id_);
+        }
+        auto* wat = dynamic_cast<WorkspaceAwareTool*>(tool.get());
+        if (wat) {
+            wat->set_workspace(scope);
         }
     }
 }

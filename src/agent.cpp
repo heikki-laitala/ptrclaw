@@ -96,8 +96,14 @@ void Agent::inject_system_prompt() {
         prompt = build_hatch_prompt();
     } else {
         bool include_tool_desc = !provider_->supports_native_tools();
+        // Same derivation ToolManager uses to scope the tools, so the prompt describes
+        // the directories the tools will actually accept.
+        SessionWorkspace scope = session_workspace(config_.serving.workspace_root,
+                                                   config_.serving.context_dir,
+                                                   session_id_);
         RuntimeInfo runtime{model_, provider_->provider_name(), channel_,
-                           binary_path_, session_id_};
+                           binary_path_, session_id_,
+                           scope.workspace, scope.context_dir};
         const auto* active = find_skill(active_skill_name_);
         prompt = build_system_prompt(cached_tool_specs_, include_tool_desc,
                                      has_active_memory(), memory_.get(), runtime);

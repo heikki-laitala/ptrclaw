@@ -14,6 +14,10 @@ struct RuntimeInfo {
     std::string channel;      // empty if CLI
     std::string binary_path;  // resolved absolute path to ptrclaw binary
     std::string session_id;   // current session ID (e.g. telegram chat ID)
+    // Filesystem scope, when the build and config give the session one. Empty on the
+    // personal agent, where tools reach whatever the process can and the prompt says so.
+    std::string workspace;    // this session's own directory: read and write
+    std::string context_dir;  // shared across sessions: read-only
 };
 
 // Build the system prompt, including tool descriptions for XML-based providers.

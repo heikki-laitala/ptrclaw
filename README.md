@@ -229,6 +229,10 @@ Two keys matter for serving more than one user:
   its own memory store under `~/.ptrclaw/sessions/`, so keys and recall never cross
   between users. See [docs/memory.md](docs/memory.md#session-isolation).
 
+For a pod serving many chats or tasks at once over HTTP, `make build-serving` adds a
+per-session workspace and a shared read-only context directory, and leaves `shell` and
+`cron` out of the binary — see [`docs/serving.md`](docs/serving.md).
+
 Minimal config (Anthropic only):
 
 ```json

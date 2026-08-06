@@ -116,6 +116,41 @@ TEST_CASE("build_system_prompt: workspace section present", "[prompt]") {
     REQUIRE(result.find("## Workspace") != std::string::npos);
 }
 
+// Unscoped — the personal agent — still gets the process cwd, unchanged.
+TEST_CASE("build_system_prompt: an unscoped session is told the working directory",
+          "[prompt]") {
+    RuntimeInfo runtime{"model", "provider", "", "", "sess"};
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr,
+                                      runtime);
+    REQUIRE(result.find("Working directory:") != std::string::npos);
+}
+
+// Scoped, the tools will refuse anything outside the two roots — so the prompt has to name
+// them and their permissions, or the model is told to work somewhere it cannot.
+TEST_CASE("build_system_prompt: a scoped session is told both roots", "[prompt]") {
+    RuntimeInfo runtime{"model", "provider", "http", "", "sess",
+                        "/work/sessions/abc-sess", "/work/context"};
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr,
+                                      runtime);
+
+    REQUIRE(result.find("/work/sessions/abc-sess") != std::string::npos);
+    REQUIRE(result.find("/work/context") != std::string::npos);
+    REQUIRE(result.find("read-only") != std::string::npos);
+    // And it must not still advertise the process cwd as the place to work.
+    REQUIRE(result.find("Working directory:") == std::string::npos);
+}
+
+TEST_CASE("build_system_prompt: a scoped session with no shared context", "[prompt]") {
+    RuntimeInfo runtime{"model", "provider", "http", "", "sess",
+                        "/work/sessions/abc-sess", ""};
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr,
+                                      runtime);
+
+    REQUIRE(result.find("/work/sessions/abc-sess") != std::string::npos);
+    // Nothing shared to mention, so no read-only claim to make.
+    REQUIRE(result.find("read-only") == std::string::npos);
+}
+
 TEST_CASE("build_system_prompt: includes binary path and session", "[prompt]") {
     RuntimeInfo runtime{"model", "provider", "telegram",
                         "/usr/local/bin/ptrclaw", "123456789"};

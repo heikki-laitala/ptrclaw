@@ -263,6 +263,18 @@ Config Config::load() {
         }
     }
 
+    // Serving profile. Both paths are expanded here rather than at the point of use: the
+    // scoped tools compare canonical prefixes, and a literal "~" would never match one.
+    if (j.contains("serving") && j["serving"].is_object()) {
+        auto& s = j["serving"];
+        if (s.contains("context_dir") && s["context_dir"].is_string())
+            cfg.serving.context_dir = expand_home(s["context_dir"].get<std::string>());
+        if (s.contains("workspace_root") && s["workspace_root"].is_string())
+            cfg.serving.workspace_root = expand_home(s["workspace_root"].get<std::string>());
+        if (s.contains("generate_session_ids") && s["generate_session_ids"].is_boolean())
+            cfg.serving.generate_session_ids = s["generate_session_ids"].get<bool>();
+    }
+
     // Environment variables always override config file
     if (const char* v = std::getenv("ANTHROPIC_API_KEY"))
         cfg.providers["anthropic"].api_key = v;

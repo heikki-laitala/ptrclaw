@@ -93,6 +93,20 @@ opt_tools      = get_option('with_tools')
 # otherwise have no tools at all.
 opt_file_read  = get_option('with_file_read') or opt_tools
 
+# Serving profile: scoped file tools instead of the unscoped ones. Refused rather than
+# silently resolved, because both register a tool named "file_read" and PluginRegistry keys
+# factories by name — the winner would be whichever translation unit's static initializer
+# ran last, which is not a way to decide a filesystem boundary.
+opt_serving = get_option('with_serving')
+if opt_serving
+  if opt_file_read
+    error('with_serving cannot be combined with with_tools or with_file_read: both ' +
+          'register a tool named "file_read". Build the serving profile with ' +
+          '-Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false')
+  endif
+  add_project_arguments('-DPTRCLAW_HAS_SERVING', language: 'cpp')
+endif
+
 # Memory features (core memory is always included — Agent requires it)
 opt_sqlite_memory = get_option('with_sqlite_memory')
 opt_memory_tools  = get_option('with_memory_tools')
@@ -140,6 +154,7 @@ core_sources = files(
   'src/prompt.cpp', 'src/provider.cpp',
   'src/session.cpp', 'src/skill.cpp', 'src/stream_relay.cpp', 'src/tool.cpp',
   'src/tool_manager.cpp', 'src/turn_pool.cpp', 'src/util.cpp',
+  'src/workspace.cpp', 'src/tools/serving_file.cpp',
 ) + http_impl_source
 
 # ── Optional sources (gated by feature flags) ──────────────────
@@ -277,6 +292,8 @@ core_test_sources = files(
   'tests/test_skill.cpp',
   'tests/test_commands.cpp',
   'tests/test_tool_manager.cpp',
+  'tests/test_workspace.cpp',
+  'tests/test_serving_tools.cpp',
 )
 
 optional_test_sources = []
@@ -295,6 +312,11 @@ elif opt_file_read
   # Only in the read-only configuration: what it asserts is which tools are ABSENT, and
   # that is not a claim the full-tools build can make.
   optional_test_sources += files('tests/test_file_read_only.cpp')
+endif
+if opt_serving
+  # Same reasoning as test_file_read_only.cpp: it asserts that shell and cron are gone and
+  # that file_read resolves to the scoped implementation, neither of which holds elsewhere.
+  optional_test_sources += files('tests/test_serving_profile.cpp')
 endif
 if opt_telegram
   optional_test_sources += files('tests/test_telegram.cpp')
@@ -394,6 +416,8 @@ if opt_tools
   tools_summary = 'file_read, file_write, file_edit, shell, cron'
 elif opt_file_read
   tools_summary = 'file_read only (no mutating tools)'
+elif opt_serving
+  tools_summary = 'workspace-scoped file_read, file_write (serving profile)'
 elif opt_embed
   tools_summary = 'host-bridged (via ptrclaw_register_tool)'
 else
