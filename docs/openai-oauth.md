@@ -98,6 +98,19 @@ entries match as substrings, and `"*"` matches any model:
 Set `["*"]` to send every OpenAI model over OAuth. A model the backend does not serve then
 fails with that backend's error rather than being refused up front.
 
+### Request identity
+
+Requests to the subscription backend carry, besides the bearer token:
+
+| Header | Value |
+| --- | --- |
+| `chatgpt-account-id` | the `chatgpt_account_id` claim of the current access token, omitted when absent |
+| `originator` | `ptrclaw` |
+| `User-Agent` | `ptrclaw (<os> <release>; <arch>)` |
+
+The account id is read from the live token rather than stored, so it follows the token across
+a refresh. A subscription covering more than one workspace needs it to route the request.
+
 ### Endpoints
 
 Requests over OAuth go to `https://chatgpt.com/backend-api/codex/responses`. Setting
@@ -150,3 +163,9 @@ You don't need to edit the OAuth fields manually — the `/auth` flow and automa
 ## Token refresh
 
 When the access token expires, PtrClaw automatically refreshes it using the `oauth_refresh_token` and saves the updated tokens to config. This happens transparently during API calls.
+
+Both the refresh and the initial code exchange are constrained: the token endpoint must be
+`https` (a plaintext one is refused before anything is sent), the request uses a 30-second
+timeout rather than the chat timeout, and a response body over 1 MiB is rejected unparsed.
+`oauth_token_url` stays configurable for a gateway that fronts `auth.openai.com`, but it
+cannot be a plaintext URL.

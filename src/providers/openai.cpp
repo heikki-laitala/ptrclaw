@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <map>
 #include <chrono>
+#include <sys/utsname.h>
 
 static ptrclaw::ProviderRegistrar reg_openai("openai",
     [](const std::string& key, ptrclaw::HttpClient& http, const std::string& base_url,
@@ -45,6 +46,55 @@ bool is_chatgpt_base_url(const std::string& url) {
            url == "https://chatgpt.com/backend-api/codex/responses";
 }
 
+// Identifies the client and the host it runs on, e.g. "ptrclaw (Darwin 24.6.0; arm64)".
+// Resolved once — uname does not change while the process lives.
+const std::string& user_agent() {
+    static const std::string cached = [] {
+        std::string agent = kOpenAIOriginator;
+        struct utsname host {};
+        if (uname(&host) == 0) {
+            agent += " (";
+            agent += host.sysname;
+            agent += " ";
+            agent += host.release;
+            agent += "; ";
+            agent += host.machine;
+            agent += ")";
+        }
+        return agent;
+    }();
+    return cached;
+}
+
+// Rejects padding and every character outside the alphabet: a JWT segment has neither, and
+// a token that is not one must not decode to something that parses.
+std::string base64url_decode(const std::string& encoded) {
+    auto sextet = [](char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '-') return 62;
+        if (c == '_') return 63;
+        return -1;
+    };
+
+    std::string decoded;
+    decoded.reserve(encoded.size() * 3 / 4);
+    unsigned buffer = 0;
+    int bits = 0;
+    for (char c : encoded) {
+        int value = sextet(c);
+        if (value < 0) return {};
+        buffer = (buffer << 6) | static_cast<unsigned>(value);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            decoded += static_cast<char>((buffer >> bits) & 0xFFU);
+        }
+    }
+    return decoded;
+}
+
 // The built-in client_id belongs to the OAuth flow, so it is only compiled in
 // when that flow is. A build without the flow must not carry a client_id it can
 // never use — and the provider still honours one supplied in config, so a
@@ -57,6 +107,34 @@ std::string resolve_oauth_client_id(const std::string& configured) {
 #endif
 }
 } // namespace
+
+bool is_https_url(const std::string& url) {
+    return url.rfind("https://", 0) == 0;
+}
+
+std::string openai_account_id_from_token(const std::string& access_token) {
+    auto header_end = access_token.find('.');
+    if (header_end == std::string::npos) return {};
+    auto payload_end = access_token.find('.', header_end + 1);
+    if (payload_end == std::string::npos) return {};
+
+    std::string payload = base64url_decode(
+        access_token.substr(header_end + 1, payload_end - header_end - 1));
+    if (payload.empty()) return {};
+
+    // A token that does not parse is not an error to report: the header is simply omitted,
+    // exactly as for a token that carries no account.
+    try {
+        auto claims = json::parse(payload);
+        auto auth = claims.find("https://api.openai.com/auth");
+        if (auth == claims.end() || !auth->is_object()) return {};
+        auto account_id = auth->find("chatgpt_account_id");
+        if (account_id == auth->end() || !account_id->is_string()) return {};
+        return account_id->get<std::string>();
+    } catch (const std::exception&) {
+        return {};
+    }
+}
 
 OpenAIProvider::OpenAIProvider(const std::string& api_key, HttpClient& http,
                                const std::string& base_url,
@@ -165,6 +243,12 @@ void OpenAIProvider::refresh_oauth_if_needed() {
     if (oauth_refresh_token_.empty()) {
         throw std::runtime_error("OpenAI OAuth access token expired and no refresh token is configured");
     }
+    // Checked here rather than at construction: an endpoint that is never contacted cannot
+    // leak anything, and refusing at startup would break a build that only holds tokens.
+    if (!is_https_url(oauth_token_url_)) {
+        throw std::runtime_error(
+            "OpenAI OAuth token endpoint must be https: " + oauth_token_url_);
+    }
 
     std::string body = ptrclaw::form_encode({
         {"grant_type", "refresh_token"},
@@ -175,11 +259,16 @@ void OpenAIProvider::refresh_oauth_if_needed() {
     auto refresh_resp = http_.post(
         oauth_token_url_,
         body,
-        {{"Content-Type", "application/x-www-form-urlencoded"}});
+        {{"Content-Type", "application/x-www-form-urlencoded"}},
+        kOAuthTokenTimeoutSeconds);
 
     if (refresh_resp.status_code < 200 || refresh_resp.status_code >= 300) {
         throw std::runtime_error("OpenAI OAuth refresh failed (HTTP " +
             std::to_string(refresh_resp.status_code) + "): " + refresh_resp.body);
+    }
+    if (refresh_resp.body.size() > kOAuthTokenBodyLimitBytes) {
+        throw std::runtime_error("OpenAI OAuth refresh response too large: " +
+            std::to_string(refresh_resp.body.size()) + " bytes");
     }
 
     auto token_json = json::parse(refresh_resp.body);
@@ -203,11 +292,22 @@ void OpenAIProvider::refresh_oauth_if_needed() {
 }
 
 std::vector<Header> OpenAIProvider::build_headers() {
+    // bearer_token() may refresh, so read the account from what it returns rather than from
+    // the token the provider was constructed with.
     std::string token = bearer_token();
-    return {
+    std::vector<Header> headers = {
         {"Authorization", "Bearer " + token},
         {"Content-Type", "application/json"}
     };
+    if (!uses_chatgpt_backend()) return headers;
+
+    // The subscription backend scopes a request to an account, which a token covering more
+    // than one workspace does not imply, and identifies the client that sent it.
+    std::string account_id = openai_account_id_from_token(token);
+    if (!account_id.empty()) headers.emplace_back("chatgpt-account-id", account_id);
+    headers.emplace_back("originator", kOpenAIOriginator);
+    headers.emplace_back("User-Agent", user_agent());
+    return headers;
 }
 
 // ── Responses API detection ──────────────────────────────────────

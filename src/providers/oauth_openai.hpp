@@ -17,9 +17,6 @@ constexpr const char* kDefaultAuthorizeBaseUrl = "https://auth.openai.com/oauth/
 // The model a fresh connection lands on: a dual-route id, so it works on the credential
 // just added and keeps working if the API key later becomes the active one.
 constexpr const char* kDefaultOAuthModel = "gpt-5.6-sol";
-// Identifies this client to OpenAI on the authorize request. Own name only: naming another
-// client here would attribute PtrClaw's traffic to it.
-constexpr const char* kDefaultOriginator = "ptrclaw";
 
 // ── Model to run after connecting ────────────────────────────────
 // Keeps the current model when the subscription can serve it, so connecting OAuth while
