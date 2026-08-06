@@ -989,7 +989,44 @@ TEST_CASE("OpenAIProvider: OAuth sends non-codex model to the ChatGPT backend",
     REQUIRE(result.content.value_or("") == "Hi from gpt-5.5");
 }
 
-TEST_CASE("OpenAIProvider: api key keeps non-codex model on Chat Completions",
+TEST_CASE("OpenAIProvider: api key sends a dual-route model to Responses",
+          "[providers][openai][responses]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-5.6-sol",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+        "usage": {"input_tokens": 4, "output_tokens": 1}
+    })"};
+
+    OpenAIProvider provider("api-key", mock, "");
+    auto result = provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {},
+                                "gpt-5.6-sol", 0.5);
+
+    // No "codex" in the id, no OAuth — the route table is what knows this is a
+    // Responses model on api.openai.com.
+    REQUIRE(mock.last_url == "https://api.openai.com/v1/responses");
+    auto body = json::parse(mock.last_body);
+    REQUIRE(body.contains("input"));
+    REQUIRE_FALSE(body.contains("messages"));
+    REQUIRE(result.content.value_or("") == "ok");
+}
+
+TEST_CASE("OpenAIProvider: api key sends a platform-only model to Responses",
+          "[providers][openai][responses]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-5.6",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+        "usage": {"input_tokens": 4, "output_tokens": 1}
+    })"};
+
+    OpenAIProvider provider("api-key", mock, "");
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-5.6", 0.5);
+
+    REQUIRE(mock.last_url == "https://api.openai.com/v1/responses");
+}
+
+TEST_CASE("OpenAIProvider: api key keeps an unknown model on Chat Completions",
           "[providers][openai][responses]") {
     MockHttpClient mock;
     mock.next_response = {200, R"({
@@ -1127,8 +1164,8 @@ TEST_CASE("OpenAIProvider: ChatGPT backend requests identify the account",
     provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-5.5", 0.5);
 
     REQUIRE(find_header(mock.last_headers, "chatgpt-account-id") == "acct_test_123");
-    REQUIRE(find_header(mock.last_headers, "originator") == "ptrclaw");
-    REQUIRE(find_header(mock.last_headers, "User-Agent").rfind("ptrclaw", 0) == 0);
+    REQUIRE(find_header(mock.last_headers, "originator") == "pi");
+    REQUIRE(find_header(mock.last_headers, "User-Agent").rfind("pi", 0) == 0);
 }
 
 TEST_CASE("OpenAIProvider: a token without the claim sends no account header",
@@ -1185,7 +1222,7 @@ TEST_CASE("OpenAIProvider: refresh refuses a plaintext token endpoint",
 TEST_CASE("OpenAIProvider: refresh rejects an oversized token response",
           "[providers][openai][oauth]") {
     MockHttpClient mock;
-    mock.response_queue.push_back({200, std::string(1024 * 1024 + 1, 'x')});
+    mock.response_queue.push_back({200, std::string(kOAuthTokenBodyLimitBytes + 1, 'x')});
 
     OpenAIProvider provider("api-key", mock, "",
                             true, "old-token", "my-refresh", 1,
@@ -1195,6 +1232,27 @@ TEST_CASE("OpenAIProvider: refresh rejects an oversized token response",
         provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5),
         std::runtime_error);
     REQUIRE(mock.call_count == 1);
+}
+
+// The non-2xx branch puts the body in the exception message, which becomes the user's
+// chat reply — so the cap has to be checked before it, not after.
+TEST_CASE("OpenAIProvider: refresh does not put an oversized error body in the message",
+          "[providers][openai][oauth]") {
+    MockHttpClient mock;
+    mock.response_queue.push_back({502, std::string(kOAuthTokenBodyLimitBytes + 1, 'x')});
+
+    OpenAIProvider provider("api-key", mock, "",
+                            true, "old-token", "my-refresh", 1,
+                            "test-client", "https://auth.test/token");
+
+    bool threw = false;
+    try {
+        provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5);
+    } catch (const std::runtime_error& e) {
+        threw = true;
+        REQUIRE(std::string(e.what()).size() < kOAuthTokenBodyLimitBytes);
+    }
+    REQUIRE(threw);
 }
 
 TEST_CASE("OpenAIProvider: token refresh does not wait out the chat timeout",

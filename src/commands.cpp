@@ -67,30 +67,23 @@ std::string cmd_hatch(Agent& agent) {
 
 std::string cmd_model(const std::string& new_model, Agent& agent,
                        Config& config, HttpClient& http) {
-    // On openai, re-create provider if auth mode changes.
+    // On openai every model change goes through switch_provider, not only the ones that
+    // flip the credential: it is what knows which transport can serve the model and
+    // refuses the ones neither credential can reach. Comparing modes first would skip
+    // that check for the majority of changes, and persist a model the next start cannot
+    // build a provider for. Rebuilding an object is cheap beside either failure.
     //
-    // Guarded on the provider, not the interactive flow: tokens can be supplied in
-    // config without the flow, so switching between a model the subscription serves
-    // (OAuth) and one it does not (API key) must still rebuild the provider. Otherwise
-    // use_oauth_ stays stale and the wrong credential is sent.
+    // Guarded on the provider, not the interactive flow: tokens can be supplied in config
+    // without the flow, and the credential still has to follow the model.
 #ifdef PTRCLAW_HAS_OPENAI
     if (agent.provider_name() == "openai") {
-        auto oai_it = config.providers.find("openai");
-        bool on_oauth = oai_it != config.providers.end() &&
-                        oai_it->second.use_oauth;
-        bool want_oauth = oai_it != config.providers.end() &&
-                          !oai_it->second.oauth_access_token.empty() &&
-                          openai_oauth_eligible(new_model, oai_it->second);
-        if (on_oauth != want_oauth) {
-            auto sr = switch_provider("openai", new_model, agent.model(),
-                                       config, http);
-            if (!sr.error.empty()) return sr.error;
-            agent.set_provider(std::move(sr.provider));
-            if (!sr.model.empty()) agent.set_model(sr.model);
-            config.model = agent.model();
-            config.persist_selection();
-            return "Model set to: " + agent.model();
-        }
+        auto sr = switch_provider("openai", new_model, agent.model(), config, http);
+        if (!sr.error.empty()) return sr.error;
+        agent.set_provider(std::move(sr.provider));
+        if (!sr.model.empty()) agent.set_model(sr.model);
+        config.model = agent.model();
+        config.persist_selection();
+        return "Model set to: " + agent.model();
     }
 #endif
     agent.set_model(new_model);

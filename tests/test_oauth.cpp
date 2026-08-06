@@ -4,6 +4,7 @@
 #include "mock_http_client.hpp"
 #ifdef PTRCLAW_HAS_OPENAI_OAUTH
 #include "providers/oauth_openai.hpp"
+#include "providers/openai.hpp"
 #endif
 
 using namespace ptrclaw;
@@ -37,22 +38,40 @@ TEST_CASE("OAuth: default OAuth model is a subscription model", "[oauth]") {
 
 TEST_CASE("OAuth: connecting keeps a model the subscription serves", "[oauth]") {
     ProviderEntry entry;
-    REQUIRE(oauth_model_after_connect("gpt-5.5", entry) == "gpt-5.5");
-    REQUIRE(oauth_model_after_connect("gpt-5.3-codex", entry) == "gpt-5.3-codex");
+    REQUIRE(oauth_model_after_connect("openai", "gpt-5.5", entry) == "gpt-5.5");
+    REQUIRE(oauth_model_after_connect("openai", "gpt-5.3-codex", entry) == "gpt-5.3-codex");
 }
 
 TEST_CASE("OAuth: connecting moves off a model the subscription cannot serve", "[oauth]") {
     ProviderEntry entry;
-    REQUIRE(oauth_model_after_connect("gpt-4o", entry) == std::string(kDefaultOAuthModel));
-    REQUIRE(oauth_model_after_connect("gpt-5.6", entry) == std::string(kDefaultOAuthModel));
-    REQUIRE(oauth_model_after_connect("", entry) == std::string(kDefaultOAuthModel));
+    REQUIRE(oauth_model_after_connect("openai", "gpt-4o", entry) ==
+            std::string(kDefaultOAuthModel));
+    REQUIRE(oauth_model_after_connect("openai", "gpt-5.6", entry) ==
+            std::string(kDefaultOAuthModel));
+    REQUIRE(oauth_model_after_connect("openai", "", entry) ==
+            std::string(kDefaultOAuthModel));
 }
 
 TEST_CASE("OAuth: connecting honours oauth_models when keeping the model", "[oauth]") {
     ProviderEntry entry;
     entry.oauth_models = {"gpt-4o"};
-    REQUIRE(oauth_model_after_connect("gpt-4o", entry) == "gpt-4o");
-    REQUIRE(oauth_model_after_connect("gpt-5.5", entry) == std::string(kDefaultOAuthModel));
+    REQUIRE(oauth_model_after_connect("openai", "gpt-4o", entry) == "gpt-4o");
+    REQUIRE(oauth_model_after_connect("openai", "gpt-5.5", entry) ==
+            std::string(kDefaultOAuthModel));
+}
+
+// Connecting OpenAI OAuth while on another provider's model must not point that model at
+// the ChatGPT backend, however permissive oauth_models is.
+TEST_CASE("OAuth: connecting from another provider always takes the default", "[oauth]") {
+    ProviderEntry entry;
+    REQUIRE(oauth_model_after_connect("anthropic", "claude-sonnet-4-6", entry) ==
+            std::string(kDefaultOAuthModel));
+
+    entry.oauth_models = {"*"};
+    REQUIRE(oauth_model_after_connect("anthropic", "claude-sonnet-4-6", entry) ==
+            std::string(kDefaultOAuthModel));
+    REQUIRE(oauth_model_after_connect("ollama", "llama3.2", entry) ==
+            std::string(kDefaultOAuthModel));
 }
 
 // ── Token endpoint guards ───────────────────────────────────────
@@ -85,7 +104,7 @@ TEST_CASE("OAuth: token exchange refuses a plaintext token endpoint", "[oauth]")
 
 TEST_CASE("OAuth: token exchange rejects an oversized response", "[oauth]") {
     MockHttpClient mock;
-    mock.next_response = {200, std::string(1024 * 1024 + 1, 'x')};
+    mock.next_response = {200, std::string(kOAuthTokenBodyLimitBytes + 1, 'x')};
     ProviderEntry entry;
     entry.oauth_token_url = "https://auth.test/token";
     ProviderEntry out;
@@ -172,9 +191,8 @@ TEST_CASE("build_authorize_url: contains all required params", "[oauth]") {
     REQUIRE(url.find("state=test-state") != std::string::npos);
     REQUIRE(url.find("id_token_add_organizations=true") != std::string::npos);
     REQUIRE(url.find("codex_cli_simplified_flow=true") != std::string::npos);
-    // Identifies this client to OpenAI. Naming another product here would misattribute
-    // every request PtrClaw makes.
-    REQUIRE(url.find("originator=ptrclaw") != std::string::npos);
+    // The value paired with the built-in client_id; see kOpenAIOriginator.
+    REQUIRE(url.find("originator=pi") != std::string::npos);
 }
 
 TEST_CASE("build_authorize_url: starts with authorize base URL", "[oauth]") {

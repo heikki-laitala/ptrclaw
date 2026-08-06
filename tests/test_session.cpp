@@ -6,6 +6,9 @@
 #include "plugin.hpp"
 #include "event.hpp"
 #include "event_bus.hpp"
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
+#include "providers/oauth_openai.hpp"
+#endif
 
 using namespace ptrclaw;
 using json = nlohmann::json;
@@ -159,6 +162,50 @@ TEST_CASE("SessionManager: /auth openai <key> stores and persists the key", "[se
     auto persisted = home.read_config();
     REQUIRE(persisted["providers"]["openai"]["api_key"] == "sk-test-12345");
 }
+
+// The reply claims the change was saved, so it has to be: apply_oauth_result only writes
+// the token fields, and without the selection the next start comes back on the old
+// provider and model.
+#ifdef PTRCLAW_HAS_OPENAI_OAUTH
+TEST_CASE("SessionManager: /auth openai finish persists provider and model", "[session]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();   // provider "anthropic"
+    cfg.allow_channel_commands = true;
+    MockHttpClient http;
+    EventBus bus;
+    SessionManager mgr(cfg, http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    std::string reply;
+    subscribe<MessageReadyEvent>(
+        bus, [&reply](const MessageReadyEvent& e) { reply = e.content; });
+
+    MessageReceivedEvent start;
+    start.session_id = "oauth_sess";
+    start.message.content = "/auth openai start";
+    bus.publish(start);
+
+    http.next_response = {200,
+        R"({"access_token": "tok", "refresh_token": "ref", "expires_in": 3600})"};
+
+    MessageReceivedEvent finish;
+    finish.session_id = "oauth_sess";
+    finish.message.content = "/auth openai finish test-code";
+    bus.publish(finish);
+
+    REQUIRE(reply.find("connected") != std::string::npos);
+    REQUIRE(cfg.provider == "openai");
+    // Was on anthropic's model, which the subscription cannot serve.
+    REQUIRE(cfg.model == std::string(kDefaultOAuthModel));
+
+    auto persisted = home.read_config();
+    REQUIRE(persisted["provider"] == "openai");
+    REQUIRE(persisted["model"] == std::string(kDefaultOAuthModel));
+}
+#endif // PTRCLAW_HAS_OPENAI_OAUTH
 #endif // PTRCLAW_HAS_OPENAI
 
 // ── Pushed conversation history ─────────────────────────────────
