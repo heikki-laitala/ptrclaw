@@ -313,23 +313,44 @@ bool SessionManager::handle_auth_command(
                              const std::string& code) {
         auto r = apply_oauth_result(code, pending, config_, http_);
         if (!r.success) { send_reply(r.error); return; }
-        // Before set_provider, which makes the name "openai" whatever it was.
-        std::string previous_provider = agent.provider_name();
-        agent.set_provider(std::move(r.provider));
-        agent.set_model(oauth_model_after_connect(previous_provider, agent.model(),
-                                                  config_.providers["openai"]));
+        clear_pending_oauth(ev.session_id);
+
+        const auto& openai_entry = config_.providers["openai"];
+        std::string model = oauth_model_after_connect(
+            agent.provider_name(), agent.model(), openai_entry);
+
+        // Through switch_provider rather than a provider built by the OAuth flow: it is the
+        // one place that decides which credential a model may use, and oauth_models can
+        // exclude even the default. Building an OAuth provider here regardless would send
+        // the next request to the subscription backend with a model config excludes.
+        auto sr = switch_provider("openai", model, model, config_, http_);
+        if (!sr.provider) {
+            // The tokens are stored and stay stored: losing them over the model selection
+            // would mean another trip through the browser flow.
+            send_reply("OpenAI OAuth connected and tokens saved, but " + model +
+                       " cannot be used \xe2\x80\x94 " + sr.error);
+            return;
+        }
+
+        agent.set_provider(std::move(sr.provider));
+        agent.set_model(model);
         // The provider and model are half of what just changed, and apply_oauth_result
         // only persists the token fields. Without this the next start comes back on the
         // old provider — while the reply below claims it was saved.
         config_.provider = "openai";
-        config_.model = agent.model();
+        config_.model = model;
         bool saved = r.persisted && config_.persist_selection();
-        clear_pending_oauth(ev.session_id);
+
+        // Connecting OAuth and then not using it needs saying, or the next turn looks like
+        // subscription traffic when it is billed to the API key.
+        std::string note = openai_oauth_eligible(model, openai_entry)
+            ? ""
+            : " Note: oauth_models excludes " + model + ", so it uses the API key.";
         send_reply(std::string("OpenAI OAuth connected ✅ Model switched to ") +
-                   agent.model() + "." +
+                   model + "." +
                    (saved
                     ? " Saved to ~/.ptrclaw/config.json"
-                    : " (warning: could not persist to config file)"));
+                    : " (warning: could not persist to config file)") + note);
     };
 #endif
 
