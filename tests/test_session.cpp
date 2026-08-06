@@ -91,6 +91,65 @@ TEST_CASE("SessionManager: evict_idle keeps recent sessions", "[session]") {
     REQUIRE(mgr.list_sessions().size() == 1);
 }
 
+// ── session cap ─────────────────────────────────────────────────
+
+// Generated session ids make the count caller-driven: a front end that never echoes the
+// announced id back mints a new session per request, each holding an Agent, a Config copy
+// and a memory backend until idle eviction an hour later. Refused rather than evicted,
+// because freeing a session while another worker may be mid-dispatch is the use-after-free
+// that pool.drain() exists to prevent — and a visible error beats an OOM-killed pod.
+TEST_CASE("SessionManager: max_sessions refuses a session beyond the cap", "[session]") {
+    auto cfg = make_test_config();
+    cfg.agent.max_sessions = 2;
+    SessionManager mgr(cfg, test_http);
+
+    mgr.get_session("one");
+    mgr.get_session("two");
+    REQUIRE(mgr.list_sessions().size() == 2);
+
+    REQUIRE_THROWS_AS(mgr.get_session("three"), std::runtime_error);
+    REQUIRE(mgr.list_sessions().size() == 2);
+}
+
+TEST_CASE("SessionManager: an existing session is served at the cap", "[session]") {
+    auto cfg = make_test_config();
+    cfg.agent.max_sessions = 1;
+    SessionManager mgr(cfg, test_http);
+
+    mgr.get_session("one");
+    // The cap bounds how many exist, not how many turns they take.
+    REQUIRE_NOTHROW(mgr.get_session("one"));
+    REQUIRE(mgr.list_sessions().size() == 1);
+}
+
+TEST_CASE("SessionManager: no cap by default", "[session]") {
+    auto cfg = make_test_config();
+    REQUIRE(cfg.agent.max_sessions == 0);
+    SessionManager mgr(cfg, test_http);
+
+    mgr.get_session("one");
+    mgr.get_session("two");
+    mgr.get_session("three");
+    REQUIRE(mgr.list_sessions().size() == 3);
+}
+
+// Room freed again is usable again, or a pod that hit the cap once would stay unusable
+// until restart. Driven through remove_session() rather than evict_idle(), which cannot
+// reclaim a session created in the same second — epoch_seconds() has one-second
+// granularity and the comparison is strictly greater.
+TEST_CASE("SessionManager: a freed slot can be reused", "[session]") {
+    auto cfg = make_test_config();
+    cfg.agent.max_sessions = 1;
+    SessionManager mgr(cfg, test_http);
+
+    mgr.get_session("one");
+    REQUIRE_THROWS_AS(mgr.get_session("two"), std::runtime_error);
+
+    mgr.remove_session("one");
+    REQUIRE(mgr.list_sessions().empty());
+    REQUIRE_NOTHROW(mgr.get_session("two"));
+}
+
 // ── /auth argument handling ──────────────────────────────────────
 
 // "start" and "finish" are OAuth subcommands, never credentials. The generic

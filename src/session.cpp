@@ -136,6 +136,19 @@ Agent& SessionManager::get_session(const std::string& session_id) {
             return *(it->second.agent);
         }
 
+        // Refused, not evicted. Each session holds an Agent, a Config copy and a memory
+        // backend, and with generated ids the count is caller-driven — but freeing a
+        // session here could pull an Agent out from under a worker mid-dispatch, which is
+        // exactly what eviction drains the turn pool to avoid. Throwing ends this one turn
+        // with an error the caller sees; handle_message() turns it into a reply.
+        if (config_.agent.max_sessions > 0 &&
+            sessions_.size() >= config_.agent.max_sessions) {
+            throw std::runtime_error(
+                "session limit reached (" +
+                std::to_string(config_.agent.max_sessions) +
+                "): no room for a new session until an existing one goes idle");
+        }
+
         auto [inserted, _] = sessions_.emplace(session_id, create_session(session_id));
         agent = inserted->second.agent.get();
         fresh_tools = inserted->second.tool_manager.get();

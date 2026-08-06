@@ -197,6 +197,8 @@ Config Config::load() {
             a["session_max_idle_seconds"].is_number_unsigned())
             cfg.agent.session_max_idle_seconds =
                 a["session_max_idle_seconds"].get<uint32_t>();
+        if (a.contains("max_sessions") && a["max_sessions"].is_number_unsigned())
+            cfg.agent.max_sessions = a["max_sessions"].get<uint32_t>();
         if (a.contains("tool_timeout") && a["tool_timeout"].is_number_unsigned())
             cfg.agent.tool_timeout = a["tool_timeout"].get<uint32_t>();
     }

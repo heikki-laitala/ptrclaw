@@ -235,10 +235,11 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
     if (!body.contains("message") || !body["message"].is_string())
         return json_error(400, "'message' is required and must be a string");
 
-    // generate_id() is the same source the tool batches use: a thread-local mt19937 seeded
-    // from random_device, so two connection threads cannot hand out one id.
+    // secure_random_hex(), not generate_id(): under the serving profile a session id
+    // selects a private workspace and memory store, so it is a capability rather than a
+    // routing key, and mt19937's state is recoverable from its own output.
     const std::string session = generate
-        ? generate_id()
+        ? secure_random_hex(16)
         : body["session"].get<std::string>();
     const std::string message = body["message"].get<std::string>();
     if (session.empty()) return json_error(400, "'session' must not be empty");

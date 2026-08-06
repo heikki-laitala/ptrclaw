@@ -140,6 +140,22 @@ std::string replace_all(const std::string& str, const std::string& from, const s
     return result;
 }
 
+std::string secure_random_hex(size_t bytes) {
+    // random_device rather than a seeded engine: on the platforms ptrclaw targets it draws
+    // from the OS CSPRNG, which is the same source src/oauth.cpp uses for PKCE verifiers.
+    // Not thread_local — each call constructs its own, so no state is shared to race on.
+    std::random_device rd;
+    std::string out;
+    out.reserve(bytes * 2);
+    static constexpr char kHex[] = "0123456789abcdef";
+    for (size_t i = 0; i < bytes; ++i) {
+        auto byte = static_cast<unsigned>(rd() & 0xFFU);
+        out += kHex[(byte >> 4) & 0x0FU];
+        out += kHex[byte & 0x0FU];
+    }
+    return out;
+}
+
 std::string generate_id() {
     // thread_local, not static: turns for different sessions run on different
     // threads, and a shared mt19937 would be a data race on its state.

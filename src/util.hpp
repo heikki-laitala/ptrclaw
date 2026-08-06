@@ -27,6 +27,15 @@ std::string to_lower(const std::string& s);
 // Split string by delimiter
 std::vector<std::string> split(const std::string& s, char delim);
 
+// `bytes` cryptographically random bytes, lowercase hex.
+//
+// Distinct from generate_id() on purpose. That one is a thread_local mt19937 and suits an
+// id whose only job is correlating a tool batch with its results, where predicting the next
+// value buys nothing. This one is for ids that act as capabilities — a serving session id
+// selects a private workspace and memory store — where mt19937's recoverable state would
+// let one holder derive another's.
+std::string secure_random_hex(size_t bytes);
+
 // Simple string replace (all occurrences)
 std::string replace_all(const std::string& str, const std::string& from, const std::string& to);
 

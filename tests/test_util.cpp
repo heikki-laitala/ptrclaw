@@ -207,3 +207,25 @@ TEST_CASE("form_encode: single param", "[util]") {
     auto result = form_encode({{"key", "value"}});
     REQUIRE(result == "key=value");
 }
+
+// ── secure_random_hex ───────────────────────────────────────────
+
+// Session ids select a workspace and a memory store under the serving profile, so they are
+// capabilities rather than mere routing keys — generate_id()'s mt19937 is predictable from
+// its own output and is not a basis for one.
+TEST_CASE("secure_random_hex: length and charset", "[util]") {
+    auto value = secure_random_hex(16);
+    REQUIRE(value.size() == 32);
+    for (char c : value) {
+        bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+        REQUIRE(hex);
+    }
+}
+
+TEST_CASE("secure_random_hex: successive values differ", "[util]") {
+    REQUIRE(secure_random_hex(16) != secure_random_hex(16));
+}
+
+TEST_CASE("secure_random_hex: zero bytes is empty", "[util]") {
+    REQUIRE(secure_random_hex(0).empty());
+}

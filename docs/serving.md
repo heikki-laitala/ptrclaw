@@ -68,14 +68,24 @@ prefix. So:
 
 - an absolute path outside both roots is refused — including `/etc/passwd`
 - `../../elsewhere/x` is refused; `sub/../notes.md` is allowed, because it stays inside
-- a symlink inside the workspace pointing out is refused, since the link is resolved first
+- a symlink inside the workspace pointing out is refused, **including one whose target does
+  not exist yet** — `weakly_canonical` alone leaves those unresolved, so every component is
+  expanded with `lstat` semantics and a link chain is bounded against loops
 - `/work/sessions/abc-evil` is refused for a session rooted at `/work/sessions/abc`, which a
   prefix comparison would have accepted
+- if the roots overlap — `context_dir=/work` with `workspace_root=/work/sessions` — a read
+  that lands in *another* session's workspace is refused even though it is inside
+  `context_dir`. The shared read reaches only what is genuinely shared.
 
 Relative paths resolve against the session's own workspace, so `file_write("notes.md")`
 cannot reach the shared directory by accident. A write whose path resolves into
-`context_dir` is **refused, not redirected**: the model sees the failure instead of silently
-writing elsewhere.
+`context_dir` is **refused, not redirected**, and the refusal says the shared context is
+read-only rather than claiming the path is outside the roots — the prompt lists that
+directory, so a misleading message would leave the model with no way to recover.
+
+Reading a directory is an error, not empty success, and a read stops at the 50 KiB cap
+instead of loading the whole file first — one oversized file in the shared context would
+otherwise be able to exhaust a pod every session shares.
 
 ### Staging context files
 
@@ -95,7 +105,7 @@ session reading mid-write. This is the same atomicity ptrclaw uses for its own s
   "workers": 8,
   "memory": { "isolation": "session" },
   "channels": { "http": { "listen": "0.0.0.0:8080", "max_connections": 16 } },
-  "agent": { "session_max_idle_seconds": 900 },
+  "agent": { "session_max_idle_seconds": 900, "max_sessions": 200 },
   "allow_channel_commands": false,
   "serving": {
     "context_dir": "/work/context",
@@ -111,12 +121,22 @@ Two of these are easy to miss and change everything:
   process — simultaneous chats serialise. Raise it to run them in parallel. Turns are
   sharded by session id, so a session stays serialised with itself; it is not work-stealing,
   so uneven session load leaves workers idle.
-- **`memory.isolation` defaults to `"shared"`**, which means every session reads and writes
-  one memory store and recalls the others' content. Set `"session"` for isolated tasks.
+- **`memory.isolation`** defaults to `"session"` in a serving build (and `"shared"`
+  everywhere else), so isolated tasks need no extra configuration.
 
 `max_connections` governs how many callers can be *waiting*, so keep it above `workers`.
 `allow_channel_commands` stays false: slash commands are the operator's surface, and `/auth`
 is refused on channels regardless.
+
+`agent.max_sessions` (0 = unlimited) bounds how many sessions exist at once. It matters most
+with generated ids: a caller that never echoes the announced id back mints a session per
+request, each holding an Agent, a Config copy and a memory backend until idle eviction. A
+session beyond the cap is **refused**, not evicted — freeing one could pull an Agent out from
+under a worker mid-turn — so the caller gets an error and the pod stays up.
+
+`memory.isolation` needs no setting in a serving build: it defaults to `"session"` there, so
+the fenced filesystem is not paired with a memory store every tenant shares. An explicit
+`"shared"` still wins, for a pod running one tenant's own tasks.
 
 ## Session ids
 
@@ -139,6 +159,10 @@ data: {"delta":"Hel"}
 In the stream rather than a response header because a browser `EventSource` client cannot
 read headers. A caller that supplied its own id sees no `session` frame — the stream is
 byte-for-byte what it was before.
+
+Generated ids come from `secure_random_hex()`, not the `mt19937` used for tool-batch ids:
+under this profile the id selects a private workspace and memory store, so it is a capability
+and must not be predictable from other ids the pod has handed out.
 
 The channel still refuses a second concurrent turn for one session with 409: two turns
 interleaving over one history is not a conversation.

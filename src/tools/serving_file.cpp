@@ -3,7 +3,6 @@
 #include "../plugin.hpp"
 #include <filesystem>
 #include <fstream>
-#include <sstream>
 
 // Registered only in a serving build. The classes themselves compile everywhere so the
 // default test suite exercises them; with no registrar referencing them, LTO drops the
@@ -19,12 +18,26 @@ namespace ptrclaw {
 
 namespace {
 
-// Same refusal for reads and writes, and it has to name the path: a model told only
-// "denied" retries the same argument.
-ToolResult refused(const std::string& path) {
+// The refusal has to name both the path and the reason. The system prompt lists the shared
+// context as one of the session's roots, so reporting a write into it as "outside the
+// workspace" would contradict the prompt and leave the model with no way to work out that
+// writing into its own directory is the recovery.
+ToolResult refused(const SessionWorkspace& scope, const std::string& path,
+                   WorkspaceAccess access) {
+    if (access == WorkspaceAccess::Write &&
+        resolve_in_workspace(scope, path, WorkspaceAccess::Read)) {
+        return ToolResult{false,
+            "The shared context directory is read-only. Write inside this session's "
+            "workspace instead: " + path};
+    }
     return ToolResult{false,
         "Path is outside this session's workspace: " + path};
 }
+
+// Read at most one byte past the cap: enough to know the file continues, without letting a
+// single oversized file in the shared context allocate its way through a pod that every
+// other session is sharing.
+constexpr size_t kMaxReadBytes = 50000;
 
 } // namespace
 
@@ -35,21 +48,29 @@ ToolResult ScopedFileReadTool::execute(const std::string& args_json) {
 
     std::string requested = args["path"].get<std::string>();
     auto resolved = resolve_in_workspace(workspace_, requested, WorkspaceAccess::Read);
-    if (!resolved) return refused(requested);
+    if (!resolved) return refused(workspace_, requested, WorkspaceAccess::Read);
+
+    // Before opening: ifstream opens a directory on macOS and Linux and then reads zero
+    // bytes, which would report success with empty content. This profile ships no listing
+    // tool, so reading the context directory is the first thing a model tries, and "empty"
+    // would tell it nothing was staged.
+    std::error_code ec;
+    if (std::filesystem::is_directory(*resolved, ec)) {
+        return ToolResult{false, "Path is a directory, not a file: " + requested};
+    }
 
     std::ifstream file(*resolved);
     if (!file.is_open()) {
         return ToolResult{false, "Failed to open file: " + requested};
     }
 
-    std::ostringstream ss;
-    ss << file.rdbuf();
-    std::string contents = ss.str();
+    std::string contents(kMaxReadBytes + 1, '\0');
+    file.read(&contents[0], static_cast<std::streamsize>(contents.size()));
+    contents.resize(static_cast<size_t>(file.gcount()));
 
-    // Same cap as FileReadTool: the limit is about the context window, not about scope.
-    constexpr size_t max_size = 50000;
-    if (contents.size() > max_size) {
-        contents = contents.substr(0, max_size) + "\n[truncated]";
+    if (contents.size() > kMaxReadBytes) {
+        contents.resize(kMaxReadBytes);
+        contents += "\n[truncated]";
     }
 
     return ToolResult{true, contents};
@@ -73,7 +94,7 @@ ToolResult ScopedFileWriteTool::execute(const std::string& args_json) {
     std::string content = args["content"].get<std::string>();
 
     auto resolved = resolve_in_workspace(workspace_, requested, WorkspaceAccess::Write);
-    if (!resolved) return refused(requested);
+    if (!resolved) return refused(workspace_, requested, WorkspaceAccess::Write);
 
     // The parent is inside the workspace by construction — the resolved path is, and this
     // is a prefix of it — so creating it cannot reach outside.

@@ -15,6 +15,11 @@ struct SessionWorkspace {
     // Shared, and read-only for every session — which is what stops two concurrent tasks
     // clobbering the context they are both working from. Empty means no shared context.
     std::string context_dir;
+    // The parent every session's workspace sits under. Needed because the two roots may
+    // overlap: with context_dir="/work" and workspace_root="/work/sessions" — a natural
+    // layout — the shared read would otherwise reach a sibling session's directory, and
+    // the key in its name is an offline-computable hash rather than a secret.
+    std::string workspace_root;
 };
 
 enum class WorkspaceAccess { Read, Write };
