@@ -1,6 +1,7 @@
 #include "workspace.hpp"
 #include "memory.hpp"
 
+#include <deque>
 #include <filesystem>
 
 namespace ptrclaw {
@@ -37,24 +38,43 @@ std::optional<fs::path> resolve_symlinks(const fs::path& path) {
     fs::path out = path.root_path();
     int budget = 64;
 
-    for (const auto& part : path.relative_path()) {
+    // A worklist rather than a single pass over the original components: a link target is
+    // itself a path that may traverse further links. Substituting "dirlink/missing" and then
+    // only testing that whole path would never examine `dirlink`, so a link to a dangling
+    // path *through* another link would resolve to something that looks inside the root
+    // while a write followed `dirlink` out of it.
+    std::deque<fs::path> pending;
+    for (const auto& part : path.relative_path()) pending.push_back(part);
+
+    while (!pending.empty()) {
+        fs::path part = pending.front();
+        pending.pop_front();
+
         if (part == ".") continue;
         if (part == "..") {
             out = out.parent_path();
             if (out.empty()) out = path.root_path();
             continue;
         }
-        out /= part;
 
-        // A chain of links, each of which may be relative to the link's own directory.
-        while (fs::is_symlink(fs::symlink_status(out, ec)) && !ec) {
-            if (--budget <= 0) return std::nullopt;
-            fs::path target = fs::read_symlink(out, ec);
+        fs::path candidate = out / part;
+        if (fs::is_symlink(fs::symlink_status(candidate, ec)) && !ec) {
+            if (--budget <= 0) return std::nullopt;   // a loop, or a chain past all reason
+            fs::path target = fs::read_symlink(candidate, ec);
             if (ec) return std::nullopt;
-            out = target.is_absolute() ? target : out.parent_path() / target;
-            out = out.lexically_normal();
+
+            // An absolute target restarts from its own root; a relative one continues from
+            // the link's directory, which is where `out` already points. Either way the
+            // target's components go back on the worklist so each is examined in turn.
+            if (target.is_absolute()) out = target.root_path();
+            std::deque<fs::path> expanded;
+            for (const auto& piece : target.relative_path()) expanded.push_back(piece);
+            pending.insert(pending.begin(), expanded.begin(), expanded.end());
+            continue;
         }
         if (ec) ec.clear();  // symlink_status on a missing path is not an error here
+
+        out = candidate;
     }
 
     return out.lexically_normal();
