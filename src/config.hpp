@@ -48,6 +48,13 @@ struct AgentConfig {
     // message is memory paid for nothing. Also the only way to observe reclamation in
     // less than an hour, which makes per-session memory measurable at all.
     uint32_t session_max_idle_seconds = 3600;
+    // Live sessions allowed at once; 0 = unlimited, which is the behaviour before this key
+    // existed. Matters once session ids can be generated: a caller that never echoes the
+    // announced id back mints a new session per request, and each holds an Agent, a Config
+    // copy and a memory backend until idle eviction. A session beyond the cap is refused
+    // rather than evicted — freeing one while another worker may be mid-dispatch is the
+    // use-after-free that eviction drains the turn pool to avoid.
+    uint32_t max_sessions = 0;
 };
 
 struct EmbeddingConfig {
@@ -66,11 +73,19 @@ struct MemoryConfig {
     std::string backend = "json";
 #endif
     std::string path;
-    // "shared" — every session reads and writes one store (the default, and the
-    // behaviour before this key existed). "session" — each session gets its own
-    // store file under <dir of path>/sessions/, so keys, recall and links never
-    // cross between sessions.
+    // "shared" — every session reads and writes one store (the behaviour before this key
+    // existed). "session" — each session gets its own store file under
+    // <dir of path>/sessions/, so keys, recall and links never cross between sessions.
+    //
+    // The default follows the build. A serving binary fences each session's filesystem, and
+    // leaving memory shared there would undo it from the other side: one session stores a
+    // customer's data and the next recalls it into its own prompt. An explicit "shared" in
+    // config still wins, for a pod running one tenant's own tasks.
+#ifdef PTRCLAW_HAS_SERVING
+    std::string isolation = "session";
+#else
     std::string isolation = "shared";
+#endif
     bool auto_save = false;
     uint32_t recall_limit = 5;
     uint32_t hygiene_max_age = 604800;  // 7 days

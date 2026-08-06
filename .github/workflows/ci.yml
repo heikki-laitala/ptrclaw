@@ -287,6 +287,11 @@ jobs:
             flags: -Dwith_http=true -Dwith_whatsapp=true
           - label: read-only tools
             flags: -Dwith_tools=false -Dwith_file_read=true
+          # The serving profile's own assertions — shell and cron absent, file_read
+          # resolving to the scoped implementation — are compiled only in this
+          # configuration, so nothing else can catch a regression in them.
+          - label: serving profile
+            flags: -Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false -Dwith_http=true
 
     steps:
       - uses: actions/checkout@v4

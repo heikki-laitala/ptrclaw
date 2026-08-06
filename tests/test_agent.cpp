@@ -164,6 +164,36 @@ TEST_CASE("Agent: process includes system prompt in first call", "[agent]") {
     REQUIRE(mock->last_messages[0].content.find("PtrClaw") != std::string::npos);
 }
 
+// A serving config in a build without the scoped tools must not reach the prompt. The
+// unscoped tools resolve relative paths against the process cwd, so announcing a workspace
+// would describe a boundary that does not exist — and steer the model away from the
+// absolute paths that would actually have worked.
+TEST_CASE("Agent: a serving config only scopes the prompt in a serving build",
+          "[agent][serving]") {
+    auto provider = std::make_unique<MockProvider>();
+    auto* mock = provider.get();
+    mock->next_response.content = "ok";
+
+    Config cfg;
+    cfg.agent.max_tool_iterations = 5;
+    cfg.serving.workspace_root = "/work/sessions";
+    cfg.serving.context_dir = "/work/context";
+
+    TestAgentSetup setup(std::move(provider), {}, cfg);
+    setup.agent.set_session_id("task-42");
+    setup.agent.process("test");
+
+    REQUIRE_FALSE(mock->last_messages.empty());
+    const auto& prompt = mock->last_messages[0].content;
+#ifdef PTRCLAW_HAS_SERVING
+    REQUIRE(prompt.find("/work/sessions/") != std::string::npos);
+    REQUIRE(prompt.find("Working directory:") == std::string::npos);
+#else
+    REQUIRE(prompt.find("/work/sessions/") == std::string::npos);
+    REQUIRE(prompt.find("Working directory:") != std::string::npos);
+#endif
+}
+
 TEST_CASE("Agent: process appends user message to history", "[agent]") {
     auto [setup, mock] = make_agent();
     auto& agent = setup.agent;

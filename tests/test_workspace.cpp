@@ -170,6 +170,98 @@ TEST_CASE("resolve_in_workspace: a symlink pointing out is refused", "[workspace
                                        WorkspaceAccess::Read).has_value());
 }
 
+// The dangerous variant, and the one weakly_canonical() alone does not catch: it resolves
+// symlinks only where the target exists, so a link to a not-yet-existing path stays
+// unresolved and looks like an ordinary file inside the workspace. std::ofstream then
+// follows it and creates the target outside.
+TEST_CASE("resolve_in_workspace: a dangling symlink pointing out is refused",
+          "[workspace]") {
+    WorkspaceFixture fx;
+    std::error_code ec;
+    std::filesystem::create_symlink(fx.outside / "planted.txt", fx.workspace / "link", ec);
+    if (ec) SKIP("symlinks unavailable on this filesystem");
+    REQUIRE_FALSE(std::filesystem::exists(fx.outside / "planted.txt"));
+
+    REQUIRE_FALSE(resolve_in_workspace(fx.scope(), "link",
+                                       WorkspaceAccess::Write).has_value());
+    REQUIRE_FALSE(resolve_in_workspace(fx.scope(), "link",
+                                       WorkspaceAccess::Read).has_value());
+}
+
+TEST_CASE("resolve_in_workspace: a dangling symlink directory component is refused",
+          "[workspace]") {
+    WorkspaceFixture fx;
+    std::error_code ec;
+    // The link itself resolves to a directory that does not exist yet, so a write through
+    // it would create the whole tree outside the workspace.
+    std::filesystem::create_directory_symlink(fx.outside / "absent",
+                                              fx.workspace / "outdir", ec);
+    if (ec) SKIP("symlinks unavailable on this filesystem");
+
+    REQUIRE_FALSE(resolve_in_workspace(fx.scope(), "outdir/report.md",
+                                       WorkspaceAccess::Write).has_value());
+}
+
+// A link that stays inside is legitimate and must keep working, or the fix would just be a
+// blanket ban on symlinks.
+TEST_CASE("resolve_in_workspace: a dangling symlink pointing inside is allowed",
+          "[workspace]") {
+    WorkspaceFixture fx;
+    std::error_code ec;
+    std::filesystem::create_symlink(fx.workspace / "target.md", fx.workspace / "alias", ec);
+    if (ec) SKIP("symlinks unavailable on this filesystem");
+
+    auto path = resolve_in_workspace(fx.scope(), "alias", WorkspaceAccess::Write);
+    REQUIRE(path.has_value());
+    REQUIRE(path.value_or("") == (fx.workspace / "target.md").string());
+}
+
+TEST_CASE("resolve_in_workspace: a symlink loop is refused rather than hung",
+          "[workspace]") {
+    WorkspaceFixture fx;
+    std::error_code ec;
+    std::filesystem::create_symlink(fx.workspace / "b", fx.workspace / "a", ec);
+    std::filesystem::create_symlink(fx.workspace / "a", fx.workspace / "b", ec);
+    if (ec) SKIP("symlinks unavailable on this filesystem");
+
+    REQUIRE_FALSE(resolve_in_workspace(fx.scope(), "a", WorkspaceAccess::Read).has_value());
+}
+
+// ── overlapping roots ───────────────────────────────────────────
+
+// context_dir="/work" with workspace_root="/work/sessions" is a natural layout, and it must
+// not turn the shared read into a way to read another session's workspace. The session key
+// is an offline-computable hash, so such a path can be constructed rather than guessed.
+TEST_CASE("resolve_in_workspace: a context that contains the workspaces hides them",
+          "[workspace]") {
+    WorkspaceFixture fx;
+    // Shared context is the whole root; workspaces live under root/sessions.
+    SessionWorkspace ws{(fx.root / "sessions" / "mine").string(), fx.root.string(),
+                        (fx.root / "sessions").string()};
+    std::filesystem::create_directories(fx.root / "sessions" / "mine");
+    std::filesystem::create_directories(fx.root / "sessions" / "theirs");
+    std::ofstream(fx.root / "sessions" / "theirs" / "private.md") << "theirs\n";
+    std::ofstream(fx.root / "brief.md") << "shared\n";
+
+    // Another session's workspace is inside context_dir, but must stay unreachable.
+    REQUIRE_FALSE(resolve_in_workspace(
+        ws, (fx.root / "sessions" / "theirs" / "private.md").string(),
+        WorkspaceAccess::Read).has_value());
+
+    // The genuinely shared file is still readable, and my own workspace still works.
+    REQUIRE(resolve_in_workspace(ws, (fx.root / "brief.md").string(),
+                                 WorkspaceAccess::Read).has_value());
+    REQUIRE(resolve_in_workspace(ws, "notes.md", WorkspaceAccess::Write).has_value());
+}
+
+TEST_CASE("session_workspace: reports the root it derived the workspace under",
+          "[workspace]") {
+    auto scope = session_workspace("/work/sessions", "/work", "task-42");
+    // The resolver needs the root, not just this session's directory, to keep a shared
+    // context from exposing sibling workspaces.
+    REQUIRE(scope.workspace_root == "/work/sessions");
+}
+
 // ── degenerate input ────────────────────────────────────────────
 
 TEST_CASE("resolve_in_workspace: no workspace means nothing is writable", "[workspace]") {

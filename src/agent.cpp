@@ -56,10 +56,16 @@ Agent::Agent(std::unique_ptr<Provider> provider,
     if (cache) {
         response_cache_ = std::move(cache);
         external_cache_ = true;
-    } else if (config_.memory.isolation != "session") {
-        // Under session isolation it is built in set_session_id() instead, once
-        // the session is known — the cache is a file like the memory store, and a
-        // shared one would hand session A's cached completion to session B.
+    } else if (config_.memory.isolation != "session" || session_id_.empty()) {
+        // Under session isolation it is normally built in set_session_id() instead, once
+        // the session is known — the cache is a file like the memory store, and a shared
+        // one would hand session A's cached completion to session B.
+        //
+        // With no session id there is nothing to isolate by, so the shared cache is the
+        // only option and skipping it would silently disable caching. That is what
+        // SessionManager::cache_for() already does for the same case; deferring here
+        // instead left the CLI and embed paths with no cache at all whenever isolation was
+        // "session", which a serving build now defaults to.
         build_response_cache("");
     }
 }
@@ -98,9 +104,18 @@ void Agent::inject_system_prompt() {
         bool include_tool_desc = !provider_->supports_native_tools();
         // Same derivation ToolManager uses to scope the tools, so the prompt describes
         // the directories the tools will actually accept.
-        SessionWorkspace scope = session_workspace(config_.serving.workspace_root,
-                                                   config_.serving.context_dir,
-                                                   session_id_);
+        //
+        // Only in a serving build, and that guard is the point: without the scoped tools a
+        // serving config in config.json changes nothing about where files go, so
+        // describing a workspace would announce a boundary the unscoped tools ignore —
+        // relative paths would land in the process cwd and the model would avoid the
+        // absolute paths that do work.
+        SessionWorkspace scope;
+#ifdef PTRCLAW_HAS_SERVING
+        scope = session_workspace(config_.serving.workspace_root,
+                                  config_.serving.context_dir,
+                                  session_id_);
+#endif
         RuntimeInfo runtime{model_, provider_->provider_name(), channel_,
                            binary_path_, session_id_,
                            scope.workspace, scope.context_dir};

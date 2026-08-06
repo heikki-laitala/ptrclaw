@@ -180,7 +180,7 @@ TEST_CASE("ScopedFileWriteTool: refuses to write into the shared context",
 
     auto result = tool.execute(write_args((fx.context / "brief.md").string(), "tampered"));
     REQUIRE_FALSE(result.success);
-    REQUIRE(result.output.find("outside") != std::string::npos);
+    REQUIRE(result.output.find("read-only") != std::string::npos);
 
     // And the file is untouched, not merely reported as failed.
     std::ifstream original(fx.context / "brief.md");
@@ -209,6 +209,72 @@ TEST_CASE("ScopedFileWriteTool: refuses traversal out of the workspace",
     auto result = tool.execute(write_args("../../elsewhere/planted.txt", "x"));
     REQUIRE_FALSE(result.success);
     REQUIRE_FALSE(std::filesystem::exists(fx.outside / "planted.txt"));
+}
+
+// ── directories and size ────────────────────────────────────────
+
+// ifstream opens a directory on macOS and Linux and yields zero bytes, so without a check
+// this reports success with empty content. The profile ships no listing tool, so reading
+// the context directory is exactly what a model tries first — and "empty" would tell it no
+// context was staged at all.
+TEST_CASE("ScopedFileReadTool: reading a directory is an error, not empty success",
+          "[serving][tools]") {
+    ScopeFixture fx;
+    ScopedFileReadTool tool;
+    tool.set_workspace(fx.scope());
+
+    auto result = tool.execute(read_args(fx.context.string()));
+    REQUIRE_FALSE(result.success);
+    REQUIRE(result.output.find("directory") != std::string::npos);
+}
+
+// One tenant's oversized file must not be able to allocate its way through a pod every
+// other session is sharing, so the cap has to bound the read rather than the result.
+TEST_CASE("ScopedFileReadTool: does not allocate beyond the cap", "[serving][tools]") {
+    ScopeFixture fx;
+    {
+        std::ofstream big(fx.workspace / "huge.txt");
+        big << std::string(400000, 'x');
+    }
+
+    ScopedFileReadTool tool;
+    tool.set_workspace(fx.scope());
+    auto result = tool.execute(read_args("huge.txt"));
+
+    REQUIRE(result.success);
+    // Truncated, and the marker still tells the model the file continues.
+    REQUIRE(result.output.size() < 60000);
+    REQUIRE(result.output.find("[truncated]") != std::string::npos);
+}
+
+// ── refusal messages ────────────────────────────────────────────
+
+// The prompt lists the shared context as one of the session's roots, so "outside this
+// session's workspace" for a path in it is actively misleading — the model cannot infer
+// that writing into its own directory is the recovery.
+TEST_CASE("ScopedFileWriteTool: says the shared context is read-only",
+          "[serving][tools]") {
+    ScopeFixture fx;
+    ScopedFileWriteTool tool;
+    tool.set_workspace(fx.scope());
+
+    auto result = tool.execute(write_args((fx.context / "brief.md").string(), "x"));
+    REQUIRE_FALSE(result.success);
+    REQUIRE(result.output.find("read-only") != std::string::npos);
+    // And it must not claim the path is outside the roots, because it is not.
+    REQUIRE(result.output.find("outside") == std::string::npos);
+}
+
+TEST_CASE("ScopedFileWriteTool: still says outside for a genuinely unreachable path",
+          "[serving][tools]") {
+    ScopeFixture fx;
+    ScopedFileWriteTool tool;
+    tool.set_workspace(fx.scope());
+
+    auto result = tool.execute(write_args((fx.outside / "planted.txt").string(), "x"));
+    REQUIRE_FALSE(result.success);
+    REQUIRE(result.output.find("outside") != std::string::npos);
+    REQUIRE(result.output.find("read-only") == std::string::npos);
 }
 
 // ── argument handling ───────────────────────────────────────────

@@ -153,6 +153,26 @@ TEST_CASE("Config::load: reads config file", "[config]") {
 
 // ── serving profile ─────────────────────────────────────────────
 
+// A serving build fences the filesystem per session; leaving memory shared would pair that
+// with one store every tenant reads and writes, so the default follows the build.
+TEST_CASE("MemoryConfig: a serving build isolates memory by default", "[config][serving]") {
+    Config cfg;
+#ifdef PTRCLAW_HAS_SERVING
+    REQUIRE(cfg.memory.isolation == "session");
+#else
+    REQUIRE(cfg.memory.isolation == "shared");
+#endif
+}
+
+// Still an explicit choice: an operator who writes "shared" gets it, because a pod serving
+// one tenant's own tasks may legitimately want a common store.
+TEST_CASE("MemoryConfig: an explicit isolation still wins", "[config][serving]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({"memory": {"isolation": "shared"}})");
+    REQUIRE(Config::load().memory.isolation == "shared");
+}
+
 TEST_CASE("ServingConfig: defaults are inert", "[config][serving]") {
     Config cfg;
     // Absent keys must leave the personal-agent behaviour untouched: no roots means no
