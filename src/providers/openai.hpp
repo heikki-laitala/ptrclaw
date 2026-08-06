@@ -7,6 +7,26 @@
 
 namespace ptrclaw {
 
+// Identifies this client to OpenAI: on the authorize request and on every subscription
+// request. Own name only — naming another client attributes PtrClaw's traffic to it.
+constexpr const char* kOpenAIOriginator = "ptrclaw";
+
+// Guards on the OAuth token endpoint. The response is a small JSON document, so anything
+// larger is not one; and a token request is part of an interactive login, so it must not sit
+// on the default chat timeout.
+constexpr long kOAuthTokenTimeoutSeconds = 30;
+constexpr std::size_t kOAuthTokenBodyLimitBytes = std::size_t{1024} * 1024;
+
+// Whether a URL is https. A refresh token is a long-lived credential, so there is no
+// configuration in which sending one over plaintext is the intended behavior.
+bool is_https_url(const std::string& url);
+
+// The ChatGPT account a subscription access token belongs to, read from its
+// `https://api.openai.com/auth` claim. Empty when the token is not a JWT, is unreadable, or
+// carries no account — the header is then omitted rather than sent blank. Derived from the
+// live token rather than stored, so it follows the token across a refresh.
+std::string openai_account_id_from_token(const std::string& access_token);
+
 class OpenAIProvider : public Provider {
 public:
     OpenAIProvider(const std::string& api_key, HttpClient& http,

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "oauth.hpp"
 #include "session.hpp"
+#include "mock_http_client.hpp"
 #ifdef PTRCLAW_HAS_OPENAI_OAUTH
 #include "providers/oauth_openai.hpp"
 #endif
@@ -52,6 +53,63 @@ TEST_CASE("OAuth: connecting honours oauth_models when keeping the model", "[oau
     entry.oauth_models = {"gpt-4o"};
     REQUIRE(oauth_model_after_connect("gpt-4o", entry) == "gpt-4o");
     REQUIRE(oauth_model_after_connect("gpt-5.5", entry) == std::string(kDefaultOAuthModel));
+}
+
+// ── Token endpoint guards ───────────────────────────────────────
+
+namespace {
+
+PendingOAuth test_pending() {
+    PendingOAuth pending;
+    pending.provider = "openai";
+    pending.state = "state";
+    pending.code_verifier = "verifier";
+    pending.redirect_uri = kDefaultRedirectUri;
+    return pending;
+}
+
+} // namespace
+
+// The authorization code exchange carries the code and returns the refresh token, so the
+// same plaintext rule applies as on refresh.
+TEST_CASE("OAuth: token exchange refuses a plaintext token endpoint", "[oauth]") {
+    MockHttpClient mock;
+    ProviderEntry entry;
+    entry.oauth_token_url = "http://auth.test/token";
+    ProviderEntry out;
+
+    auto error = exchange_oauth_token("code", test_pending(), entry, mock, out);
+    REQUIRE_FALSE(error.empty());
+    REQUIRE(mock.call_count == 0);
+}
+
+TEST_CASE("OAuth: token exchange rejects an oversized response", "[oauth]") {
+    MockHttpClient mock;
+    mock.next_response = {200, std::string(1024 * 1024 + 1, 'x')};
+    ProviderEntry entry;
+    entry.oauth_token_url = "https://auth.test/token";
+    ProviderEntry out;
+
+    auto error = exchange_oauth_token("code", test_pending(), entry, mock, out);
+    REQUIRE_FALSE(error.empty());
+    REQUIRE(out.oauth_access_token.empty());
+}
+
+TEST_CASE("OAuth: token exchange does not wait out the chat timeout", "[oauth]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "access_token": "access",
+        "refresh_token": "refresh",
+        "expires_in": 3600
+    })"};
+    ProviderEntry entry;
+    entry.oauth_token_url = "https://auth.test/token";
+    ProviderEntry out;
+
+    auto error = exchange_oauth_token("code", test_pending(), entry, mock, out);
+    REQUIRE(error.empty());
+    REQUIRE(out.oauth_access_token == "access");
+    REQUIRE(mock.last_timeout == 30);
 }
 #endif
 

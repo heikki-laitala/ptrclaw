@@ -72,7 +72,7 @@ namespace {
 // Default model for each provider
 const char* default_model(const std::string& name) {
     if (name == "anthropic") return "claude-sonnet-4-6";
-    if (name == "openai") return "gpt-4o-mini";
+    if (name == "openai") return "gpt-5.6";
     if (name == "openrouter") return "openrouter/auto";
     if (name == "ollama") return "llama3.2";
     return "";

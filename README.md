@@ -318,7 +318,7 @@ For details on the PKCE flow, token refresh, environment variables, and config f
 
 ```text
 /models                              # list configured providers and current model
-/provider openai gpt-4o-mini         # switch to OpenAI API key
+/provider openai gpt-5.6             # switch to OpenAI API key
 /provider openai gpt-5.6-sol         # switch to OpenAI OAuth (subscription)
 /provider anthropic claude-sonnet-4-6  # switch to Anthropic
 /model gpt-4o                        # switch model within current provider

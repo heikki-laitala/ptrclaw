@@ -1082,6 +1082,144 @@ TEST_CASE("OpenAIProvider: a ChatGPT base_url uses Responses without OAuth",
     REQUIRE_FALSE(body.contains("messages"));
 }
 
+// ════════════════════════════════════════════════════════════════
+// OpenAI Provider: ChatGPT backend request identity
+// ════════════════════════════════════════════════════════════════
+
+// Payload claims {"https://api.openai.com/auth":{"chatgpt_account_id":"acct_test_123",...}}
+static const char* kTokenWithAccountId =
+    "eyJhbGciOiAiUlMyNTYiLCAidHlwIjogIkpXVCJ9."
+    "eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOiB7ImNoYXRncHRfYWNjb3VudF9pZCI6ICJhY2N0X3Rlc3RfMTIz"
+    "IiwgImNoYXRncHRfcGxhbl90eXBlIjogInBybyJ9fQ.sig";
+// Same shape, claim absent.
+static const char* kTokenWithoutAccountId =
+    "eyJhbGciOiAiUlMyNTYiLCAidHlwIjogIkpXVCJ9."
+    "eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOiB7ImNoYXRncHRfcGxhbl90eXBlIjogInBybyJ9fQ.sig";
+
+TEST_CASE("openai_account_id_from_token: reads the ChatGPT auth claim",
+          "[providers][openai][oauth]") {
+    REQUIRE(openai_account_id_from_token(kTokenWithAccountId) == "acct_test_123");
+}
+
+TEST_CASE("openai_account_id_from_token: anything else yields nothing",
+          "[providers][openai][oauth]") {
+    REQUIRE(openai_account_id_from_token(kTokenWithoutAccountId).empty());
+    REQUIRE(openai_account_id_from_token("").empty());
+    REQUIRE(openai_account_id_from_token("not-a-jwt").empty());
+    REQUIRE(openai_account_id_from_token("a.b.c").empty());
+    REQUIRE(openai_account_id_from_token("aaaa.bbbb").empty());
+}
+
+// The backend routes a subscription request by account, so a token covering more than one
+// workspace needs it. It comes from the live access token, not from config, so it follows
+// the token across a refresh.
+TEST_CASE("OpenAIProvider: ChatGPT backend requests identify the account",
+          "[providers][openai][oauth]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-5.5",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+        "usage": {"input_tokens": 4, "output_tokens": 1}
+    })"};
+
+    OpenAIProvider provider("api-key", mock, "",
+                            true, kTokenWithAccountId, "refresh", 9999999999);
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-5.5", 0.5);
+
+    REQUIRE(find_header(mock.last_headers, "chatgpt-account-id") == "acct_test_123");
+    REQUIRE(find_header(mock.last_headers, "originator") == "ptrclaw");
+    REQUIRE(find_header(mock.last_headers, "User-Agent").rfind("ptrclaw", 0) == 0);
+}
+
+TEST_CASE("OpenAIProvider: a token without the claim sends no account header",
+          "[providers][openai][oauth]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-5.5",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+        "usage": {"input_tokens": 4, "output_tokens": 1}
+    })"};
+
+    OpenAIProvider provider("api-key", mock, "",
+                            true, kTokenWithoutAccountId, "refresh", 9999999999);
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-5.5", 0.5);
+
+    REQUIRE(find_header(mock.last_headers, "chatgpt-account-id").empty());
+}
+
+TEST_CASE("OpenAIProvider: platform requests carry no ChatGPT identity",
+          "[providers][openai]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-4",
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+    })"};
+
+    OpenAIProvider provider("api-key", mock, "");
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5);
+
+    REQUIRE(find_header(mock.last_headers, "chatgpt-account-id").empty());
+    REQUIRE(find_header(mock.last_headers, "originator").empty());
+}
+
+// ════════════════════════════════════════════════════════════════
+// OpenAI Provider: token endpoint guards
+// ════════════════════════════════════════════════════════════════
+
+// A refresh token is a long-lived credential; there is no configuration in which sending
+// it over plaintext is the intended behavior.
+TEST_CASE("OpenAIProvider: refresh refuses a plaintext token endpoint",
+          "[providers][openai][oauth]") {
+    MockHttpClient mock;
+    OpenAIProvider provider("api-key", mock, "",
+                            true, "old-token", "my-refresh", 1,
+                            "test-client", "http://auth.test/token");
+
+    REQUIRE_THROWS_AS(
+        provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5),
+        std::runtime_error);
+    REQUIRE(mock.call_count == 0);
+}
+
+TEST_CASE("OpenAIProvider: refresh rejects an oversized token response",
+          "[providers][openai][oauth]") {
+    MockHttpClient mock;
+    mock.response_queue.push_back({200, std::string(1024 * 1024 + 1, 'x')});
+
+    OpenAIProvider provider("api-key", mock, "",
+                            true, "old-token", "my-refresh", 1,
+                            "test-client", "https://auth.test/token");
+
+    REQUIRE_THROWS_AS(
+        provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5),
+        std::runtime_error);
+    REQUIRE(mock.call_count == 1);
+}
+
+TEST_CASE("OpenAIProvider: token refresh does not wait out the chat timeout",
+          "[providers][openai][oauth]") {
+    MockHttpClient mock;
+    mock.response_queue.push_back({200, R"({
+        "access_token": "new-access-token",
+        "refresh_token": "new-refresh-token",
+        "expires_in": 3600
+    })"});
+    mock.response_queue.push_back({200, R"({
+        "model": "gpt-4",
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+    })"});
+
+    OpenAIProvider provider("api-key", mock, "",
+                            true, "old-token", "my-refresh", 1,
+                            "test-client", "https://auth.test/token");
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-4", 0.5);
+
+    REQUIRE(mock.timeouts.size() == 2);
+    REQUIRE(mock.timeouts[0] == 30);
+}
+
 // ── OAuth token persistence ──────────────────────────────────────
 //
 // persist_openai_oauth() and setup_oauth_refresh() are compiled whenever the

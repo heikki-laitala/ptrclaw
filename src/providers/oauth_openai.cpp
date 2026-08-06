@@ -37,7 +37,7 @@ std::string build_authorize_url(const std::string& client_id,
         "&state=" + url_encode(state) +
         "&id_token_add_organizations=true"
         "&codex_cli_simplified_flow=true"
-        "&originator=" + url_encode(kDefaultOriginator);
+        "&originator=" + url_encode(kOpenAIOriginator);
 }
 
 // ── Start OAuth flow (PKCE + authorize URL) ─────────────────────
@@ -76,6 +76,12 @@ std::string exchange_oauth_token(const std::string& code,
         ? kDefaultOAuthClientId
         : openai_entry.oauth_client_id;
 
+    // The exchange carries the authorization code and returns the refresh token, so the
+    // endpoint has to be https before anything is sent to it.
+    if (!is_https_url(token_url)) {
+        return "OpenAI OAuth token endpoint must be https: " + token_url;
+    }
+
     try {
         std::string body = form_encode({
             {"grant_type", "authorization_code"},
@@ -85,11 +91,16 @@ std::string exchange_oauth_token(const std::string& code,
             {"client_id", client_id}
         });
         auto resp = http.post(token_url, body,
-                              {{"Content-Type", "application/x-www-form-urlencoded"}}, 120);
+                              {{"Content-Type", "application/x-www-form-urlencoded"}},
+                              kOAuthTokenTimeoutSeconds);
 
         if (resp.status_code < 200 || resp.status_code >= 300) {
             return "Token exchange failed (HTTP " +
                    std::to_string(resp.status_code) + ").";
+        }
+        if (resp.body.size() > kOAuthTokenBodyLimitBytes) {
+            return "Token exchange response too large: " +
+                   std::to_string(resp.body.size()) + " bytes.";
         }
 
         auto tok = json::parse(resp.body);
