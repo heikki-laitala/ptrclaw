@@ -314,7 +314,11 @@ obtain them interactively.
 
 For Ollama, `/auth ollama` prompts for the base URL.
 
-In Telegram and other channels, use `/auth <provider> <api_key>` to set a key directly. OAuth uses the two-step flow: `/auth openai start` then `/auth openai finish <callback_url>`.
+`/auth` is local-CLI only: it writes credentials for the whole process and to
+`~/.ptrclaw/config.json`, so a channel message cannot set them. On the CLI, OAuth also has a
+two-step form — `/auth openai start`, then `/auth openai finish <callback_url>` — for when
+nothing can block on a prompt. For a channel deployment, put credentials in
+`~/.ptrclaw/config.json` or the environment variables above instead.
 
 ### OpenAI OAuth (subscription models)
 
@@ -340,11 +344,11 @@ Provider and model changes are persisted to `~/.ptrclaw/config.json`.
 
 ### Slash commands over channels
 
-Slash commands (`/status`, `/model`, `/provider`, `/memory`, `/clear`, `/auth`, ...) are
-the **operator's** surface. They always work in the CLI, where the operator already owns
-the shell. Over a channel they are **off by default**, because a channel has no notion of
-who is speaking: whoever can send the bot a message would otherwise be able to change the
-model, read the provider and token counts, write memory entries, or set an API key.
+Slash commands (`/status`, `/model`, `/provider`, `/memory`, `/clear`, ...) are the
+**operator's** surface. They always work in the CLI, where the operator already owns the
+shell. Over a channel they are **off by default**, because a channel has no notion of who is
+speaking: whoever can send the bot a message would otherwise be able to change the model,
+read the provider and token counts, or write memory entries.
 
 Turn them on for a bot only you talk to:
 
@@ -352,7 +356,10 @@ Turn them on for a bot only you talk to:
 { "allow_channel_commands": true }
 ```
 
-Note `/auth` is one of them, so setting credentials from a chat needs this enabled.
+`/auth` is the exception and is never included: it writes a credential for every session and
+persists it, which is a local operator's decision rather than a remote caller's. Enabling
+channel commands does not enable it — configure credentials in `~/.ptrclaw/config.json` or
+via environment variables.
 
 With commands off, a message beginning with `/` is simply passed to the agent as ordinary
 text and answered — nothing is rejected.

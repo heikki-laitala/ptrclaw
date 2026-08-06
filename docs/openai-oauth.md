@@ -38,15 +38,23 @@ OAuth connected. Model switched to gpt-5.6-sol.
 
 After approving in your browser, it redirects to `localhost:1455/auth/callback?code=...`. The page won't load (there's no local server) — copy the full URL from your browser's address bar and paste it back.
 
-### Two-step flow (channels)
+### Two-step flow
 
-In Telegram and other channels where inline prompting isn't available, use the two-step flow:
+`/auth` is answered on the local CLI only — it writes credentials for the whole process and
+persists them, which is not a remote caller's decision to make, and `allow_channel_commands`
+does not extend to it. The two-step form splits the flow across two commands so nothing has
+to block on a prompt, which the inline flow does:
 
-1. Send `/auth openai start` — PtrClaw prints an authorization URL
+1. `/auth openai start` — PtrClaw prints an authorization URL
 2. Open the URL, sign in, copy the callback URL
-3. Send `/auth openai finish <callback_url>` (or paste just the code)
+3. `/auth openai finish <callback_url>` (or paste just the code)
 
-You can also paste the callback URL directly without the `/auth openai finish` prefix while an auth flow is pending.
+While a flow is pending you can also paste the callback URL on its own, without the
+`/auth openai finish` prefix.
+
+For a Telegram or WhatsApp deployment, provision the tokens rather than running the flow
+there: put them in `~/.ptrclaw/config.json` or the environment variables below, and the
+provider uses, refreshes, and re-persists them exactly as described here.
 
 ## Model routes
 
