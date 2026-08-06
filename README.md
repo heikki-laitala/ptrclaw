@@ -46,7 +46,7 @@ You can re-run the wizard at any time with `/onboard`, or set credentials indivi
 
 ## Recommended setup (personal use)
 
-The best personal setup uses **OpenAI codex models** through your ChatGPT subscription (Plus/Pro/Team) and **Telegram** as the messaging channel. Codex models are included in your subscription — no per-token API billing. Add an **OpenAI API key** for embedding-powered memory search, and you get a capable assistant accessible from any device.
+The best personal setup uses **OpenAI subscription models** through your ChatGPT plan (Plus/Pro/Team) and **Telegram** as the messaging channel. Those models are included in your subscription — no per-token API billing. Add an **OpenAI API key** for embedding-powered memory search, and you get a capable assistant accessible from any device.
 
 **1. Create a Telegram bot:**
 
@@ -290,7 +290,7 @@ Open this URL to authorize:
 https://auth.openai.com/oauth/authorize?...
 
 Paste the callback URL or code: http://localhost:1455/auth/callback?code=...
-OAuth connected. Model switched to gpt-5-codex-mini.
+OAuth connected. Model switched to gpt-5.6-sol.
 ```
 
 This browser flow requires `with_openai_oauth` (default `true`). A build with
@@ -306,11 +306,11 @@ In Telegram and other channels, use `/auth <provider> <api_key>` to set a key di
 
 ### OpenAI OAuth (subscription models)
 
-The models your ChatGPT subscription (Plus, Pro, or Team) covers can be reached via OAuth — the
-codex family (e.g. `gpt-5-codex-mini`) and the wider gpt-5 family (e.g. `gpt-5`, `gpt-5-pro`).
-Use `/auth openai` and choose "OAuth login". PtrClaw prefers OAuth for those models when tokens
-are available and falls back to the API key; every other model always uses the API key. Set
-`providers.openai.oauth_models` to choose the set yourself.
+The models your ChatGPT subscription (Plus, Pro, or Team) covers can be reached via OAuth —
+`gpt-5.6-sol`, `gpt-5.5`, `gpt-5.4`, their variants, and the codex ids. Use `/auth openai` and
+choose "OAuth login". PtrClaw prefers OAuth for those models when tokens are available and falls
+back to the API key; models only `api.openai.com` serves (`gpt-5.6`, `chat-latest`, `gpt-4o`, …)
+always use the API key. Set `providers.openai.oauth_models` to choose the set yourself.
 
 For details on the PKCE flow, token refresh, environment variables, and config format, see [`docs/openai-oauth.md`](docs/openai-oauth.md).
 
@@ -319,7 +319,7 @@ For details on the PKCE flow, token refresh, environment variables, and config f
 ```text
 /models                              # list configured providers and current model
 /provider openai gpt-4o-mini         # switch to OpenAI API key
-/provider openai gpt-5-codex-mini    # switch to OpenAI OAuth (subscription)
+/provider openai gpt-5.6-sol         # switch to OpenAI OAuth (subscription)
 /provider anthropic claude-sonnet-4-6  # switch to Anthropic
 /model gpt-4o                        # switch model within current provider
 ```

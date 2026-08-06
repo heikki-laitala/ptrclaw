@@ -34,6 +34,16 @@ namespace ptrclaw {
 
 namespace {
 constexpr const char* kOpenAIApiBaseUrl = "https://api.openai.com/v1";
+constexpr const char* kChatGPTResponsesUrl = "https://chatgpt.com/backend-api/codex/responses";
+
+// The forms a config file may spell the subscription endpoint. Matched exactly rather than
+// by host, so an https URL is the only way to reach it — a plaintext or otherwise altered
+// variant stays a custom endpoint and is used verbatim instead of being treated as native.
+bool is_chatgpt_base_url(const std::string& url) {
+    return url == "https://chatgpt.com/backend-api/codex" ||
+           url == "https://chatgpt.com/backend-api/codex/" ||
+           url == "https://chatgpt.com/backend-api/codex/responses";
+}
 
 // The built-in client_id belongs to the OAuth flow, so it is only compiled in
 // when that flow is. A build without the flow must not carry a client_id it can
@@ -203,9 +213,10 @@ std::vector<Header> OpenAIProvider::build_headers() {
 // ── Responses API detection ──────────────────────────────────────
 
 bool OpenAIProvider::uses_chatgpt_backend() const {
-    // A base_url override points somewhere that is not OpenAI's subscription backend, so
-    // the caller's endpoint wins even when subscription tokens are what authenticates.
-    return use_oauth_ && base_url_ == kOpenAIApiBaseUrl;
+    // Subscription tokens are only accepted there, so OAuth on the default endpoint goes
+    // to the subscription backend; a config file naming it explicitly does too, whatever
+    // authenticates. Any other base_url is the caller's own endpoint and wins.
+    return is_chatgpt_base_url(base_url_) || (use_oauth_ && base_url_ == kOpenAIApiBaseUrl);
 }
 
 bool OpenAIProvider::use_responses_api(const std::string& model) const {
@@ -216,7 +227,7 @@ bool OpenAIProvider::use_responses_api(const std::string& model) const {
 
 std::string OpenAIProvider::responses_url() const {
     if (uses_chatgpt_backend()) {
-        return "https://chatgpt.com/backend-api/codex/responses";
+        return kChatGPTResponsesUrl;
     }
     return base_url_ + "/responses";
 }

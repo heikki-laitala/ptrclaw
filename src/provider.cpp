@@ -1,6 +1,7 @@
 #include "provider.hpp"
 #include "plugin.hpp"
 #include "config.hpp"
+#include <cctype>
 #ifdef PTRCLAW_HAS_OPENAI
 #include "providers/openai_token_persist.hpp"
 #endif
@@ -44,6 +45,51 @@ std::vector<ProviderInfo> list_providers(
     return result;
 }
 
+namespace {
+
+// Exact ids, not name patterns: gpt-5.6-sol is served by a subscription while plain
+// gpt-5.6 is API-key only, and no substring rule can express that. The lists therefore
+// need editing when OpenAI ships models — providers.openai.oauth_models is the escape
+// hatch that keeps a new model reachable in the meantime.
+constexpr const char* kDualRouteModels[] = {
+    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+    "gpt-5.5", "gpt-5.5-pro",
+    "gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini",
+};
+constexpr const char* kPlatformOnlyModels[] = {"chat-latest", "gpt-5.6"};
+constexpr const char* kSubscriptionOnlyModels[] = {"gpt-5.3-codex-spark"};
+
+std::string normalize_model_id(const std::string& model) {
+    std::string id;
+    id.reserve(model.size());
+    for (char c : model) {
+        id += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    // The only shipped alias: the 5.4 codex row was renamed.
+    return id == "gpt-5.4-codex" ? "gpt-5.4" : id;
+}
+
+template <size_t N>
+bool listed(const char* const (&models)[N], const std::string& id) {
+    for (const char* candidate : models) {
+        if (id == candidate) return true;
+    }
+    return false;
+}
+
+} // namespace
+
+OpenAIModelRoute openai_model_route(const std::string& model) {
+    std::string id = normalize_model_id(model);
+    if (listed(kPlatformOnlyModels, id)) return OpenAIModelRoute::PlatformOnly;
+    if (listed(kSubscriptionOnlyModels, id)) return OpenAIModelRoute::SubscriptionOnly;
+    if (listed(kDualRouteModels, id)) return OpenAIModelRoute::Dual;
+    // Codex ids that predate these lists keep the route they have always used, so a
+    // release that adds a model above cannot silently move an older one off OAuth.
+    if (id.find("codex") != std::string::npos) return OpenAIModelRoute::Dual;
+    return OpenAIModelRoute::Unknown;
+}
+
 bool openai_oauth_eligible(const std::string& model, const ProviderEntry& entry) {
     if (!entry.oauth_models.empty()) {
         for (const auto& pattern : entry.oauth_models) {
@@ -52,8 +98,8 @@ bool openai_oauth_eligible(const std::string& model, const ProviderEntry& entry)
         }
         return false;
     }
-    return model.find("codex") != std::string::npos ||
-           model.find("gpt-5") != std::string::npos;
+    auto route = openai_model_route(model);
+    return route == OpenAIModelRoute::Dual || route == OpenAIModelRoute::SubscriptionOnly;
 }
 
 std::string auth_mode_label(const std::string& provider_name,
@@ -97,11 +143,24 @@ SwitchProviderResult switch_provider(const std::string& name,
         bool has_key = !entry.api_key.empty();
         bool use_oauth = oauth_capable && has_oauth;
 
-        if (!use_oauth && !has_key) {
-            result.error = oauth_capable
-                ? "No API key or OAuth for openai. Run /auth openai start for OAuth."
-                : "No API key for openai";
-            return result;
+        if (!use_oauth) {
+            // Refusing beats building a provider whose credential the model's only
+            // transport does not accept: the failure would otherwise surface as an opaque
+            // error from OpenAI on the next turn.
+            if (openai_model_route(effective) == OpenAIModelRoute::SubscriptionOnly) {
+                result.error = effective + " is served only by the ChatGPT subscription. "
+                    "Run /auth openai start for OAuth.";
+                return result;
+            }
+            if (!has_key) {
+                result.error = oauth_capable
+                    ? "No API key or OAuth for openai. Run /auth openai start for OAuth."
+                    : (openai_model_route(effective) == OpenAIModelRoute::PlatformOnly
+                       ? effective + " is served only by the OpenAI API. "
+                         "Set an API key for openai."
+                       : "No API key for openai");
+                return result;
+            }
         }
 
         ProviderEntry adjusted = entry;

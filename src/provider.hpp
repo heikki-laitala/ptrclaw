@@ -112,11 +112,22 @@ std::string auth_mode_label(const std::string& provider_name,
                              const std::string& model,
                              const Config& config);
 
-// ── OpenAI OAuth model eligibility ──────────────────────────────
-// Whether OpenAI subscription tokens can serve this model. Those tokens are only
-// accepted by the ChatGPT backend, which serves the models the subscription covers —
-// so this is a property of the model, not of the credential. Honours
-// ProviderEntry::oauth_models when set, otherwise the codex and gpt-5 families.
+// ── OpenAI model routes ─────────────────────────────────────────
+// Which transport can serve a model. api.openai.com takes API keys, the ChatGPT backend
+// takes subscription tokens, and the two do not serve the same catalog — so the route is
+// a property of the model, not of the credential.
+enum class OpenAIModelRoute {
+    Unknown,          // no first-party route known: treated as API key
+    Dual,             // both transports serve it
+    PlatformOnly,     // api.openai.com only
+    SubscriptionOnly, // ChatGPT backend only
+};
+
+OpenAIModelRoute openai_model_route(const std::string& model);
+
+// Whether OpenAI subscription tokens can serve this model: its route reaches the ChatGPT
+// backend, or ProviderEntry::oauth_models says so. That list replaces the built-in routes
+// rather than extending them, so a deployment can widen or narrow the set.
 bool openai_oauth_eligible(const std::string& model, const ProviderEntry& entry);
 
 // ── Provider switching ──────────────────────────────────────────

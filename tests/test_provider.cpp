@@ -250,23 +250,67 @@ TEST_CASE("switch_provider: openai with api_key succeeds", "[provider]") {
     REQUIRE(result.provider != nullptr);
 }
 
-// ── openai_oauth_eligible ───────────────────────────────────────
+// ── openai_model_route ──────────────────────────────────────────
 
-TEST_CASE("openai_oauth_eligible: codex family by default", "[provider][oauth]") {
-    ProviderEntry entry;
-    REQUIRE(openai_oauth_eligible("gpt-5-codex-mini", entry));
-    REQUIRE(openai_oauth_eligible("gpt-5.3-codex", entry));
+TEST_CASE("openai_model_route: models both transports serve", "[provider][oauth]") {
+    REQUIRE(openai_model_route("gpt-5.6-sol") == OpenAIModelRoute::Dual);
+    REQUIRE(openai_model_route("gpt-5.6-terra") == OpenAIModelRoute::Dual);
+    REQUIRE(openai_model_route("gpt-5.6-luna") == OpenAIModelRoute::Dual);
+    REQUIRE(openai_model_route("gpt-5.5") == OpenAIModelRoute::Dual);
+    REQUIRE(openai_model_route("gpt-5.5-pro") == OpenAIModelRoute::Dual);
+    REQUIRE(openai_model_route("gpt-5.4") == OpenAIModelRoute::Dual);
+    REQUIRE(openai_model_route("gpt-5.4-pro") == OpenAIModelRoute::Dual);
+    REQUIRE(openai_model_route("gpt-5.4-mini") == OpenAIModelRoute::Dual);
 }
 
-TEST_CASE("openai_oauth_eligible: gpt-5 family by default", "[provider][oauth]") {
+// Plain gpt-5.6 is API-key only while gpt-5.6-sol is not, which is exactly what a name
+// pattern cannot express — hence the exact-id sets.
+TEST_CASE("openai_model_route: models only the API key serves", "[provider][oauth]") {
+    REQUIRE(openai_model_route("gpt-5.6") == OpenAIModelRoute::PlatformOnly);
+    REQUIRE(openai_model_route("chat-latest") == OpenAIModelRoute::PlatformOnly);
+}
+
+TEST_CASE("openai_model_route: models only the subscription serves", "[provider][oauth]") {
+    REQUIRE(openai_model_route("gpt-5.3-codex-spark") == OpenAIModelRoute::SubscriptionOnly);
+}
+
+TEST_CASE("openai_model_route: unlisted codex names keep the subscription route",
+          "[provider][oauth]") {
+    REQUIRE(openai_model_route("gpt-5-codex-mini") == OpenAIModelRoute::Dual);
+    REQUIRE(openai_model_route("gpt-5.3-codex") == OpenAIModelRoute::Dual);
+}
+
+TEST_CASE("openai_model_route: anything else is unknown", "[provider][oauth]") {
+    REQUIRE(openai_model_route("gpt-4o") == OpenAIModelRoute::Unknown);
+    REQUIRE(openai_model_route("o3-mini") == OpenAIModelRoute::Unknown);
+    REQUIRE(openai_model_route("gpt-5") == OpenAIModelRoute::Unknown);
+    REQUIRE(openai_model_route("") == OpenAIModelRoute::Unknown);
+}
+
+TEST_CASE("openai_model_route: ids match case-insensitively", "[provider][oauth]") {
+    REQUIRE(openai_model_route("GPT-5.5") == OpenAIModelRoute::Dual);
+    REQUIRE(openai_model_route("Chat-Latest") == OpenAIModelRoute::PlatformOnly);
+}
+
+// The 5.4 codex row was renamed; the old id must resolve to the same route.
+TEST_CASE("openai_model_route: legacy gpt-5.4-codex alias", "[provider][oauth]") {
+    REQUIRE(openai_model_route("gpt-5.4-codex") == OpenAIModelRoute::Dual);
+}
+
+// ── openai_oauth_eligible ───────────────────────────────────────
+
+TEST_CASE("openai_oauth_eligible: dual and subscription-only models", "[provider][oauth]") {
     ProviderEntry entry;
-    REQUIRE(openai_oauth_eligible("gpt-5", entry));
-    REQUIRE(openai_oauth_eligible("gpt-5.1", entry));
-    REQUIRE(openai_oauth_eligible("gpt-5-pro", entry));
+    REQUIRE(openai_oauth_eligible("gpt-5.5", entry));
+    REQUIRE(openai_oauth_eligible("gpt-5.6-sol", entry));
+    REQUIRE(openai_oauth_eligible("gpt-5.3-codex-spark", entry));
+    REQUIRE(openai_oauth_eligible("gpt-5-codex-mini", entry));
 }
 
 TEST_CASE("openai_oauth_eligible: models the subscription cannot serve", "[provider][oauth]") {
     ProviderEntry entry;
+    REQUIRE_FALSE(openai_oauth_eligible("gpt-5.6", entry));
+    REQUIRE_FALSE(openai_oauth_eligible("chat-latest", entry));
     REQUIRE_FALSE(openai_oauth_eligible("gpt-4o", entry));
     REQUIRE_FALSE(openai_oauth_eligible("o3-mini", entry));
     REQUIRE_FALSE(openai_oauth_eligible("", entry));
@@ -289,10 +333,17 @@ TEST_CASE("openai_oauth_eligible: wildcard matches any model", "[provider][oauth
 
 // ── auth_mode_label: OAuth beyond codex ─────────────────────────
 
-TEST_CASE("auth_mode_label: openai gpt-5 with oauth returns OAuth", "[provider][oauth]") {
+TEST_CASE("auth_mode_label: openai gpt-5.5 with oauth returns OAuth", "[provider][oauth]") {
     Config cfg;
     cfg.providers["openai"].oauth_access_token = "token";
-    REQUIRE(auth_mode_label("openai", "gpt-5", cfg) == "OAuth");
+    REQUIRE(auth_mode_label("openai", "gpt-5.5", cfg) == "OAuth");
+}
+
+TEST_CASE("auth_mode_label: openai platform-only model stays API key", "[provider][oauth]") {
+    Config cfg;
+    cfg.providers["openai"].api_key = "sk-test";
+    cfg.providers["openai"].oauth_access_token = "token";
+    REQUIRE(auth_mode_label("openai", "gpt-5.6", cfg) == "API key");
 }
 
 TEST_CASE("auth_mode_label: openai gpt-4o with oauth stays API key", "[provider][oauth]") {
@@ -308,20 +359,54 @@ TEST_CASE("auth_mode_label: openai honours oauth_models override", "[provider][o
     cfg.providers["openai"].oauth_access_token = "token";
     cfg.providers["openai"].oauth_models = {"gpt-4o"};
     REQUIRE(auth_mode_label("openai", "gpt-4o", cfg) == "OAuth");
-    REQUIRE(auth_mode_label("openai", "gpt-5", cfg) == "API key");
+    REQUIRE(auth_mode_label("openai", "gpt-5.5", cfg) == "API key");
 }
 
 // ── switch_provider: OAuth beyond codex ─────────────────────────
 
-TEST_CASE("switch_provider: openai gpt-5 uses oauth without api key", "[provider][oauth]") {
+TEST_CASE("switch_provider: openai gpt-5.5 uses oauth without api key", "[provider][oauth]") {
     REQUIRE_PROVIDER("openai");
     Config cfg;
     cfg.providers["openai"].oauth_access_token = "token";
-    auto result = switch_provider("openai", "gpt-5", "gpt-4", cfg, test_http);
+    auto result = switch_provider("openai", "gpt-5.5", "gpt-4", cfg, test_http);
     REQUIRE(result.error.empty());
     REQUIRE(result.provider != nullptr);
-    REQUIRE(result.model == "gpt-5");
+    REQUIRE(result.model == "gpt-5.5");
     REQUIRE(cfg.providers["openai"].use_oauth);
+}
+
+// Refusing beats silently sending it to a transport that will not serve it.
+TEST_CASE("switch_provider: subscription-only model without tokens is refused",
+          "[provider][oauth]") {
+    Config cfg;
+    cfg.providers["openai"].api_key = "sk-test";
+    auto result = switch_provider("openai", "gpt-5.3-codex-spark", "gpt-4o", cfg, test_http);
+    REQUIRE_FALSE(result.error.empty());
+    REQUIRE(result.provider == nullptr);
+    REQUIRE(result.error.find("gpt-5.3-codex-spark") != std::string::npos);
+    REQUIRE(result.error.find("subscription") != std::string::npos);
+}
+
+TEST_CASE("switch_provider: platform-only model without api key is refused",
+          "[provider][oauth]") {
+    Config cfg;
+    cfg.providers["openai"].oauth_access_token = "token";
+    auto result = switch_provider("openai", "gpt-5.6", "gpt-5.5", cfg, test_http);
+    REQUIRE_FALSE(result.error.empty());
+    REQUIRE(result.provider == nullptr);
+    REQUIRE(result.error.find("gpt-5.6") != std::string::npos);
+    REQUIRE(result.error.find("API key") != std::string::npos);
+}
+
+// A platform-only model must take the API key even when tokens are also present.
+TEST_CASE("switch_provider: platform-only model prefers the api key", "[provider][oauth]") {
+    REQUIRE_PROVIDER("openai");
+    Config cfg;
+    cfg.providers["openai"].api_key = "sk-test";
+    cfg.providers["openai"].oauth_access_token = "token";
+    auto result = switch_provider("openai", "gpt-5.6", "gpt-5.5", cfg, test_http);
+    REQUIRE(result.error.empty());
+    REQUIRE_FALSE(cfg.providers["openai"].use_oauth);
 }
 
 TEST_CASE("switch_provider: openai oauth_models override enables oauth", "[provider][oauth]") {
@@ -337,7 +422,7 @@ TEST_CASE("switch_provider: openai oauth_models override enables oauth", "[provi
 TEST_CASE("switch_provider: openai ineligible model with only oauth errors", "[provider][oauth]") {
     Config cfg;
     cfg.providers["openai"].oauth_access_token = "token";
-    auto result = switch_provider("openai", "gpt-4o", "gpt-5", cfg, test_http);
+    auto result = switch_provider("openai", "gpt-4o", "gpt-5.5", cfg, test_http);
     REQUIRE_FALSE(result.error.empty());
     REQUIRE(result.error.find("No API key") != std::string::npos);
 }
@@ -352,11 +437,11 @@ TEST_CASE("switch_provider: openai records the resolved auth mode", "[provider][
     cfg.providers["openai"].oauth_access_token = "token";
     cfg.providers["openai"].use_oauth = true;
 
-    auto to_key = switch_provider("openai", "gpt-4o", "gpt-5", cfg, test_http);
+    auto to_key = switch_provider("openai", "gpt-4o", "gpt-5.5", cfg, test_http);
     REQUIRE(to_key.error.empty());
     REQUIRE_FALSE(cfg.providers["openai"].use_oauth);
 
-    auto back_to_oauth = switch_provider("openai", "gpt-5", "gpt-4o", cfg, test_http);
+    auto back_to_oauth = switch_provider("openai", "gpt-5.5", "gpt-4o", cfg, test_http);
     REQUIRE(back_to_oauth.error.empty());
     REQUIRE(cfg.providers["openai"].use_oauth);
 }
