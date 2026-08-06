@@ -147,6 +147,11 @@ Config Config::load() {
                 entry.user = obj["user"].get<std::string>();
             if (obj.contains("use_oauth") && obj["use_oauth"].is_boolean())
                 entry.use_oauth = obj["use_oauth"].get<bool>();
+            if (obj.contains("oauth_models") && obj["oauth_models"].is_array()) {
+                for (const auto& m : obj["oauth_models"]) {
+                    if (m.is_string()) entry.oauth_models.push_back(m.get<std::string>());
+                }
+            }
             if (obj.contains("oauth_access_token") && obj["oauth_access_token"].is_string())
                 entry.oauth_access_token = obj["oauth_access_token"].get<std::string>();
             if (obj.contains("oauth_refresh_token") && obj["oauth_refresh_token"].is_string())
@@ -254,6 +259,14 @@ Config Config::load() {
     if (const char* v = std::getenv("OPENAI_USE_OAUTH"))
         cfg.providers["openai"].use_oauth =
             (std::string(v) == "1" || std::string(v) == "true" || std::string(v) == "TRUE");
+    if (const char* v = std::getenv("OPENAI_OAUTH_MODELS")) {
+        std::vector<std::string> models;
+        for (const auto& part : split(v, ',')) {
+            std::string name = trim(part);
+            if (!name.empty()) models.push_back(std::move(name));
+        }
+        cfg.providers["openai"].oauth_models = std::move(models);
+    }
     if (const char* v = std::getenv("OPENAI_OAUTH_ACCESS_TOKEN"))
         cfg.providers["openai"].oauth_access_token = v;
     if (const char* v = std::getenv("OPENAI_OAUTH_REFRESH_TOKEN"))

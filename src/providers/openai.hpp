@@ -56,7 +56,8 @@ protected:
     std::string bearer_token();
     void refresh_oauth_if_needed();
     bool use_responses_api(const std::string& model) const;
-    std::string responses_url(const std::string& model) const;
+    bool uses_chatgpt_backend() const;
+    std::string responses_url() const;
 
 private:
     // OpenAI's `user` field. Empty means omit it; see ProviderEntry::user.

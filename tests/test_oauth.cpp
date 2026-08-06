@@ -27,6 +27,27 @@ TEST_CASE("OAuth: default token URL", "[oauth]") {
 TEST_CASE("OAuth: default authorize base URL", "[oauth]") {
     REQUIRE(std::string(kDefaultAuthorizeBaseUrl) == "https://auth.openai.com/oauth/authorize");
 }
+
+// ── Model kept after connecting ─────────────────────────────────
+
+TEST_CASE("OAuth: connecting keeps a model the subscription serves", "[oauth]") {
+    ProviderEntry entry;
+    REQUIRE(oauth_model_after_connect("gpt-5", entry) == "gpt-5");
+    REQUIRE(oauth_model_after_connect("gpt-5.3-codex", entry) == "gpt-5.3-codex");
+}
+
+TEST_CASE("OAuth: connecting moves off a model the subscription cannot serve", "[oauth]") {
+    ProviderEntry entry;
+    REQUIRE(oauth_model_after_connect("gpt-4o", entry) == std::string(kDefaultOAuthModel));
+    REQUIRE(oauth_model_after_connect("", entry) == std::string(kDefaultOAuthModel));
+}
+
+TEST_CASE("OAuth: connecting honours oauth_models when keeping the model", "[oauth]") {
+    ProviderEntry entry;
+    entry.oauth_models = {"gpt-4o"};
+    REQUIRE(oauth_model_after_connect("gpt-4o", entry) == "gpt-4o");
+    REQUIRE(oauth_model_after_connect("gpt-5", entry) == std::string(kDefaultOAuthModel));
+}
 #endif
 
 // url_encode/form_encode tests moved to test_util.cpp along with the functions —

@@ -33,6 +33,8 @@ using json = nlohmann::json;
 namespace ptrclaw {
 
 namespace {
+constexpr const char* kOpenAIApiBaseUrl = "https://api.openai.com/v1";
+
 // The built-in client_id belongs to the OAuth flow, so it is only compiled in
 // when that flow is. A build without the flow must not carry a client_id it can
 // never use — and the provider still honours one supplied in config, so a
@@ -55,7 +57,7 @@ OpenAIProvider::OpenAIProvider(const std::string& api_key, HttpClient& http,
                                const std::string& oauth_client_id,
                                const std::string& oauth_token_url)
     : api_key_(api_key), http_(http),
-      base_url_(base_url.empty() ? "https://api.openai.com/v1" : base_url),
+      base_url_(base_url.empty() ? kOpenAIApiBaseUrl : base_url),
       use_oauth_(use_oauth),
       oauth_access_token_(oauth_access_token),
       oauth_refresh_token_(oauth_refresh_token),
@@ -200,14 +202,20 @@ std::vector<Header> OpenAIProvider::build_headers() {
 
 // ── Responses API detection ──────────────────────────────────────
 
-bool OpenAIProvider::use_responses_api(const std::string& model) const {
-    return model.find("codex") != std::string::npos;
+bool OpenAIProvider::uses_chatgpt_backend() const {
+    // A base_url override points somewhere that is not OpenAI's subscription backend, so
+    // the caller's endpoint wins even when subscription tokens are what authenticates.
+    return use_oauth_ && base_url_ == kOpenAIApiBaseUrl;
 }
 
-std::string OpenAIProvider::responses_url(const std::string& model) const {
-    // OAuth codex models use the ChatGPT backend unless base_url is overridden
-    if (use_oauth_ && model.find("codex") != std::string::npos &&
-        base_url_ == "https://api.openai.com/v1") {
+bool OpenAIProvider::use_responses_api(const std::string& model) const {
+    // The subscription backend only speaks the Responses API, whatever the model; codex
+    // models speak it on api.openai.com too.
+    return model.find("codex") != std::string::npos || uses_chatgpt_backend();
+}
+
+std::string OpenAIProvider::responses_url() const {
+    if (uses_chatgpt_backend()) {
         return "https://chatgpt.com/backend-api/codex/responses";
     }
     return base_url_ + "/responses";
@@ -357,7 +365,7 @@ ChatResponse OpenAIProvider::chat_responses(
 
     json request = build_responses_request(messages, tools, model, temperature);
 
-    std::string url = responses_url(model);
+    std::string url = responses_url();
     auto headers = build_headers();
 
     auto response = http_.post(url, request.dump(), headers);
@@ -381,7 +389,7 @@ ChatResponse OpenAIProvider::chat_stream_responses(
     json request = build_responses_request(messages, tools, model, temperature);
     request["stream"] = true;
 
-    std::string url = responses_url(model);
+    std::string url = responses_url();
     auto headers = build_headers();
 
     ChatResponse result;

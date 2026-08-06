@@ -10,6 +10,14 @@ namespace ptrclaw {
 
 using json = nlohmann::json;
 
+// ── Model to run after connecting ────────────────────────────────
+
+std::string oauth_model_after_connect(const std::string& current_model,
+                                      const ProviderEntry& openai_entry) {
+    if (openai_oauth_eligible(current_model, openai_entry)) return current_model;
+    return kDefaultOAuthModel;
+}
+
 // ── Authorize URL builder ────────────────────────────────────────
 
 std::string build_authorize_url(const std::string& client_id,

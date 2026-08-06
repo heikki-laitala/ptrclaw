@@ -85,7 +85,7 @@ Codex models are covered by your subscription, but memory vector search needs an
 }
 ```
 
-PtrClaw uses OAuth for codex model calls and the API key for embeddings — both coexist.
+PtrClaw uses OAuth for subscription model calls and the API key for embeddings — both coexist.
 
 **4. Start the Telegram bot:**
 
@@ -304,9 +304,13 @@ For Ollama, `/auth ollama` prompts for the base URL.
 
 In Telegram and other channels, use `/auth <provider> <api_key>` to set a key directly. OAuth uses the two-step flow: `/auth openai start` then `/auth openai finish <callback_url>`.
 
-### OpenAI OAuth (codex models)
+### OpenAI OAuth (subscription models)
 
-OpenAI codex models (e.g. `gpt-5-codex-mini`) can be accessed via OAuth using your ChatGPT subscription (Plus, Pro, or Team). Use `/auth openai` and choose "OAuth login". PtrClaw automatically prefers OAuth for codex models when tokens are available, falling back to the API key otherwise. Non-codex models always use the API key.
+The models your ChatGPT subscription (Plus, Pro, or Team) covers can be reached via OAuth — the
+codex family (e.g. `gpt-5-codex-mini`) and the wider gpt-5 family (e.g. `gpt-5`, `gpt-5-pro`).
+Use `/auth openai` and choose "OAuth login". PtrClaw prefers OAuth for those models when tokens
+are available and falls back to the API key; every other model always uses the API key. Set
+`providers.openai.oauth_models` to choose the set yourself.
 
 For details on the PKCE flow, token refresh, environment variables, and config format, see [`docs/openai-oauth.md`](docs/openai-oauth.md).
 
@@ -315,7 +319,7 @@ For details on the PKCE flow, token refresh, environment variables, and config f
 ```text
 /models                              # list configured providers and current model
 /provider openai gpt-4o-mini         # switch to OpenAI API key
-/provider openai gpt-5-codex-mini    # switch to OpenAI OAuth (codex)
+/provider openai gpt-5-codex-mini    # switch to OpenAI OAuth (subscription)
 /provider anthropic claude-sonnet-4-6  # switch to Anthropic
 /model gpt-4o                        # switch model within current provider
 ```

@@ -153,10 +153,11 @@ bool setup_openai_oauth(Config& config, HttpClient& http) {
     }
 
     config.provider = "openai";
-    config.model = kDefaultOAuthModel;
+    config.model = oauth_model_after_connect(config.model,
+                                             config.providers["openai"]);
     config.persist_selection();
     std::cout << "OAuth connected. Provider: openai | Model: "
-              << kDefaultOAuthModel << "\n";
+              << config.model << "\n";
     if (!result.persisted) {
         std::cout << "(warning: could not persist to config file)\n";
     }

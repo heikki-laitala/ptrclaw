@@ -44,15 +44,26 @@ std::vector<ProviderInfo> list_providers(
     return result;
 }
 
+bool openai_oauth_eligible(const std::string& model, const ProviderEntry& entry) {
+    if (!entry.oauth_models.empty()) {
+        for (const auto& pattern : entry.oauth_models) {
+            if (pattern == "*") return true;
+            if (!pattern.empty() && model.find(pattern) != std::string::npos) return true;
+        }
+        return false;
+    }
+    return model.find("codex") != std::string::npos ||
+           model.find("gpt-5") != std::string::npos;
+}
+
 std::string auth_mode_label(const std::string& provider_name,
                              const std::string& model,
                              const Config& config) {
     if (provider_name == "openai") {
-        if (model.find("codex") != std::string::npos) {
-            auto it = config.providers.find("openai");
-            if (it != config.providers.end() && !it->second.oauth_access_token.empty())
-                return "OAuth";
-        }
+        auto it = config.providers.find("openai");
+        if (it != config.providers.end() && !it->second.oauth_access_token.empty() &&
+            openai_oauth_eligible(model, it->second))
+            return "OAuth";
         return "API key";
     }
     auto it = config.providers.find(provider_name);
@@ -76,17 +87,18 @@ SwitchProviderResult switch_provider(const std::string& name,
 
     const auto& entry = it->second;
 
-    // OpenAI: codex models prefer OAuth when available, fall back to API key.
-    // Non-codex models always use API key.
+    // OpenAI: models the subscription can serve prefer OAuth when tokens are present and
+    // fall back to the API key. Everything else must use the API key — the ChatGPT
+    // backend will not serve it, and api.openai.com does not accept these tokens.
     if (name == "openai") {
         std::string effective = model_arg.empty() ? current_model : model_arg;
-        bool is_codex = effective.find("codex") != std::string::npos;
+        bool oauth_capable = openai_oauth_eligible(effective, entry);
         bool has_oauth = !entry.oauth_access_token.empty();
         bool has_key = !entry.api_key.empty();
-        bool use_oauth = is_codex && has_oauth;
+        bool use_oauth = oauth_capable && has_oauth;
 
         if (!use_oauth && !has_key) {
-            result.error = is_codex
+            result.error = oauth_capable
                 ? "No API key or OAuth for openai. Run /auth openai start for OAuth."
                 : "No API key for openai";
             return result;
@@ -94,6 +106,9 @@ SwitchProviderResult switch_provider(const std::string& name,
 
         ProviderEntry adjusted = entry;
         adjusted.use_oauth = use_oauth;
+        // Record the mode actually built: callers compare against this to decide whether a
+        // model change needs a new provider, and a stale flag skips that rebuild.
+        it->second.use_oauth = use_oauth;
         result.provider = create_provider("openai", config.api_key_for("openai"), http,
             config.base_url_for("openai"), config.prompt_caching_for("openai"), &adjusted);
         result.model = model_arg.empty() ? effective : model_arg;

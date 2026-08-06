@@ -31,7 +31,7 @@ std::string cmd_models(const Agent& agent, const Config& config) {
         result += "  " + info.name + " \xe2\x80\x94 ";
         if (info.has_api_key) result += "API key";
         if (info.has_api_key && info.has_oauth) result += ", ";
-        if (info.has_oauth) result += "OAuth (codex models)";
+        if (info.has_oauth) result += "OAuth (subscription models)";
         if (info.is_local) result += "local";
         result += "\n";
     }
@@ -70,17 +70,17 @@ std::string cmd_model(const std::string& new_model, Agent& agent,
     // On openai, re-create provider if auth mode changes.
     //
     // Guarded on the provider, not the interactive flow: tokens can be supplied in
-    // config without the flow, so switching between a codex model (OAuth) and a
-    // non-codex one (API key) must still rebuild the provider. Otherwise
+    // config without the flow, so switching between a model the subscription serves
+    // (OAuth) and one it does not (API key) must still rebuild the provider. Otherwise
     // use_oauth_ stays stale and the wrong credential is sent.
 #ifdef PTRCLAW_HAS_OPENAI
     if (agent.provider_name() == "openai") {
         auto oai_it = config.providers.find("openai");
         bool on_oauth = oai_it != config.providers.end() &&
                         oai_it->second.use_oauth;
-        bool want_oauth = new_model.find("codex") != std::string::npos &&
-                          oai_it != config.providers.end() &&
-                          !oai_it->second.oauth_access_token.empty();
+        bool want_oauth = oai_it != config.providers.end() &&
+                          !oai_it->second.oauth_access_token.empty() &&
+                          openai_oauth_eligible(new_model, oai_it->second);
         if (on_oauth != want_oauth) {
             auto sr = switch_provider("openai", new_model, agent.model(),
                                        config, http);
