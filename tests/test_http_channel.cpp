@@ -466,6 +466,39 @@ TEST_CASE("HttpChannel: an explicit session gets no session frame", "[http_chann
     REQUIRE(written.find("event: session") == std::string::npos);
 }
 
+// A client that disconnects before the session frame lands makes write() return false. If
+// that result is ignored the turn still waits out turn_timeout_seconds, holding a connection
+// thread the whole time — repeated early disconnects would then exhaust max_connections.
+TEST_CASE("HttpChannel: a failed session frame abandons the turn at once",
+          "[http_channel]") {
+    auto cfg = test_config();
+    cfg.generate_session_ids = true;
+    cfg.turn_timeout_seconds = 30;   // long enough that waiting it out is unmistakable
+    HttpChannel ch(cfg);
+
+    auto resp = ch.handle_request(chat_request(json{{"message", "hi"}}));
+    REQUIRE(resp.status == 200);
+    REQUIRE(resp.stream != nullptr);
+
+    int writes = 0;
+    auto started = std::chrono::steady_clock::now();
+    resp.stream([&writes](std::string_view) {
+        ++writes;
+        return false;   // the client is gone
+    });
+    auto elapsed = std::chrono::steady_clock::now() - started;
+
+    // One attempt, then out — not thirty seconds of waiting for a reply nobody can receive.
+    REQUIRE(writes == 1);
+    REQUIRE(elapsed < std::chrono::seconds(5));
+
+    // And the turn is released rather than left in flight, so the session is not wedged
+    // until the stale-turn timeout.
+    auto again = ch.handle_request(chat_request(json{{"session", "explicit"},
+                                                    {"message", "hi"}}));
+    REQUIRE(again.status == 200);
+}
+
 TEST_CASE("HttpChannel: generated ids differ between requests", "[http_channel]") {
     auto cfg = test_config();
     cfg.generate_session_ids = true;

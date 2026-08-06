@@ -202,6 +202,39 @@ TEST_CASE("resolve_in_workspace: a dangling symlink directory component is refus
                                        WorkspaceAccess::Write).has_value());
 }
 
+// A link whose target itself traverses another link: resolving `alias` yields
+// "dirlink/missing", and checking only that complete path never examines `dirlink`. The
+// result looks inside the workspace while a write through it follows dirlink out.
+TEST_CASE("resolve_in_workspace: a symlink target containing a link is re-resolved",
+          "[workspace]") {
+    WorkspaceFixture fx;
+    std::error_code ec;
+    std::filesystem::create_directory_symlink(fx.outside, fx.workspace / "dirlink", ec);
+    std::filesystem::create_symlink("dirlink/missing", fx.workspace / "alias", ec);
+    if (ec) SKIP("symlinks unavailable on this filesystem");
+
+    REQUIRE_FALSE(resolve_in_workspace(fx.scope(), "alias",
+                                       WorkspaceAccess::Write).has_value());
+    REQUIRE_FALSE(resolve_in_workspace(fx.scope(), "alias",
+                                       WorkspaceAccess::Read).has_value());
+}
+
+// The same shape, but every hop stays inside — it must still resolve, or the fix is just a
+// ban on links whose targets contain links.
+TEST_CASE("resolve_in_workspace: a nested link staying inside is allowed", "[workspace]") {
+    WorkspaceFixture fx;
+    std::error_code ec;
+    std::filesystem::create_directories(fx.workspace / "sub");
+    std::filesystem::create_directory_symlink(fx.workspace / "sub",
+                                              fx.workspace / "sublink", ec);
+    std::filesystem::create_symlink("sublink/notes.md", fx.workspace / "alias", ec);
+    if (ec) SKIP("symlinks unavailable on this filesystem");
+
+    auto path = resolve_in_workspace(fx.scope(), "alias", WorkspaceAccess::Write);
+    REQUIRE(path.has_value());
+    REQUIRE(path.value_or("") == (fx.workspace / "sub" / "notes.md").string());
+}
+
 // A link that stays inside is legitimate and must keep working, or the fix would just be a
 // blanket ban on symlinks.
 TEST_CASE("resolve_in_workspace: a dangling symlink pointing inside is allowed",

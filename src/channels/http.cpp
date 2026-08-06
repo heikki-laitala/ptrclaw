@@ -315,7 +315,15 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
             // cannot read response headers. A caller that supplied its own id sees the
             // stream it has always seen.
             if (generate) {
-                write(sse_frame("session", json{{"session", *session_ref}}));
+                // A false return means the client is already gone. Waiting for a reply it
+                // cannot receive would hold this connection thread for the whole turn
+                // timeout, so repeated early disconnects would exhaust max_connections;
+                // the turn is released here instead of waiting to go stale.
+                if (!write(sse_frame("session", json{{"session", *session_ref}}))) {
+                    std::lock_guard<std::mutex> lk(turn_mutex_);
+                    turns_.erase(*session_ref);
+                    return;
+                }
             }
             stream_turn(*session_ref, write);
         } catch (...) {

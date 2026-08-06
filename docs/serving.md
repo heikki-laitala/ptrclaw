@@ -70,7 +70,9 @@ prefix. So:
 - `../../elsewhere/x` is refused; `sub/../notes.md` is allowed, because it stays inside
 - a symlink inside the workspace pointing out is refused, **including one whose target does
   not exist yet** — `weakly_canonical` alone leaves those unresolved, so every component is
-  expanded with `lstat` semantics and a link chain is bounded against loops
+  expanded with `lstat` semantics, a substituted target's own components are re-examined in
+  turn (a link to `dirlink/missing` cannot slip past by hiding the link in its target), and a
+  chain is bounded against loops
 - `/work/sessions/abc-evil` is refused for a session rooted at `/work/sessions/abc`, which a
   prefix comparison would have accepted
 - if the roots overlap — `context_dir=/work` with `workspace_root=/work/sessions` — a read
@@ -134,9 +136,11 @@ request, each holding an Agent, a Config copy and a memory backend until idle ev
 session beyond the cap is **refused**, not evicted — freeing one could pull an Agent out from
 under a worker mid-turn — so the caller gets an error and the pod stays up.
 
-`memory.isolation` needs no setting in a serving build: it defaults to `"session"` there, so
-the fenced filesystem is not paired with a memory store every tenant shares. An explicit
-`"shared"` still wins, for a pod running one tenant's own tasks.
+`memory.isolation` needs no setting in a serving build: it defaults to `"session"` there —
+in the generated config file as well as the struct, since `Config::load()` merges the
+defaults into the file and then parses the result — so the fenced filesystem is not paired
+with a memory store every tenant shares. An explicit `"shared"` still wins, for a pod running
+one tenant's own tasks.
 
 ## Session ids
 

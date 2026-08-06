@@ -63,7 +63,15 @@ nlohmann::json Config::defaults_json() {
             {"cache_ttl", 3600},
             {"cache_max_entries", 100},
             {"enrich_depth", 1},
+            // Build-dependent, like MemoryConfig::isolation itself. load() merges this
+            // into the file and then parses the result, so hardcoding "shared" here would
+            // silently overwrite a serving build's default and share one memory store
+            // across every session — the struct default alone never reaches a deployment.
+#ifdef PTRCLAW_HAS_SERVING
+            {"isolation", "session"},
+#else
             {"isolation", "shared"},
+#endif
             {"synthesis", true},
             {"synthesis_interval", 5},
             {"recency_half_life", 0},

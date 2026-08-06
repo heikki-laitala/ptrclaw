@@ -164,6 +164,34 @@ TEST_CASE("MemoryConfig: a serving build isolates memory by default", "[config][
 #endif
 }
 
+// Through Config::load(), which is the only path a deployment takes. The struct default
+// alone proves nothing: load() merges defaults_json() into the file and then parses the
+// result, so a hardcoded "shared" there would overwrite the build's default and quietly
+// share one memory store across every session.
+TEST_CASE("MemoryConfig: the build default survives Config::load", "[config][serving]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config("{}");   // no memory section at all
+
+    Config cfg = Config::load();
+#ifdef PTRCLAW_HAS_SERVING
+    REQUIRE(cfg.memory.isolation == "session");
+#else
+    REQUIRE(cfg.memory.isolation == "shared");
+#endif
+}
+
+// And through the generated default file, which is what a first run writes.
+TEST_CASE("MemoryConfig: defaults_json carries the build default", "[config][serving]") {
+    auto defaults = Config::defaults_json();
+    REQUIRE(defaults["memory"].contains("isolation"));
+#ifdef PTRCLAW_HAS_SERVING
+    REQUIRE(defaults["memory"]["isolation"] == "session");
+#else
+    REQUIRE(defaults["memory"]["isolation"] == "shared");
+#endif
+}
+
 // Still an explicit choice: an operator who writes "shared" gets it, because a pod serving
 // one tenant's own tasks may legitimately want a common store.
 TEST_CASE("MemoryConfig: an explicit isolation still wins", "[config][serving]") {
