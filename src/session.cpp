@@ -314,10 +314,11 @@ bool SessionManager::handle_auth_command(
         auto r = apply_oauth_result(code, pending, config_, http_);
         if (!r.success) { send_reply(r.error); return; }
         agent.set_provider(std::move(r.provider));
-        agent.set_model(kDefaultOAuthModel);
+        agent.set_model(oauth_model_after_connect(agent.model(),
+                                                  config_.providers["openai"]));
         clear_pending_oauth(ev.session_id);
         send_reply(std::string("OpenAI OAuth connected ✅ Model switched to ") +
-                   kDefaultOAuthModel + "." +
+                   agent.model() + "." +
                    (r.persisted
                     ? " Saved to ~/.ptrclaw/config.json"
                     : " (warning: could not persist to config file)"));

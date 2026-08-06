@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <unordered_map>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 namespace ptrclaw {
@@ -20,6 +21,12 @@ struct ProviderEntry {
 
     // OpenAI subscription OAuth (Codex) support
     bool use_oauth = false;
+    // Which models the subscription tokens may serve. Empty means the built-in set
+    // (the codex and gpt-5 families); "*" matches any model. The entitlements behind a
+    // subscription are not discoverable from here and change over time, so an account
+    // that can reach more — or fewer — models than the default set says so here rather
+    // than waiting for a release. See openai_oauth_eligible().
+    std::vector<std::string> oauth_models;
     std::string oauth_access_token;
     std::string oauth_refresh_token;
     uint64_t oauth_expires_at = 0; // epoch seconds

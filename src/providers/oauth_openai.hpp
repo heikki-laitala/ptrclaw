@@ -17,6 +17,13 @@ constexpr const char* kDefaultAuthorizeBaseUrl = "https://auth.openai.com/oauth/
 constexpr const char* kDefaultOAuthModel = "gpt-5-codex-mini";
 constexpr const char* kDefaultOriginator = "pi";
 
+// ── Model to run after connecting ────────────────────────────────
+// Keeps the current model when the subscription can serve it, so connecting OAuth while
+// on a model like gpt-5 is not a silent downgrade. Falls back to kDefaultOAuthModel,
+// which the very next turn is guaranteed to be able to use.
+std::string oauth_model_after_connect(const std::string& current_model,
+                                      const ProviderEntry& openai_entry);
+
 // ── Authorize URL builder ────────────────────────────────────────
 std::string build_authorize_url(const std::string& client_id,
                                 const std::string& redirect_uri,

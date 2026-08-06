@@ -249,3 +249,114 @@ TEST_CASE("switch_provider: openai with api_key succeeds", "[provider]") {
     REQUIRE(result.error.empty());
     REQUIRE(result.provider != nullptr);
 }
+
+// ── openai_oauth_eligible ───────────────────────────────────────
+
+TEST_CASE("openai_oauth_eligible: codex family by default", "[provider][oauth]") {
+    ProviderEntry entry;
+    REQUIRE(openai_oauth_eligible("gpt-5-codex-mini", entry));
+    REQUIRE(openai_oauth_eligible("gpt-5.3-codex", entry));
+}
+
+TEST_CASE("openai_oauth_eligible: gpt-5 family by default", "[provider][oauth]") {
+    ProviderEntry entry;
+    REQUIRE(openai_oauth_eligible("gpt-5", entry));
+    REQUIRE(openai_oauth_eligible("gpt-5.1", entry));
+    REQUIRE(openai_oauth_eligible("gpt-5-pro", entry));
+}
+
+TEST_CASE("openai_oauth_eligible: models the subscription cannot serve", "[provider][oauth]") {
+    ProviderEntry entry;
+    REQUIRE_FALSE(openai_oauth_eligible("gpt-4o", entry));
+    REQUIRE_FALSE(openai_oauth_eligible("o3-mini", entry));
+    REQUIRE_FALSE(openai_oauth_eligible("", entry));
+}
+
+TEST_CASE("openai_oauth_eligible: config list replaces the default set", "[provider][oauth]") {
+    ProviderEntry entry;
+    entry.oauth_models = {"gpt-4o"};
+    REQUIRE(openai_oauth_eligible("gpt-4o-mini", entry));
+    // The list is authoritative, so it can narrow as well as widen.
+    REQUIRE_FALSE(openai_oauth_eligible("gpt-5-codex", entry));
+}
+
+TEST_CASE("openai_oauth_eligible: wildcard matches any model", "[provider][oauth]") {
+    ProviderEntry entry;
+    entry.oauth_models = {"*"};
+    REQUIRE(openai_oauth_eligible("o3-mini", entry));
+    REQUIRE(openai_oauth_eligible("some-future-model", entry));
+}
+
+// ── auth_mode_label: OAuth beyond codex ─────────────────────────
+
+TEST_CASE("auth_mode_label: openai gpt-5 with oauth returns OAuth", "[provider][oauth]") {
+    Config cfg;
+    cfg.providers["openai"].oauth_access_token = "token";
+    REQUIRE(auth_mode_label("openai", "gpt-5", cfg) == "OAuth");
+}
+
+TEST_CASE("auth_mode_label: openai gpt-4o with oauth stays API key", "[provider][oauth]") {
+    Config cfg;
+    cfg.providers["openai"].api_key = "sk-test";
+    cfg.providers["openai"].oauth_access_token = "token";
+    REQUIRE(auth_mode_label("openai", "gpt-4o", cfg) == "API key");
+}
+
+TEST_CASE("auth_mode_label: openai honours oauth_models override", "[provider][oauth]") {
+    Config cfg;
+    cfg.providers["openai"].api_key = "sk-test";
+    cfg.providers["openai"].oauth_access_token = "token";
+    cfg.providers["openai"].oauth_models = {"gpt-4o"};
+    REQUIRE(auth_mode_label("openai", "gpt-4o", cfg) == "OAuth");
+    REQUIRE(auth_mode_label("openai", "gpt-5", cfg) == "API key");
+}
+
+// ── switch_provider: OAuth beyond codex ─────────────────────────
+
+TEST_CASE("switch_provider: openai gpt-5 uses oauth without api key", "[provider][oauth]") {
+    REQUIRE_PROVIDER("openai");
+    Config cfg;
+    cfg.providers["openai"].oauth_access_token = "token";
+    auto result = switch_provider("openai", "gpt-5", "gpt-4", cfg, test_http);
+    REQUIRE(result.error.empty());
+    REQUIRE(result.provider != nullptr);
+    REQUIRE(result.model == "gpt-5");
+    REQUIRE(cfg.providers["openai"].use_oauth);
+}
+
+TEST_CASE("switch_provider: openai oauth_models override enables oauth", "[provider][oauth]") {
+    REQUIRE_PROVIDER("openai");
+    Config cfg;
+    cfg.providers["openai"].oauth_access_token = "token";
+    cfg.providers["openai"].oauth_models = {"o3"};
+    auto result = switch_provider("openai", "o3-mini", "gpt-4", cfg, test_http);
+    REQUIRE(result.error.empty());
+    REQUIRE(cfg.providers["openai"].use_oauth);
+}
+
+TEST_CASE("switch_provider: openai ineligible model with only oauth errors", "[provider][oauth]") {
+    Config cfg;
+    cfg.providers["openai"].oauth_access_token = "token";
+    auto result = switch_provider("openai", "gpt-4o", "gpt-5", cfg, test_http);
+    REQUIRE_FALSE(result.error.empty());
+    REQUIRE(result.error.find("No API key") != std::string::npos);
+}
+
+// The live provider's auth mode is derived from the model, so config must record what
+// was actually built. Otherwise /model reads a stale flag and skips the rebuild that
+// switches credentials back — leaving an API-key provider serving an OAuth model.
+TEST_CASE("switch_provider: openai records the resolved auth mode", "[provider][oauth]") {
+    REQUIRE_PROVIDER("openai");
+    Config cfg;
+    cfg.providers["openai"].api_key = "sk-test";
+    cfg.providers["openai"].oauth_access_token = "token";
+    cfg.providers["openai"].use_oauth = true;
+
+    auto to_key = switch_provider("openai", "gpt-4o", "gpt-5", cfg, test_http);
+    REQUIRE(to_key.error.empty());
+    REQUIRE_FALSE(cfg.providers["openai"].use_oauth);
+
+    auto back_to_oauth = switch_provider("openai", "gpt-5", "gpt-4o", cfg, test_http);
+    REQUIRE(back_to_oauth.error.empty());
+    REQUIRE(cfg.providers["openai"].use_oauth);
+}

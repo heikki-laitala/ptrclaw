@@ -1,6 +1,6 @@
-# OpenAI OAuth (codex models)
+# OpenAI OAuth (subscription models)
 
-OpenAI's codex models (e.g. `gpt-5-codex-mini`) can be accessed via OAuth using your OpenAI subscription (Plus, Pro, or Team) or via a regular API key. Some newer codex models (e.g. `gpt-5.3-codex`) are only available through OAuth.
+Models your OpenAI subscription (Plus, Pro, or Team) covers can be reached via OAuth instead of an API key — the codex family (e.g. `gpt-5-codex-mini`) and the wider gpt-5 family (e.g. `gpt-5`, `gpt-5.1`, `gpt-5-pro`). Some models are only available one way: newer codex models (e.g. `gpt-5.3-codex`) only through OAuth, and older models (e.g. `gpt-4o`, `o3`) only through an API key.
 
 ## How it works
 
@@ -50,13 +50,43 @@ You can also paste the callback URL directly without the `/auth openai finish` p
 
 ## Auth mode auto-detection
 
-PtrClaw automatically selects the right auth mode based on the model:
+PtrClaw selects the auth mode from the model, because that is what decides which
+credential can work: subscription tokens are only accepted by OpenAI's ChatGPT backend,
+and `api.openai.com` does not accept them at all.
 
-- **Codex models** (`*codex*`): OAuth when tokens are available, falls back to API key
-- **Non-codex models**: Always use the API key
-- **API format**: Codex models use the Responses API; other models use Chat Completions
+- **Models the subscription serves** (name contains `codex` or `gpt-5`): OAuth when tokens
+  are available, falls back to the API key
+- **Every other model**: always the API key
+- **API format**: over OAuth, always the Responses API (the ChatGPT backend speaks nothing
+  else); over an API key, codex models use the Responses API and the rest use Chat Completions
 
-You can have both API key and OAuth tokens configured and switch freely between codex and non-codex models.
+You can have both an API key and OAuth tokens configured and switch freely — `/model` rebuilds
+the provider whenever the switch changes which credential applies.
+
+### Choosing the models yourself
+
+The set of models a subscription covers is not discoverable from PtrClaw and changes over
+time, so `oauth_models` overrides the built-in list. It replaces it rather than adding to it,
+so it can widen or narrow the set; entries match as substrings, and `"*"` matches any model:
+
+```json
+{
+  "providers": {
+    "openai": {
+      "oauth_models": ["codex", "gpt-5", "gpt-4o"]
+    }
+  }
+}
+```
+
+Set `["*"]` to send every OpenAI model over OAuth. A model the backend does not serve fails
+with that backend's error rather than silently falling back to the API key.
+
+### Connecting while on a model already covered
+
+`/auth openai` keeps the current model when the subscription can serve it, so connecting
+while on `gpt-5` leaves you on `gpt-5`. Otherwise it switches to `gpt-5-codex-mini`, which is
+guaranteed to work with the credential you just added.
 
 ## Environment variables
 
@@ -65,6 +95,7 @@ These environment variables override the config file for OAuth:
 | Variable | Description |
 | --- | --- |
 | `OPENAI_USE_OAUTH` | Use OAuth token path (`true`/`1`) |
+| `OPENAI_OAUTH_MODELS` | Comma-separated `oauth_models` list (e.g. `codex,gpt-5`) |
 | `OPENAI_OAUTH_ACCESS_TOKEN` | OAuth access token |
 | `OPENAI_OAUTH_REFRESH_TOKEN` | OAuth refresh token |
 | `OPENAI_OAUTH_EXPIRES_AT` | Access token expiry (epoch seconds) |
@@ -91,7 +122,7 @@ After OAuth setup, `~/.ptrclaw/config.json` looks like:
 }
 ```
 
-You don't need to edit the OAuth fields manually — the `/auth` flow and automatic token refresh handle them. The `api_key` field is independent and used for non-codex OpenAI models. The `use_oauth` field is managed automatically.
+You don't need to edit the OAuth fields manually — the `/auth` flow and automatic token refresh handle them. The `api_key` field is independent and used for the models OAuth cannot serve. The `use_oauth` field is managed automatically: PtrClaw sets it to whatever the active model resolved to.
 
 ## Token refresh
 

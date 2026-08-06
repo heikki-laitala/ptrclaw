@@ -112,9 +112,16 @@ std::string auth_mode_label(const std::string& provider_name,
                              const std::string& model,
                              const Config& config);
 
+// ── OpenAI OAuth model eligibility ──────────────────────────────
+// Whether OpenAI subscription tokens can serve this model. Those tokens are only
+// accepted by the ChatGPT backend, which serves the models the subscription covers —
+// so this is a property of the model, not of the credential. Honours
+// ProviderEntry::oauth_models when set, otherwise the codex and gpt-5 families.
+bool openai_oauth_eligible(const std::string& model, const ProviderEntry& entry);
+
 // ── Provider switching ──────────────────────────────────────────
-// For openai, auto-selects OAuth when the model name contains
-// "codex", otherwise uses the API key.
+// For openai, auto-selects OAuth when the model is one the subscription can serve
+// (see openai_oauth_eligible) and tokens are present, otherwise uses the API key.
 struct SwitchProviderResult {
     std::unique_ptr<Provider> provider; // null on error
     std::string model;                  // resolved model name

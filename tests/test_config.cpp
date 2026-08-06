@@ -151,6 +151,47 @@ TEST_CASE("Config::load: reads config file", "[config]") {
     REQUIRE(cfg.agent.token_limit == 64000);
 }
 
+TEST_CASE("Config::load: reads openai oauth_models", "[config][oauth]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({
+        "providers": {
+            "openai": { "oauth_models": ["gpt-5", "gpt-4o"] }
+        }
+    })");
+
+    Config cfg = Config::load();
+    REQUIRE(cfg.providers["openai"].oauth_models ==
+            std::vector<std::string>{"gpt-5", "gpt-4o"});
+}
+
+TEST_CASE("Config::load: oauth_models ignores non-string entries", "[config][oauth]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({
+        "providers": {
+            "openai": { "oauth_models": ["gpt-5", 42, null] }
+        }
+    })");
+
+    Config cfg = Config::load();
+    REQUIRE(cfg.providers["openai"].oauth_models ==
+            std::vector<std::string>{"gpt-5"});
+}
+
+TEST_CASE("Config::load: OPENAI_OAUTH_MODELS overrides the config file", "[config][oauth]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({"providers": {"openai": {"oauth_models": ["gpt-5"]}}})");
+    setenv("OPENAI_OAUTH_MODELS", "o3, gpt-4o ", 1);
+
+    Config cfg = Config::load();
+    unsetenv("OPENAI_OAUTH_MODELS");
+
+    REQUIRE(cfg.providers["openai"].oauth_models ==
+            std::vector<std::string>{"o3", "gpt-4o"});
+}
+
 TEST_CASE("AgentConfig: session_max_idle_seconds is read from the config file",
           "[config]") {
     ConfigTestGuard g;
