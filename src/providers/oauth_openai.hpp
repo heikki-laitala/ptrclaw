@@ -2,12 +2,9 @@
 #include "config.hpp"
 #include "http.hpp"
 #include "oauth.hpp"
-#include <memory>
 #include <string>
 
 namespace ptrclaw {
-
-class Provider;
 
 // ── OpenAI OAuth constants ───────────────────────────────────────
 constexpr const char* kDefaultOAuthClientId = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -46,11 +43,15 @@ std::string exchange_oauth_token(const std::string& code,
                                   ProviderEntry& out_entry);
 
 // ── Apply OAuth result (shared between REPL + channel) ──────────
+// Exchanges the code and stores the tokens. It deliberately does not build a provider:
+// which credential a model may use is switch_provider's decision, and oauth_models can
+// exclude even kDefaultOAuthModel — a provider built here would be OAuth regardless and
+// would send the next request to the subscription backend with a model the configuration
+// says it cannot serve.
 struct OAuthApplyResult {
     bool success = false;
     bool persisted = false;
     std::string error;
-    std::unique_ptr<Provider> provider;
 };
 
 OAuthApplyResult apply_oauth_result(const std::string& code,

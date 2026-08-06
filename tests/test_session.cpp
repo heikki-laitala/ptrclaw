@@ -205,6 +205,87 @@ TEST_CASE("SessionManager: /auth openai finish persists provider and model", "[s
     REQUIRE(persisted["provider"] == "openai");
     REQUIRE(persisted["model"] == std::string(kDefaultOAuthModel));
 }
+
+// Connecting must not hand the ChatGPT backend a model the configuration says the
+// subscription cannot serve. oauth_models can exclude even the default, so the credential
+// for whatever model is chosen has to be resolved the same way every other switch is.
+TEST_CASE("SessionManager: /auth openai finish honours oauth_models for the default",
+          "[session]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    cfg.allow_channel_commands = true;
+    cfg.providers["openai"].oauth_models = {"gpt-4o"};   // excludes kDefaultOAuthModel
+    MockHttpClient http;
+    EventBus bus;
+    SessionManager mgr(cfg, http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    std::string reply;
+    subscribe<MessageReadyEvent>(
+        bus, [&reply](const MessageReadyEvent& e) { reply = e.content; });
+
+    MessageReceivedEvent start;
+    start.session_id = "oauth_sess";
+    start.message.content = "/auth openai start";
+    bus.publish(start);
+
+    http.next_response = {200,
+        R"({"access_token": "tok", "refresh_token": "ref", "expires_in": 3600})"};
+
+    MessageReceivedEvent finish;
+    finish.session_id = "oauth_sess";
+    finish.message.content = "/auth openai finish test-code";
+    bus.publish(finish);
+
+    // An API key is configured, so the model is usable — over that key, not the
+    // subscription. Saying so beats letting the next turn look like OAuth traffic.
+    REQUIRE(reply.find("oauth_models") != std::string::npos);
+    REQUIRE(cfg.model == std::string(kDefaultOAuthModel));
+    REQUIRE(cfg.providers["openai"].oauth_access_token == "tok");
+}
+
+TEST_CASE("SessionManager: /auth openai finish reports a model no credential can serve",
+          "[session]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    cfg.allow_channel_commands = true;
+    cfg.providers["openai"].api_key.clear();            // OAuth is the only credential
+    cfg.providers["openai"].oauth_models = {"gpt-4o"};  // ...and it excludes the default
+    MockHttpClient http;
+    EventBus bus;
+    SessionManager mgr(cfg, http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    std::string reply;
+    subscribe<MessageReadyEvent>(
+        bus, [&reply](const MessageReadyEvent& e) { reply = e.content; });
+
+    MessageReceivedEvent start;
+    start.session_id = "oauth_sess";
+    start.message.content = "/auth openai start";
+    bus.publish(start);
+
+    http.next_response = {200,
+        R"({"access_token": "tok", "refresh_token": "ref", "expires_in": 3600})"};
+
+    MessageReceivedEvent finish;
+    finish.session_id = "oauth_sess";
+    finish.message.content = "/auth openai finish test-code";
+    bus.publish(finish);
+
+    // The tokens are stored either way — losing them because the model selection failed
+    // would send the user back through the whole browser flow.
+    REQUIRE(cfg.providers["openai"].oauth_access_token == "tok");
+    REQUIRE(reply.find("saved") != std::string::npos);
+    REQUIRE(reply.find(kDefaultOAuthModel) != std::string::npos);
+    REQUIRE(reply.find("No API key") != std::string::npos);
+}
 #endif // PTRCLAW_HAS_OPENAI_OAUTH
 #endif // PTRCLAW_HAS_OPENAI
 
