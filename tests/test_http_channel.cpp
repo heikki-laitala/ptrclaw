@@ -383,6 +383,104 @@ TEST_CASE("HttpChannel: an abandoned turn stops blocking its session", "[http_ch
             == 200);
 }
 
+// ── generated session ids ───────────────────────────────────────
+//
+// A pod serving many chats may be asked to start one: the caller has nothing to name it
+// yet. Off by default, because an id is a routing key the caller has always supplied and a
+// channel that silently invents one hides a client bug.
+
+TEST_CASE("HttpChannel: a missing session is still 400 by default", "[http_channel]") {
+    HttpChannel ch(test_config());
+
+    auto resp = ch.handle_request(chat_request(json{{"message", "hi"}}));
+    REQUIRE(resp.status == 400);
+    // Unchanged for every deployment that has not opted in.
+    REQUIRE(resp.body.find("session") != std::string::npos);
+}
+
+TEST_CASE("HttpChannel: generation accepts a missing, null or empty session",
+          "[http_channel]") {
+    auto cfg = test_config();
+    cfg.generate_session_ids = true;
+    HttpChannel ch(cfg);
+
+    REQUIRE(ch.handle_request(chat_request(json{{"message", "hi"}})).status == 200);
+    REQUIRE(ch.handle_request(chat_request(
+        json{{"session", nullptr}, {"message", "hi"}})).status == 200);
+    REQUIRE(ch.handle_request(chat_request(
+        json{{"session", ""}, {"message", "hi"}})).status == 200);
+}
+
+// The caller cannot continue the conversation without learning the id, and browser
+// EventSource clients cannot read response headers — so it has to be in the stream.
+TEST_CASE("HttpChannel: a generated id arrives as the first SSE frame", "[http_channel]") {
+    auto cfg = test_config();
+    cfg.generate_session_ids = true;
+    cfg.turn_timeout_seconds = 1;   // nothing will answer this turn
+    HttpChannel ch(cfg);
+
+    auto resp = ch.handle_request(chat_request(json{{"message", "hi"}}));
+    REQUIRE(resp.status == 200);
+    REQUIRE(resp.stream != nullptr);
+
+    std::string written;
+    resp.stream([&written](std::string_view chunk) {
+        written.append(chunk);
+        return true;
+    });
+
+    REQUIRE(written.rfind("event: session\n", 0) == 0);
+    auto first_end = written.find("\n\n");
+    REQUIRE(first_end != std::string::npos);
+    auto payload = written.substr(0, first_end);
+    auto data_at = payload.find("data: ");
+    REQUIRE(data_at != std::string::npos);
+    auto session = json::parse(payload.substr(data_at + 6));
+    REQUIRE(session.contains("session"));
+    REQUIRE_FALSE(session["session"].get<std::string>().empty());
+
+    // The queued message must carry the same id, or the reply routes nowhere.
+    auto queued = ch.poll_updates();
+    REQUIRE(queued.size() == 1);
+    REQUIRE(queued[0].sender == session["session"].get<std::string>());
+}
+
+TEST_CASE("HttpChannel: an explicit session gets no session frame", "[http_channel]") {
+    auto cfg = test_config();
+    cfg.generate_session_ids = true;
+    cfg.turn_timeout_seconds = 1;
+    HttpChannel ch(cfg);
+
+    auto resp = ch.handle_request(chat_request(
+        json{{"session", "task-42"}, {"message", "hi"}}));
+    REQUIRE(resp.stream != nullptr);
+
+    std::string written;
+    resp.stream([&written](std::string_view chunk) {
+        written.append(chunk);
+        return true;
+    });
+
+    // Nothing was invented, so nothing needs announcing — the stream a current client sees
+    // is byte-for-byte what it saw before.
+    REQUIRE(written.find("event: session") == std::string::npos);
+}
+
+TEST_CASE("HttpChannel: generated ids differ between requests", "[http_channel]") {
+    auto cfg = test_config();
+    cfg.generate_session_ids = true;
+    HttpChannel ch(cfg);
+
+    REQUIRE(ch.handle_request(chat_request(json{{"message", "one"}})).status == 200);
+    REQUIRE(ch.handle_request(chat_request(json{{"message", "two"}})).status == 200);
+
+    auto queued = ch.poll_updates();
+    REQUIRE(queued.size() == 2);
+    // Two callers with no id must not land in one conversation — and a single id would
+    // also trip the one-turn-per-session refusal.
+    REQUIRE(queued[0].sender != queued[1].sender);
+}
+
 TEST_CASE("HttpChannel: wrongly typed required fields are 400, not 500", "[http_channel]") {
     // nlohmann's value<std::string>() throws on a type mismatch rather than returning the
     // default, so these used to escape to the handler wrapper and surface as a 500 for

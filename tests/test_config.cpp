@@ -151,6 +151,69 @@ TEST_CASE("Config::load: reads config file", "[config]") {
     REQUIRE(cfg.agent.token_limit == 64000);
 }
 
+// ── serving profile ─────────────────────────────────────────────
+
+TEST_CASE("ServingConfig: defaults are inert", "[config][serving]") {
+    Config cfg;
+    // Absent keys must leave the personal-agent behaviour untouched: no roots means no
+    // scoping, and ids stay mandatory the way HttpChannel has always required.
+    REQUIRE(cfg.serving.context_dir.empty());
+    REQUIRE(cfg.serving.workspace_root.empty());
+    REQUIRE_FALSE(cfg.serving.generate_session_ids);
+}
+
+TEST_CASE("Config::load: reads the serving section", "[config][serving]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({
+        "serving": {
+            "context_dir": "/work/context",
+            "workspace_root": "/work/sessions",
+            "generate_session_ids": true
+        }
+    })");
+
+    Config cfg = Config::load();
+    REQUIRE(cfg.serving.context_dir == "/work/context");
+    REQUIRE(cfg.serving.workspace_root == "/work/sessions");
+    REQUIRE(cfg.serving.generate_session_ids);
+}
+
+TEST_CASE("Config::load: serving paths expand ~", "[config][serving]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({"serving": {"workspace_root": "~/work"}})");
+
+    Config cfg = Config::load();
+    // Stored expanded, like memory.path is resolved before use — a tool comparing
+    // canonical prefixes cannot do anything with a literal "~".
+    REQUIRE(cfg.serving.workspace_root.rfind('~') == std::string::npos);
+    REQUIRE(cfg.serving.workspace_root.find("/work") != std::string::npos);
+}
+
+TEST_CASE("Config::load: wrong serving types keep the defaults", "[config][serving]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({
+        "serving": {
+            "context_dir": 42,
+            "workspace_root": null,
+            "generate_session_ids": "yes"
+        }
+    })");
+
+    Config cfg = Config::load();
+    REQUIRE(cfg.serving.context_dir.empty());
+    REQUIRE(cfg.serving.workspace_root.empty());
+    REQUIRE_FALSE(cfg.serving.generate_session_ids);
+}
+
+// The generated default config is what an existing personal install gets migrated to, so
+// the serving keys must stay out of it.
+TEST_CASE("Config::defaults_json: carries no serving section", "[config][serving]") {
+    REQUIRE_FALSE(Config::defaults_json().contains("serving"));
+}
+
 TEST_CASE("Config::load: reads openai oauth_models", "[config][oauth]") {
     ConfigTestGuard g;
     REQUIRE_FALSE(g.dir.empty());

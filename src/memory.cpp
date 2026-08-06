@@ -94,8 +94,7 @@ std::string default_memory_path(const std::string& backend) {
     return expand_home("~/.ptrclaw/memory.json");
 }
 
-std::string session_store_path(const std::string& base_path,
-                               const std::string& session_id) {
+std::string session_store_key(const std::string& session_id) {
     // Leading hash: two ids that sanitize to the same text still get distinct
     // directories, and no id can produce a component of "." or "..".
     //
@@ -120,6 +119,12 @@ std::string session_store_path(const std::string& base_path,
                     (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
         key += safe ? c : '_';
     }
+    return key;
+}
+
+std::string session_store_path(const std::string& base_path,
+                               const std::string& session_id) {
+    std::string key = session_store_key(session_id);
 
     std::filesystem::path base(base_path);
     std::filesystem::path dir = base.parent_path();

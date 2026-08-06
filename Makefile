@@ -26,12 +26,13 @@ endif
 
 STATICDIR := builddir-static
 MINDIR := builddir-minimal
+SERVEDIR := builddir-serving
 COVDIR := builddir-cov
 PIPEDIR := builddir-pipe
 EMBDIR := builddir-emb
 SDKDIR := builddir-sdk
 
-.PHONY: deps setup build build-emb build-minimal build-static build-sdk build-pipe run test coverage coverage-summary lint clean clear-memory memory-clean
+.PHONY: deps setup build build-emb build-minimal build-static build-sdk build-pipe build-serving test-serving run test coverage coverage-summary lint clean clear-memory memory-clean
 
 deps:
 ifeq ($(shell uname),Darwin)
@@ -58,6 +59,23 @@ build-minimal:
 		-Dwith_whatsapp=false -Dwith_sqlite_memory=false -Dwith_embeddings=false $(SIZE_FLAGS); fi
 	meson compile -C $(MINDIR) ptrclaw
 	$(call STRIP_CMD,$(MINDIR)/ptrclaw) 2>/dev/null || true
+
+# Multi-session serving pod: workspace-scoped file tools, no shell and no cron. The tool
+# flags are not optional decoration — meson refuses with_serving alongside them, because
+# both register a tool named file_read.
+build-serving:
+	@if [ ! -d $(SERVEDIR) ]; then meson setup $(SERVEDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
+		-Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false \
+		-Dwith_http=true -Dwith_telegram=false -Dwith_whatsapp=false $(SIZE_FLAGS); fi
+	meson compile -C $(SERVEDIR) ptrclaw
+	$(call STRIP_CMD,$(SERVEDIR)/ptrclaw) 2>/dev/null || true
+
+# The profile's own assertions — which tools are absent — only hold in this configuration,
+# so they need a build of their own rather than a filter on the default suite.
+test-serving:
+	@if [ ! -d $(SERVEDIR)-test ]; then meson setup $(SERVEDIR)-test $(NATIVE_ARGS) \
+		-Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false -Dwith_http=true; fi
+	meson test -C $(SERVEDIR)-test --print-errorlogs
 
 build-static:
 	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) $(NATIVE_ARGS) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false -Dwith_mbedtls=true $(SIZE_FLAGS); fi
@@ -104,4 +122,4 @@ clear-memory:
 memory-clean: clear-memory
 
 clean:
-	rm -rf $(BUILDDIR) $(STATICDIR) $(MINDIR) $(COVDIR) $(PIPEDIR) $(EMBDIR) $(SDKDIR)
+	rm -rf $(BUILDDIR) $(STATICDIR) $(MINDIR) $(COVDIR) $(PIPEDIR) $(EMBDIR) $(SDKDIR) $(SERVEDIR) $(SERVEDIR)-test

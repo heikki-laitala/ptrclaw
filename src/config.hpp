@@ -86,6 +86,25 @@ struct MemoryConfig {
     EmbeddingConfig embeddings;         // vector search config (disabled by default)
 };
 
+// Filesystem scope for a pod serving many sessions at once.
+//
+// Both roots are empty by default, which is what keeps the personal agent unchanged: with
+// no roots configured nothing is scoped and no tool behaves differently. They only matter
+// in a build that compiles the workspace-scoped tools (with_serving).
+struct ServingConfig {
+    // One directory every session may read and none may write. Where an external context
+    // manager stages the files all sessions work from. Empty means there is no shared
+    // context and a session can reach nothing but its own workspace.
+    std::string context_dir;
+    // Parent of the per-session workspaces, each derived with session_store_path() so the
+    // layout matches the per-session memory stores. A session reads and writes its own.
+    std::string workspace_root;
+    // Whether a request may omit the session id and have one generated. Off by default:
+    // an id is a routing key the caller has always had to supply, and a channel that
+    // silently invents one hides a client bug.
+    bool generate_session_ids = false;
+};
+
 // Upper bound on Config::workers.
 constexpr uint32_t kMaxWorkers = 64;
 
@@ -119,6 +138,7 @@ struct Config {
     AgentConfig agent;
     std::unordered_map<std::string, nlohmann::json> channels;
     MemoryConfig memory;
+    ServingConfig serving;
 
     // Load from ~/.ptrclaw/config.json + env vars
     static Config load();

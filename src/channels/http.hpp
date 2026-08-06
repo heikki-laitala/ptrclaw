@@ -28,6 +28,11 @@ struct HttpChannelConfig {
     // How long a single turn may take before the stream is closed with an error. Without
     // it a provider that never answers would hold a connection open forever.
     uint32_t    turn_timeout_seconds = 120;
+    // Whether a request may omit "session" and have one generated, announced to the caller
+    // as the first SSE frame. Mirrors Config::serving.generate_session_ids, which the
+    // channel registrar copies in. Off by default: an id is a routing key the caller has
+    // always supplied, and inventing one silently would hide a client bug.
+    bool        generate_session_ids = false;
 };
 
 // HttpChannel serves chat over HTTP with Server-Sent Events, for a front end that owns

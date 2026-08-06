@@ -138,6 +138,11 @@ std::string default_memory_path(const std::string& backend);
 std::string session_store_path(const std::string& base_path,
                                const std::string& session_id);
 
+// The single path component a session's stores live under, as described above. Exposed so
+// anything else that needs a per-session directory — the serving profile's workspaces —
+// derives the same component from the same code rather than reimplementing a boundary.
+std::string session_store_key(const std::string& session_id);
+
 // Create a memory backend from config.
 // Uses the plugin registry to instantiate the configured backend.
 //

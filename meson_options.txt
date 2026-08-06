@@ -32,6 +32,15 @@ option('with_tools', type: 'boolean', value: true,
 option('with_file_read', type: 'boolean', value: false,
        description: 'Build the file_read tool without the mutating tools (implied by with_tools)')
 
+# Serving many sessions from one process. Registers file_read and file_write scoped to the
+# calling session's workspace, with read-only access to a shared context directory, and
+# leaves out shell and cron — a pod where every caller shares one filesystem cannot offer a
+# tool that reads ~/.ptrclaw/config.json. Mutually exclusive with with_tools and
+# with_file_read: both register a tool named file_read, and the registry keys factories by
+# name, so which one a session got would come down to static-init order.
+option('with_serving', type: 'boolean', value: false,
+       description: 'Build workspace-scoped file tools for multi-session serving (excludes with_tools)')
+
 # Memory features (core memory is always included — Agent requires it)
 option('with_sqlite_memory', type: 'boolean', value: true,
        description: 'Build SQLite memory backend (requires sqlite3)')

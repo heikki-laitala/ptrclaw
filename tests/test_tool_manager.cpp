@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "tool_manager.hpp"
 #include "event_bus.hpp"
+#include "memory.hpp"
 #include <chrono>
 #include <thread>
 #include <atomic>
@@ -310,4 +311,70 @@ TEST_CASE("CancellationToken: basic operations", "[tool_manager]") {
 TEST_CASE("CancellationToken: null token is not cancelled", "[tool_manager]") {
     CancellationToken null_token;
     REQUIRE_FALSE(is_cancelled(null_token));
+}
+
+// ── workspace wiring ────────────────────────────────────────────
+
+namespace {
+
+// Reports what it was handed, which is the only thing under test here — the resolution
+// itself is covered in tests/test_workspace.cpp.
+class WorkspaceProbeTool : public WorkspaceAwareTool {
+public:
+    ToolResult execute(const std::string&) override {
+        return {true, workspace_.workspace + "|" + workspace_.context_dir};
+    }
+    std::string tool_name() const override { return "workspace_probe"; }
+    std::string description() const override { return "probe"; }
+    std::string parameters_json() const override { return R"({"type":"object"})"; }
+};
+
+} // namespace
+
+// The same injection point as EventBusAwareTool: a tool's execute() still receives nothing
+// but its arguments, so the scope has to arrive at construction.
+TEST_CASE("ToolManager: hands a scoped tool this session's workspace", "[tool_manager]") {
+    EventBus bus;
+    Config config;
+    config.serving.workspace_root = "/work/sessions";
+    config.serving.context_dir = "/work/context";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<WorkspaceProbeTool>());
+    ToolManager manager(std::move(tools), config, bus, "task-42");
+
+    auto result = manager.tools().front()->execute("{}");
+    REQUIRE(result.success);
+    REQUIRE(result.output.find("/work/sessions/") != std::string::npos);
+    REQUIRE(result.output.find(session_store_key("task-42")) != std::string::npos);
+    REQUIRE(result.output.find("|/work/context") != std::string::npos);
+}
+
+// Two sessions must not be handed the same directory, or the isolation is decorative.
+TEST_CASE("ToolManager: different sessions get different workspaces", "[tool_manager]") {
+    EventBus bus;
+    Config config;
+    config.serving.workspace_root = "/work/sessions";
+
+    auto probe_for = [&](const std::string& session_id) {
+        std::vector<std::unique_ptr<Tool>> tools;
+        tools.push_back(std::make_unique<WorkspaceProbeTool>());
+        ToolManager manager(std::move(tools), config, bus, session_id);
+        return manager.tools().front()->execute("{}").output;
+    };
+
+    REQUIRE(probe_for("task-1") != probe_for("task-2"));
+}
+
+// With no serving config there is no scope, and the scoped tools then refuse everything
+// rather than reaching the process cwd — which is the personal-agent shape.
+TEST_CASE("ToolManager: no serving config means no workspace", "[tool_manager]") {
+    EventBus bus;
+    Config config;
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<WorkspaceProbeTool>());
+    ToolManager manager(std::move(tools), config, bus, "task-42");
+
+    REQUIRE(manager.tools().front()->execute("{}").output == "|");
 }

@@ -27,6 +27,10 @@ static ptrclaw::ChannelRegistrar reg_http("http",
         if (ch.contains("turn_timeout_seconds") &&
             ch["turn_timeout_seconds"].is_number_unsigned())
             cfg.turn_timeout_seconds = ch["turn_timeout_seconds"].get<uint32_t>();
+        // From the serving section rather than the channel block: it belongs with the rest
+        // of the multi-session settings, and this channel is the only one a caller names a
+        // session on.
+        cfg.generate_session_ids = config.serving.generate_session_ids;
         return std::make_unique<ptrclaw::HttpChannel>(cfg);
     });
 
@@ -215,15 +219,27 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
     }
     if (!body.is_object()) return json_error(400, "body must be a JSON object");
 
+    // A caller starting a new conversation has nothing to name it yet, so an absent, null
+    // or empty session may be filled in — but only where that was asked for. Everywhere
+    // else the id stays required, byte-for-byte as before.
+    const bool session_omitted =
+        !body.contains("session") || body["session"].is_null() ||
+        (body["session"].is_string() && body["session"].get<std::string>().empty());
+    const bool generate = config_.generate_session_ids && session_omitted;
+
     // is_string() before extracting, not value<std::string>(): nlohmann throws on a type
     // mismatch rather than returning the default, so {"session": 1} would escape to the
     // handler wrapper and become a 500 for what is plainly a malformed request.
-    if (!body.contains("session") || !body["session"].is_string())
+    if (!generate && (!body.contains("session") || !body["session"].is_string()))
         return json_error(400, "'session' is required and must be a string");
     if (!body.contains("message") || !body["message"].is_string())
         return json_error(400, "'message' is required and must be a string");
 
-    const std::string session = body["session"].get<std::string>();
+    // generate_id() is the same source the tool batches use: a thread-local mt19937 seeded
+    // from random_device, so two connection threads cannot hand out one id.
+    const std::string session = generate
+        ? generate_id()
+        : body["session"].get<std::string>();
     const std::string message = body["message"].get<std::string>();
     if (session.empty()) return json_error(400, "'session' must not be empty");
     if (message.empty()) return json_error(400, "'message' must not be empty");
@@ -291,8 +307,15 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
     // copy constructor is noexcept: copying a std::string can throw, and this callback is
     // invoked from a bare connection thread where a throw terminates the process.
     auto session_ref = std::make_shared<const std::string>(session);
-    resp.stream = [this, session_ref](const BodyWriter& write) noexcept {
+    resp.stream = [this, session_ref, generate](const BodyWriter& write) noexcept {
         try {
+            // Before any token, and only when the id was invented: the caller cannot
+            // continue the conversation without it, and a browser EventSource client
+            // cannot read response headers. A caller that supplied its own id sees the
+            // stream it has always seen.
+            if (generate) {
+                write(sse_frame("session", json{{"session", *session_ref}}));
+            }
             stream_turn(*session_ref, write);
         } catch (...) {
             // Nothing useful can be reported from here, and the client's stream is
