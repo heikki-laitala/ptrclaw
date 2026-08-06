@@ -30,15 +30,20 @@ TEST_CASE("OAuth: default authorize base URL", "[oauth]") {
 
 // ── Model kept after connecting ─────────────────────────────────
 
+TEST_CASE("OAuth: default OAuth model is a subscription model", "[oauth]") {
+    REQUIRE(std::string(kDefaultOAuthModel) == "gpt-5.6-sol");
+}
+
 TEST_CASE("OAuth: connecting keeps a model the subscription serves", "[oauth]") {
     ProviderEntry entry;
-    REQUIRE(oauth_model_after_connect("gpt-5", entry) == "gpt-5");
+    REQUIRE(oauth_model_after_connect("gpt-5.5", entry) == "gpt-5.5");
     REQUIRE(oauth_model_after_connect("gpt-5.3-codex", entry) == "gpt-5.3-codex");
 }
 
 TEST_CASE("OAuth: connecting moves off a model the subscription cannot serve", "[oauth]") {
     ProviderEntry entry;
     REQUIRE(oauth_model_after_connect("gpt-4o", entry) == std::string(kDefaultOAuthModel));
+    REQUIRE(oauth_model_after_connect("gpt-5.6", entry) == std::string(kDefaultOAuthModel));
     REQUIRE(oauth_model_after_connect("", entry) == std::string(kDefaultOAuthModel));
 }
 
@@ -46,7 +51,7 @@ TEST_CASE("OAuth: connecting honours oauth_models when keeping the model", "[oau
     ProviderEntry entry;
     entry.oauth_models = {"gpt-4o"};
     REQUIRE(oauth_model_after_connect("gpt-4o", entry) == "gpt-4o");
-    REQUIRE(oauth_model_after_connect("gpt-5", entry) == std::string(kDefaultOAuthModel));
+    REQUIRE(oauth_model_after_connect("gpt-5.5", entry) == std::string(kDefaultOAuthModel));
 }
 #endif
 
@@ -109,7 +114,9 @@ TEST_CASE("build_authorize_url: contains all required params", "[oauth]") {
     REQUIRE(url.find("state=test-state") != std::string::npos);
     REQUIRE(url.find("id_token_add_organizations=true") != std::string::npos);
     REQUIRE(url.find("codex_cli_simplified_flow=true") != std::string::npos);
-    REQUIRE(url.find("originator=pi") != std::string::npos);
+    // Identifies this client to OpenAI. Naming another product here would misattribute
+    // every request PtrClaw makes.
+    REQUIRE(url.find("originator=ptrclaw") != std::string::npos);
 }
 
 TEST_CASE("build_authorize_url: starts with authorize base URL", "[oauth]") {

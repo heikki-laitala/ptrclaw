@@ -1,6 +1,6 @@
 # OpenAI OAuth (subscription models)
 
-Models your OpenAI subscription (Plus, Pro, or Team) covers can be reached via OAuth instead of an API key — the codex family (e.g. `gpt-5-codex-mini`) and the wider gpt-5 family (e.g. `gpt-5`, `gpt-5.1`, `gpt-5-pro`). Some models are only available one way: newer codex models (e.g. `gpt-5.3-codex`) only through OAuth, and older models (e.g. `gpt-4o`, `o3`) only through an API key.
+Models your OpenAI subscription (Plus, Pro, or Team) covers can be reached via OAuth instead of an API key. The two endpoints do not serve the same catalog, so which credential works is a property of the model, not a preference.
 
 ## How it works
 
@@ -33,7 +33,7 @@ Open this URL to authorize:
 https://auth.openai.com/oauth/authorize?...
 
 Paste the callback URL or code: http://localhost:1455/auth/callback?code=...
-OAuth connected. Model switched to gpt-5-codex-mini.
+OAuth connected. Model switched to gpt-5.6-sol.
 ```
 
 After approving in your browser, it redirects to `localhost:1455/auth/callback?code=...`. The page won't load (there's no local server) — copy the full URL from your browser's address bar and paste it back.
@@ -48,45 +48,68 @@ In Telegram and other channels where inline prompting isn't available, use the t
 
 You can also paste the callback URL directly without the `/auth openai finish` prefix while an auth flow is pending.
 
-## Auth mode auto-detection
+## Model routes
 
-PtrClaw selects the auth mode from the model, because that is what decides which
-credential can work: subscription tokens are only accepted by OpenAI's ChatGPT backend,
-and `api.openai.com` does not accept them at all.
+Each model belongs to a route, matched on its exact id (case-insensitively):
 
-- **Models the subscription serves** (name contains `codex` or `gpt-5`): OAuth when tokens
-  are available, falls back to the API key
-- **Every other model**: always the API key
-- **API format**: over OAuth, always the Responses API (the ChatGPT backend speaks nothing
-  else); over an API key, codex models use the Responses API and the rest use Chat Completions
+| Route | Models | Credential |
+| --- | --- | --- |
+| Both | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.5-pro`, `gpt-5.4`, `gpt-5.4-pro`, `gpt-5.4-mini` | OAuth when tokens are present, otherwise the API key |
+| API key only | `chat-latest`, `gpt-5.6` | API key, even when tokens are present |
+| Subscription only | `gpt-5.3-codex-spark` | OAuth; refused outright without tokens |
+| Unknown | everything else (`gpt-4o`, `o3`, …) | API key |
 
-You can have both an API key and OAuth tokens configured and switch freely — `/model` rebuilds
+Two details worth knowing:
+
+- Plain `gpt-5.6` is API-key only while `gpt-5.6-sol` is not — which is why the routes are
+  exact ids and not a name pattern.
+- An id containing `codex` that is not listed above (`gpt-5-codex-mini`, `gpt-5.3-codex`)
+  is treated as *both*, so a model that worked before these lists existed keeps working.
+
+`gpt-5.4-codex` is accepted as an alias of `gpt-5.4`.
+
+A model whose only route rejects the credential you have is refused when you select it,
+rather than failing later with an opaque error from OpenAI.
+
+### API format
+
+Over OAuth it is always the Responses API — the ChatGPT backend speaks nothing else. Over an
+API key, codex models use the Responses API and the rest use Chat Completions.
+
+You can have both an API key and OAuth tokens configured and switch freely; `/model` rebuilds
 the provider whenever the switch changes which credential applies.
 
 ### Choosing the models yourself
 
-The set of models a subscription covers is not discoverable from PtrClaw and changes over
-time, so `oauth_models` overrides the built-in list. It replaces it rather than adding to it,
-so it can widen or narrow the set; entries match as substrings, and `"*"` matches any model:
+The routes above need editing when OpenAI ships models, so `oauth_models` overrides them. It
+replaces the built-in routes rather than adding to them, so it can widen or narrow the set;
+entries match as substrings, and `"*"` matches any model:
 
 ```json
 {
   "providers": {
     "openai": {
-      "oauth_models": ["codex", "gpt-5", "gpt-4o"]
+      "oauth_models": ["codex", "gpt-5.7", "gpt-4o"]
     }
   }
 }
 ```
 
-Set `["*"]` to send every OpenAI model over OAuth. A model the backend does not serve fails
-with that backend's error rather than silently falling back to the API key.
+Set `["*"]` to send every OpenAI model over OAuth. A model the backend does not serve then
+fails with that backend's error rather than being refused up front.
+
+### Endpoints
+
+Requests over OAuth go to `https://chatgpt.com/backend-api/codex/responses`. Setting
+`providers.openai.base_url` to `https://chatgpt.com/backend-api/codex` selects that endpoint
+explicitly; any other `base_url` is treated as your own endpoint and is used verbatim, so a
+proxy is never silently replaced by OpenAI's.
 
 ### Connecting while on a model already covered
 
 `/auth openai` keeps the current model when the subscription can serve it, so connecting
-while on `gpt-5` leaves you on `gpt-5`. Otherwise it switches to `gpt-5-codex-mini`, which is
-guaranteed to work with the credential you just added.
+while on `gpt-5.5` leaves you on `gpt-5.5`. Otherwise it switches to `gpt-5.6-sol`, which
+works on the credential you just added.
 
 ## Environment variables
 
@@ -109,7 +132,7 @@ After OAuth setup, `~/.ptrclaw/config.json` looks like:
 ```json
 {
   "provider": "openai",
-  "model": "gpt-5-codex-mini",
+  "model": "gpt-5.6-sol",
   "providers": {
     "openai": {
       "api_key": "sk-...",

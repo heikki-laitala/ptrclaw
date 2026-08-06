@@ -964,9 +964,9 @@ TEST_CASE("OpenAIProvider: OAuth sends non-codex model to the ChatGPT backend",
           "[providers][openai][oauth][responses]") {
     MockHttpClient mock;
     mock.next_response = {200, R"({
-        "model": "gpt-5",
+        "model": "gpt-5.5",
         "output": [
-            {"type": "message", "content": [{"type": "output_text", "text": "Hi from gpt-5"}]}
+            {"type": "message", "content": [{"type": "output_text", "text": "Hi from gpt-5.5"}]}
         ],
         "usage": {"input_tokens": 6, "output_tokens": 3}
     })"};
@@ -976,7 +976,7 @@ TEST_CASE("OpenAIProvider: OAuth sends non-codex model to the ChatGPT backend",
 
     auto result = provider.chat(
         {{Role::System, "Be helpful", std::nullopt, std::nullopt},
-         {Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-5", 0.5);
+         {Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-5.5", 0.5);
 
     // The subscription backend only speaks the Responses API, whatever the model.
     REQUIRE(mock.last_url == "https://chatgpt.com/backend-api/codex/responses");
@@ -986,7 +986,7 @@ TEST_CASE("OpenAIProvider: OAuth sends non-codex model to the ChatGPT backend",
     REQUIRE(body.contains("input"));
     REQUIRE(body["instructions"] == "Be helpful");
     REQUIRE_FALSE(body.contains("messages"));
-    REQUIRE(result.content.value_or("") == "Hi from gpt-5");
+    REQUIRE(result.content.value_or("") == "Hi from gpt-5.5");
 }
 
 TEST_CASE("OpenAIProvider: api key keeps non-codex model on Chat Completions",
@@ -1040,6 +1040,46 @@ TEST_CASE("OpenAIProvider: codex model on a base_url override stays on that host
     provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-5-codex", 0.5);
 
     REQUIRE(mock.last_url == "https://proxy.test/v1/responses");
+}
+
+TEST_CASE("OpenAIProvider: a ChatGPT base_url resolves to the codex responses endpoint",
+          "[providers][openai][oauth][responses]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-5.5",
+        "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": "ok"}]}
+        ],
+        "usage": {"input_tokens": 4, "output_tokens": 1}
+    })"};
+
+    OpenAIProvider provider("api-key", mock, "https://chatgpt.com/backend-api/codex",
+                            true, "oauth-token", "refresh", 9999999999);
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-5.5", 0.5);
+
+    REQUIRE(mock.last_url == "https://chatgpt.com/backend-api/codex/responses");
+}
+
+// That host speaks nothing but Responses, so the endpoint decides the shape even when an
+// API key is what authenticates.
+TEST_CASE("OpenAIProvider: a ChatGPT base_url uses Responses without OAuth",
+          "[providers][openai][responses]") {
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-5.5",
+        "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": "ok"}]}
+        ],
+        "usage": {"input_tokens": 4, "output_tokens": 1}
+    })"};
+
+    OpenAIProvider provider("api-key", mock, "https://chatgpt.com/backend-api/codex/responses");
+    provider.chat({{Role::User, "Hi", std::nullopt, std::nullopt}}, {}, "gpt-5.5", 0.5);
+
+    REQUIRE(mock.last_url == "https://chatgpt.com/backend-api/codex/responses");
+    auto body = json::parse(mock.last_body);
+    REQUIRE(body.contains("input"));
+    REQUIRE_FALSE(body.contains("messages"));
 }
 
 // ── OAuth token persistence ──────────────────────────────────────
