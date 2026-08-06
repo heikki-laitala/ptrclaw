@@ -67,7 +67,7 @@ On first run, the wizard walks you through provider setup — choose OpenAI, the
 
 **3. Add an API key for embeddings:**
 
-Codex models are covered by your subscription, but memory vector search needs an OpenAI API key (minimal cost — embedding calls are cheap). Run `/auth openai` again and add your API key, or set it in config:
+Subscription models are covered by your ChatGPT plan, but memory vector search needs an OpenAI API key (minimal cost — embedding calls are cheap). Run `/auth openai` again and add your API key, or set it in config:
 
 ```json
 {
