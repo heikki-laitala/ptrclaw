@@ -398,7 +398,11 @@ int main(int argc, char* argv[]) try {
     // reads memory, so a configured persona looks unhatched here and the REPL would open the
     // interview and replace that persona with questions about one. /hatch still works for an
     // operator who wants the interview anyway.
-    if (agent.memory() && !agent.is_hatched() && config.agent.persona.empty()) {
+    // has_active_memory() rather than memory(): with memory.backend "none" — the default in
+    // a serving build — the store is a no-op, so the interview could never be persisted and
+    // would run again on every launch.
+    if (agent.has_active_memory() && !agent.is_hatched() &&
+        config.agent.persona.empty()) {
         bool do_hatch = false;
         if (onboard_ran) {
             if (onboard_hatch) {

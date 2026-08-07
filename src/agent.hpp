@@ -95,8 +95,13 @@ public:
     void start_hatch();
     bool hatching() const { return hatching_; }
 
-private:
+    // Whether a store exists that can actually keep anything: the "none" backend is a real
+    // object whose store() is a no-op. Public because every decision about hatching turns on
+    // it — an interview that cannot be persisted would run again on every launch, and
+    // announce an identity that was never written.
     bool has_active_memory() const;
+
+private:
     // (Re)build the response cache. An empty session_id, or shared isolation,
     // points it at the process-wide cache file. No-op when the caller supplied
     // one — it is theirs to scope.
