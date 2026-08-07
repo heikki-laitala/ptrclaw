@@ -245,3 +245,35 @@ TEST_CASE("build_system_prompt: no scheduling hint without binary path", "[promp
     auto result = build_system_prompt(specs_from(tools), false, false, nullptr, runtime);
     REQUIRE(result.find("## Scheduled Tasks") == std::string::npos);
 }
+
+// ── Prompt stability ────────────────────────────────────────────
+//
+// The system prompt is the front of every request, and prompt caching matches on the
+// longest identical prefix — so one changed character there re-bills the entire
+// conversation behind it. It used to carry a second-granularity timestamp, which was
+// harmless while the prompt was built once per session and reused. It stopped being
+// harmless when a caller began pushing history: set_history() clears the injected flag, so
+// the prompt is rebuilt every turn and the prefix changed every time.
+
+TEST_CASE("build_system_prompt: the same inputs give a byte-identical prompt", "[prompt]") {
+    RuntimeInfo runtime;
+    runtime.model = "gpt-5.6-sol";
+
+    const std::string first = build_system_prompt({}, false, false, nullptr, runtime, nullptr);
+    const std::string second = build_system_prompt({}, false, false, nullptr, runtime, nullptr);
+    REQUIRE(first == second);
+}
+
+TEST_CASE("build_system_prompt: the date carries no time of day", "[prompt]") {
+    // A day is as precise as this needs to be. Anything finer changes the prefix within a
+    // conversation, and a model that genuinely needs the clock can ask for it.
+    RuntimeInfo runtime;
+    const std::string prompt = build_system_prompt({}, false, false, nullptr, runtime, nullptr);
+
+    auto pos = prompt.find("Current date: ");
+    REQUIRE(pos != std::string::npos);
+    const std::string line = prompt.substr(pos, prompt.find('\n', pos) - pos);
+    REQUIRE(line.find(':', std::string("Current date: ").size()) == std::string::npos);
+    REQUIRE(line.find('Z') == std::string::npos);
+    REQUIRE(line.size() == std::string("Current date: 2026-08-07").size());
+}

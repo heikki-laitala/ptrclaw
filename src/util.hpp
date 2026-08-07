@@ -15,6 +15,11 @@ std::string json_unescape(const std::string& s);
 // ISO 8601 timestamp
 std::string timestamp_now();
 
+// Today's UTC date, "2026-08-07". Distinct from timestamp_now() because it goes somewhere
+// timestamp_now() must not: the system prompt, which is the front of every request and has
+// to stay byte-identical for a provider's prompt cache to match anything behind it.
+std::string date_today();
+
 // Unix epoch seconds
 uint64_t epoch_seconds();
 

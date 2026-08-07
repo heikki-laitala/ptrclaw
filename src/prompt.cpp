@@ -120,7 +120,16 @@ std::string build_system_prompt(const std::vector<ToolSpec>& tool_specs,
 
     // ── Runtime ──
     ss << "## Runtime\n"
-       << "Current date: " << timestamp_now() << "\n";
+       // A date, not a clock. This line is inside the system prompt, which is the first
+       // thing in every request — and prompt caching matches the longest identical prefix,
+       // so a second that ticks between turns re-bills the whole conversation behind it.
+       //
+       // It was harmless while the prompt was built once per session and reused. It stopped
+       // being harmless when callers began pushing history: set_history() clears the
+       // injected flag, so the prompt is rebuilt on every turn and the prefix changed every
+       // time. A day is as precise as this needs to be, and a model that genuinely needs
+       // the clock can ask a tool for it.
+       << "Current date: " << date_today() << "\n";
     if (!runtime.model.empty()) {
         ss << "Model: " << runtime.model << "\n";
     }

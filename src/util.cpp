@@ -96,6 +96,15 @@ std::string timestamp_now() {
     return buf;
 }
 
+std::string date_today() {
+    std::time_t t = std::time(nullptr);
+    std::tm tm_buf;
+    gmtime_r(&t, &tm_buf);
+    char buf[16];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_buf);
+    return buf;
+}
+
 uint64_t epoch_seconds() {
     return static_cast<uint64_t>(std::time(nullptr));
 }
