@@ -292,6 +292,15 @@ jobs:
           # configuration, so nothing else can catch a regression in them.
           - label: serving profile
             flags: -Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false -Dwith_http=true
+          # The pod as actually shipped: OpenAI only. Provider trimming is not just a size
+          # knob — Config's default provider follows the build, and the suite has to hold
+          # in a binary that cannot construct Anthropic. Without this job that only ever
+          # gets exercised by hand.
+          - label: serving profile (openai only)
+            flags: >-
+              -Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false -Dwith_http=true
+              -Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false
+              -Dwith_compatible=false
 
     steps:
       - uses: actions/checkout@v4

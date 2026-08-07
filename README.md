@@ -574,7 +574,7 @@ ninja -C builddir
 | Default (`make build`) | ~1.3 MB |
 | Static (`make build-static`, stripped) | ~581 KB |
 | Minimal (`make build-minimal`, stripped) | ~514 KB |
-| Serving pod (`make build-serving`, stripped) | ~565 KB |
+| Serving pod (`make build-serving`, stripped) | ~548 KB |
 | SDK shared lib (`make build-sdk`, stripped) | ~630 KB |
 
 Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). LTO is enabled by default.
@@ -663,4 +663,4 @@ meson_options.txt       Compile-time feature flags
 
 ## Acknowledgements
 
-PtrClaw started as a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw) and has since diverged into its own architecture with an event bus, plugin system, and streaming pipeline. Nullclaw is a far more feature-rich project — if you need a battle-tested assistant with a broader tool ecosystem, check it out. PtrClaw trades breadth for a smaller footprint: our size-optimized binary is ~565 KB vs nullclaw's ~1.9 MB, with the goal of staying minimal and easy to embed or deploy on constrained environments.
+PtrClaw started as a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw) and has since diverged into its own architecture with an event bus, plugin system, and streaming pipeline. Nullclaw is a far more feature-rich project — if you need a battle-tested assistant with a broader tool ecosystem, check it out. PtrClaw trades breadth for a smaller footprint: our size-optimized binary is ~581 KB vs nullclaw's ~1.9 MB, with the goal of staying minimal and easy to embed or deploy on constrained environments.

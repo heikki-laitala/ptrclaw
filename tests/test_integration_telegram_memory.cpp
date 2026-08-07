@@ -8,6 +8,7 @@
 #include "mock_http_client.hpp"
 #include "plugin.hpp"
 #include "session.hpp"
+#include "test_helpers.hpp"
 
 using namespace ptrclaw;
 using json = nlohmann::json;
@@ -44,6 +45,10 @@ TEST_CASE("Integration: Telegram message reaches provider with memory context bl
         R"({"model":"claude-sonnet-4-6","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":10,"output_tokens":2}})"
     };
 
+    // Anthropic's request shape is what this asserts on — a messages[] array carrying the
+    // memory block. OpenAI's Responses API sends "input" instead, so the assertion would be
+    // testing the wrong wire format rather than the memory injection it is named for.
+    REQUIRE_TEST_PROVIDER("anthropic");
     Config cfg;
     cfg.provider = "anthropic";
     cfg.model = "claude-sonnet-4-6";

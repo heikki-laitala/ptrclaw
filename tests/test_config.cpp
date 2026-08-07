@@ -13,7 +13,10 @@ using namespace ptrclaw;
 
 TEST_CASE("Config: default values are sensible", "[config]") {
     Config cfg;
-    REQUIRE(cfg.provider == "anthropic");
+    // Not a literal: the default provider tracks which ones the binary was built with, so
+    // a trimmed build has a different — and equally sensible — answer. What it must never
+    // be is empty. Which provider, per build, is asserted further down.
+    REQUIRE_FALSE(cfg.provider.empty());
     REQUIRE(cfg.temperature == 0.7);
     REQUIRE(cfg.api_key_for("anthropic").empty());
     REQUIRE(cfg.api_key_for("openai").empty());
@@ -452,7 +455,9 @@ TEST_CASE("Config::load: malformed JSON falls back to defaults", "[config]") {
     g.write_config("not valid json {{{");
 
     Config cfg = Config::load();
-    REQUIRE(cfg.provider == "anthropic");
+    // The subject is the fallback, not the provider's name — comparing against the struct
+    // default keeps that true in a build compiled without Anthropic.
+    REQUIRE(cfg.provider == Config{}.provider);
     REQUIRE(cfg.api_key_for("anthropic").empty());
 }
 
@@ -461,7 +466,7 @@ TEST_CASE("Config::load: missing config file uses defaults", "[config]") {
     REQUIRE_FALSE(g.dir.empty());
 
     Config cfg = Config::load();
-    REQUIRE(cfg.provider == "anthropic");
+    REQUIRE(cfg.provider == Config{}.provider);
     REQUIRE(cfg.temperature == 0.7);
 }
 
@@ -500,7 +505,7 @@ TEST_CASE("Config::load: creates default config when missing", "[config]") {
     nlohmann::json j = nlohmann::json::parse(f);
 
     REQUIRE(j.contains("provider"));
-    REQUIRE(j["provider"] == "anthropic");
+    REQUIRE(j["provider"] == Config{}.provider);
     REQUIRE(j.contains("providers"));
     REQUIRE(j["providers"].contains("anthropic"));
     REQUIRE(j.contains("agent"));
@@ -647,4 +652,59 @@ TEST_CASE("Config: a non-boolean allow_channel_commands leaves the safe default"
     home.write_default_config();
     modify_config_json([](nlohmann::json& j) { j["allow_channel_commands"] = "true"; });
     REQUIRE_FALSE(Config::load().allow_channel_commands);
+}
+
+// ── The default provider has to exist in the binary ──────────────
+//
+// A pod built for one provider is the point of the serving profile, but the default
+// provider is a compile-time constant that a trimmed build can no longer create. Left
+// alone, a config that simply omits "provider" would fail at startup with "Unknown
+// provider: anthropic" — a binary whose out-of-the-box default cannot work.
+
+TEST_CASE("Config: the default provider is compiled into this build", "[config]") {
+    Config cfg;
+    REQUIRE_FALSE(cfg.provider.empty());
+#ifdef PTRCLAW_HAS_ANTHROPIC
+    REQUIRE(cfg.provider == "anthropic");
+#else
+    REQUIRE(cfg.provider != "anthropic");
+#endif
+}
+
+TEST_CASE("Config: the default model belongs to the default provider", "[config]") {
+    Config cfg;
+    REQUIRE_FALSE(cfg.model.empty());
+    // Pairing matters as much as the provider itself: an OpenAI-only build defaulting to a
+    // Claude model would authenticate fine and then be refused by the API.
+#ifdef PTRCLAW_HAS_ANTHROPIC
+    REQUIRE(cfg.model.rfind("claude", 0) == 0);
+#else
+    REQUIRE(cfg.model.rfind("claude", 0) != 0);
+#endif
+}
+
+// Through load(), for the reason the memory-backend tests give: defaults_json() is merged
+// into the config file and parsed back, so a hardcoded provider there would overwrite the
+// build's default and hand a trimmed pod a provider it cannot construct.
+TEST_CASE("Config: the provider default survives Config::load", "[config]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config("{}");
+
+    Config cfg = Config::load();
+#ifdef PTRCLAW_HAS_ANTHROPIC
+    REQUIRE(cfg.provider == "anthropic");
+#else
+    REQUIRE(cfg.provider != "anthropic");
+#endif
+}
+
+TEST_CASE("Config: defaults_json carries the build's provider", "[config]") {
+    auto defaults = Config::defaults_json();
+    REQUIRE(defaults.contains("provider"));
+#ifdef PTRCLAW_HAS_ANTHROPIC
+    REQUIRE(defaults["provider"] == "anthropic");
+#else
+    REQUIRE(defaults["provider"] != "anthropic");
+#endif
 }

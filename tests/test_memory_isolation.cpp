@@ -19,8 +19,7 @@ MockHttpClient isolation_http;
 
 Config make_config(const std::string& isolation, const std::string& path) {
     Config cfg;
-    cfg.provider = "anthropic";
-    cfg.providers["anthropic"].api_key = "test-key";
+    use_build_provider(cfg);
     cfg.memory.backend = "json";
     cfg.memory.isolation = isolation;
     cfg.memory.path = path;

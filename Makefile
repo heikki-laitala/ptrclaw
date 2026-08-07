@@ -78,9 +78,15 @@ build-minimal:
 # Multi-session serving pod: workspace-scoped file tools, no shell and no cron. The tool
 # flags are not optional decoration — meson refuses with_serving alongside them, because
 # both register a tool named file_read.
+# Providers: OpenAI only, over chat completions and the subscription OAuth flow. The pod
+# is a fixed deployment rather than a general-purpose binary, so the four it cannot reach
+# are compiled out. Config's default provider follows the build (src/config.hpp), so a pod
+# config that omits "provider" still starts. Re-enable any of them with -Dwith_<name>=true.
 SERVING_OPTS := -Dcatch2:tests=false \
 	-Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false \
-	-Dwith_http=true -Dwith_telegram=false -Dwith_whatsapp=false $(SIZE_FLAGS)
+	-Dwith_http=true -Dwith_telegram=false -Dwith_whatsapp=false \
+	-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false \
+	-Dwith_compatible=false $(SIZE_FLAGS)
 
 build-serving:
 	$(call setup_size,$(SERVEDIR),$(SERVING_OPTS))
@@ -89,9 +95,12 @@ build-serving:
 
 # The profile's own assertions — which tools are absent — only hold in this configuration,
 # so they need a build of their own rather than a filter on the default suite.
+SERVING_TEST_OPTS := -Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false \
+	-Dwith_http=true -Dwith_anthropic=false -Dwith_ollama=false \
+	-Dwith_openrouter=false -Dwith_compatible=false
+
 test-serving:
-	@if [ ! -d $(SERVEDIR)-test ]; then meson setup $(SERVEDIR)-test $(NATIVE_ARGS) \
-		-Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false -Dwith_http=true; fi
+	$(call setup_size,$(SERVEDIR)-test,$(SERVING_TEST_OPTS))
 	meson test -C $(SERVEDIR)-test --print-errorlogs
 
 STATIC_OPTS := -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false \

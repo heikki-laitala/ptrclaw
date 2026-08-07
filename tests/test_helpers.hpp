@@ -1,6 +1,7 @@
 #pragma once
 #include "provider.hpp"
 #include "config.hpp"
+#include "plugin.hpp"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -8,6 +9,35 @@
 #include <unistd.h>
 
 namespace ptrclaw {
+
+// The provider a test should drive when it does not care which one.
+//
+// Hardcoding "anthropic" made every session test fail in a build trimmed to one provider —
+// create_provider() consults the registry, so a name that was compiled out cannot be
+// constructed and the session throws before the test's own subject is reached. Config's
+// default already tracks what this build has, so it is the right thing to follow.
+//
+// Tests that are *about* a specific provider should name it and guard with
+// REQUIRE_PROVIDER() instead.
+inline std::string test_provider() { return Config{}.provider; }
+
+// Skip a test whose subject *is* a particular provider — a wire format that only that
+// provider produces, or a scenario needing one the build may not have. Registry
+// membership rather than a config key: create_provider() consults the registry, so a
+// compiled-out provider cannot be constructed whatever the config says.
+#define REQUIRE_TEST_PROVIDER(name) \
+    if (!PluginRegistry::instance().has_provider(name)) { SKIP(name " not compiled"); }
+
+// The model paired with it, for the same reason: an OpenAI-only build driving a Claude
+// model name would be refused by the API rather than by the registry.
+inline std::string test_model() { return Config{}.model; }
+
+// Applies both, plus a credential so the provider can actually be created.
+inline void use_build_provider(Config& cfg) {
+    cfg.provider = test_provider();
+    cfg.model = test_model();
+    cfg.providers[cfg.provider].api_key = "test-key";
+}
 
 // Minimal provider stub for tests that don't need call tracking.
 class StubProvider : public Provider {

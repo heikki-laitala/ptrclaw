@@ -85,6 +85,18 @@ opt_anthropic  = get_option('with_anthropic')
 opt_openrouter = get_option('with_openrouter')
 opt_compatible = get_option('with_compatible')
 opt_ollama     = get_option('with_ollama')
+# Which providers exist is a compile-time fact the code has to know, not just the build:
+# Config's default provider is one of these names, and a build that cannot construct the
+# provider its own default names fails at startup for anyone who omits the key.
+if opt_anthropic
+  add_project_arguments('-DPTRCLAW_HAS_ANTHROPIC', language: 'cpp')
+endif
+if opt_openrouter
+  add_project_arguments('-DPTRCLAW_HAS_OPENROUTER', language: 'cpp')
+endif
+if opt_ollama
+  add_project_arguments('-DPTRCLAW_HAS_OLLAMA', language: 'cpp')
+endif
 opt_telegram   = get_option('with_telegram')
 opt_whatsapp   = get_option('with_whatsapp')
 opt_http       = get_option('with_http')
