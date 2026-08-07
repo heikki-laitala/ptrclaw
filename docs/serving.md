@@ -142,6 +142,20 @@ defaults into the file and then parses the result — so the fenced filesystem i
 with a memory store every tenant shares. An explicit `"shared"` still wins, for a pod running
 one tenant's own tasks.
 
+## No identity interview
+
+A fresh install normally answers its first channel message with the soul-hatching interview —
+a few questions about what to call the assistant. That is right for a personal agent, where
+the first visitor is the operator, and it is decided by whether the memory store has a soul.
+
+Under `memory.isolation: "session"` that question is asked again for *every* session, so a
+pod would open each one with the ceremony instead of the work, and the interview replaces the
+entire system prompt, tools included — the session cannot do anything until somebody answers.
+Nobody at the far end of an HTTP request will.
+
+So auto-hatching is skipped whenever memory is per-session. `/hatch` still works on the CLI,
+where an operator is present to answer.
+
 ## Session ids
 
 ```
