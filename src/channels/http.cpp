@@ -114,17 +114,22 @@ HttpChannel::~HttpChannel() {
 }
 
 void HttpChannel::release_pending_turns(const std::string& reason) {
+    std::vector<TurnRef> pending;
     {
         std::lock_guard<std::mutex> lk(turn_mutex_);
+        pending.reserve(turns_.size());
         for (auto& [session, turn] : turns_) {
             (void)session;
-            if (!turn.done) {
-                turn.error = reason;
-                turn.done = true;
+            if (!turn->done) {
+                turn->error = reason;
+                turn->done = true;
             }
+            pending.push_back(turn);
         }
     }
-    turn_cv_.notify_all();
+    // Every waiter, but one notify each on its own cv rather than a broadcast to all of
+    // them per turn. Outside the lock: the waiters need it to make progress.
+    for (const auto& turn : pending) turn->cv.notify_one();
 }
 
 bool HttpChannel::health_check() {
@@ -234,12 +239,16 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
         // ever clear the entry — can end the session rather than wait out the timeout.
         {
             std::lock_guard<std::mutex> lk(turn_mutex_);
-            turns_.erase(session);
+            auto it = turns_.find(session);
+            if (it != turns_.end()) {
+                // Whoever is parked in stream_turn() re-checks only when notified. Without
+                // this it would sleep out the whole turn timeout on a turn that no longer
+                // exists, holding a connection slot for a task already cancelled.
+                it->second->detached = true;
+                it->second->cv.notify_one();
+                turns_.erase(it);
+            }
         }
-        // Whoever is parked in stream_turn() re-checks only when notified. Without this it
-        // would sleep out the whole turn timeout on a turn that no longer exists, holding a
-        // connection slot for a task the caller has already cancelled.
-        turn_cv_.notify_all();
 
         if (bus_) {
             SessionEndRequestedEvent ev;
@@ -311,7 +320,7 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
     // Registered before the message is queued: the poll thread can pick it up and start
     // publishing deltas the moment it is visible, and a delta arriving with no Turn to
     // hold it would be dropped.
-    uint64_t turn_seq = 0;
+    TurnRef turn;
     {
         const auto now = std::chrono::steady_clock::now();
         std::lock_guard<std::mutex> lk(turn_mutex_);
@@ -320,18 +329,21 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
             // Unless it is abandoned: WebhookServer returns without invoking the producer
             // if the response headers fail to send, and nothing else would ever clear that
             // entry. Without this the session would be wedged for the process's lifetime.
-            const bool stale = now - existing->second.started >
+            const bool stale = now - existing->second->started >
                                std::chrono::seconds(config_.turn_timeout_seconds);
             if (!stale) {
                 return json_error(409, "a turn is already in flight for this session");
             }
+            // Detach before dropping it: a thread may still be parked on the stale turn,
+            // and it has to learn the turn is gone rather than wait out its own deadline.
+            existing->second->detached = true;
+            existing->second->cv.notify_one();
             turns_.erase(existing);
         }
-        Turn fresh;
-        fresh.started = now;
-        fresh.seq = next_turn_seq_++;
-        turn_seq = fresh.seq;
-        turns_.emplace(session, std::move(fresh));
+        turn = std::make_shared<Turn>();
+        turn->started = now;
+        turn->seq = next_turn_seq_++;
+        turns_.emplace(session, turn);
     }
     {
         std::lock_guard<std::mutex> lk(inbound_mutex_);
@@ -350,7 +362,7 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
     // copy constructor is noexcept: copying a std::string can throw, and this callback is
     // invoked from a bare connection thread where a throw terminates the process.
     auto session_ref = std::make_shared<const std::string>(session);
-    resp.stream = [this, session_ref, generate, turn_seq](const BodyWriter& write) noexcept {
+    resp.stream = [this, session_ref, generate, turn](const BodyWriter& write) noexcept {
         try {
             // Before any token, and only when the id was invented: the caller cannot
             // continue the conversation without it, and a browser EventSource client
@@ -363,17 +375,17 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
                 // the turn is released here instead of waiting to go stale.
                 if (!write(sse_frame("session", json{{"session", *session_ref}}))) {
                     std::lock_guard<std::mutex> lk(turn_mutex_);
-                    erase_turn(*session_ref, turn_seq);
+                    erase_turn(*session_ref, turn->seq);
                     return;
                 }
             }
-            stream_turn(*session_ref, turn_seq, write);
+            stream_turn(*session_ref, turn, write);
         } catch (...) {
             // Nothing useful can be reported from here, and the client's stream is
             // already lost. Dropping the turn is what matters: the reply then has
             // nowhere to be delivered instead of accumulating unread.
             std::lock_guard<std::mutex> lk(turn_mutex_);
-            erase_turn(*session_ref, turn_seq);
+            erase_turn(*session_ref, turn->seq);
         }
     };
     return resp;
@@ -383,10 +395,13 @@ void HttpChannel::erase_turn(const std::string& session, uint64_t seq) {
     auto it = turns_.find(session);
     // A different seq means this turn was already taken away and the id reused: erasing
     // would drop somebody else's live turn.
-    if (it != turns_.end() && it->second.seq == seq) turns_.erase(it);
+    if (it == turns_.end() || it->second->seq != seq) return;
+    it->second->detached = true;
+    it->second->cv.notify_one();
+    turns_.erase(it);
 }
 
-void HttpChannel::stream_turn(const std::string& session, uint64_t seq,
+void HttpChannel::stream_turn(const std::string& session, const TurnRef& turn,
                               const BodyWriter& write) {
     const auto deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(config_.turn_timeout_seconds);
@@ -397,36 +412,36 @@ void HttpChannel::stream_turn(const std::string& session, uint64_t seq,
 
         {
             std::unique_lock<std::mutex> lk(turn_mutex_);
-            const bool ready = turn_cv_.wait_until(lk, deadline, [&] {
-                auto it = turns_.find(session);
-                return it == turns_.end() || it->second.seq != seq ||
-                       !it->second.deltas.empty() || it->second.done;
+            // Waits on this turn's own cv, so only the connection that owns it is woken.
+            // The turn is held by shared_ptr, so it stays alive even once erased from the
+            // map — which is what makes `detached` readable rather than a dangling read.
+            const bool ready = turn->cv.wait_until(lk, deadline, [&] {
+                return turn->detached || !turn->deltas.empty() || turn->done;
             });
 
             if (!ready) {
-                erase_turn(session, seq);
+                erase_turn(session, turn->seq);
                 lk.unlock();
                 write(sse_frame("error", json{{"message", "turn timed out"}}));
                 return;
             }
 
-            auto it = turns_.find(session);
-            // Gone, or replaced by a newer turn under the same id — ended, or abandoned and
-            // retried. Either way this stream has nothing left to report, and the tokens
-            // now queued under that id belong to a different client.
-            if (it == turns_.end() || it->second.seq != seq) return;
+            // Taken away: ended by the caller, or replaced by a newer turn under the same
+            // id after being abandoned. Either way this stream has nothing left to report,
+            // and anything now queued under that id belongs to a different client.
+            if (turn->detached) return;
 
-            if (!it->second.deltas.empty()) {
-                frame = sse_frame("token", json{{"delta", it->second.deltas.front()}});
-                it->second.deltas.pop_front();
-            } else if (!it->second.error.empty()) {
-                frame = sse_frame("error", json{{"message", it->second.error}});
+            if (!turn->deltas.empty()) {
+                frame = sse_frame("token", json{{"delta", turn->deltas.front()}});
+                turn->deltas.pop_front();
+            } else if (!turn->error.empty()) {
+                frame = sse_frame("error", json{{"message", turn->error}});
                 last = true;
-                turns_.erase(it);
+                erase_turn(session, turn->seq);
             } else {
-                frame = sse_frame("done", json{{"content", it->second.final_content}});
+                frame = sse_frame("done", json{{"content", turn->final_content}});
                 last = true;
-                turns_.erase(it);
+                erase_turn(session, turn->seq);
             }
         }
 
@@ -437,7 +452,7 @@ void HttpChannel::stream_turn(const std::string& session, uint64_t seq,
             // Peer gone, or the server is shutting down. Drop the turn so the reply has
             // nowhere to be delivered and cannot accumulate.
             std::lock_guard<std::mutex> lk(turn_mutex_);
-            erase_turn(session, seq);
+            erase_turn(session, turn->seq);
             return;
         }
         if (last) return;
@@ -445,24 +460,30 @@ void HttpChannel::stream_turn(const std::string& session, uint64_t seq,
 }
 
 void HttpChannel::append_delta(const std::string& session, const std::string& delta) {
+    TurnRef turn;
     {
         std::lock_guard<std::mutex> lk(turn_mutex_);
         auto it = turns_.find(session);
         if (it == turns_.end()) return;  // not ours, or already finished
-        it->second.deltas.push_back(delta);
+        it->second->deltas.push_back(delta);
+        turn = it->second;
     }
-    turn_cv_.notify_all();
+    // One waiter, not every connection in the process. Outside the lock so the woken
+    // thread does not immediately block on the mutex we are still holding.
+    turn->cv.notify_one();
 }
 
 void HttpChannel::fail_turn(const std::string& session, const std::string& error) {
+    TurnRef turn;
     {
         std::lock_guard<std::mutex> lk(turn_mutex_);
         auto it = turns_.find(session);
         if (it == turns_.end()) return;
-        it->second.error = error;
-        it->second.done = true;
+        it->second->error = error;
+        it->second->done = true;
+        turn = it->second;
     }
-    turn_cv_.notify_all();
+    turn->cv.notify_one();
 }
 
 void HttpChannel::send_message(const std::string& target, const std::string& message) {
@@ -470,14 +491,16 @@ void HttpChannel::send_message(const std::string& target, const std::string& mes
     // that ran the turn. It is the authoritative end of a turn — StreamEndEvent is not,
     // because a non-streaming provider produces no stream events at all and only this
     // fires.
+    TurnRef turn;
     {
         std::lock_guard<std::mutex> lk(turn_mutex_);
         auto it = turns_.find(target);
         if (it == turns_.end()) return;  // client already gone
-        it->second.final_content = message;
-        it->second.done = true;
+        it->second->final_content = message;
+        it->second->done = true;
+        turn = it->second;
     }
-    turn_cv_.notify_all();
+    turn->cv.notify_one();
 }
 
 } // namespace ptrclaw

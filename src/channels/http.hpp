@@ -107,11 +107,29 @@ private:
         // thread wakes. Finding *an* entry would then stream one client's tokens to another
         // and let the dead stream's cleanup erase a live turn.
         uint64_t                              seq = 0;
+        // One condition variable per turn, not one for the channel.
+        //
+        // A single shared cv meant every producer had to notify_all(): a token for one
+        // session woke every connection thread in the process, each to re-acquire
+        // turn_mutex_, find the event was not theirs, and sleep again. Under load that is
+        // O(waiters) wakeups per token — measured at 500 concurrent turns, 315 of 449
+        // threads sat blocked on that mutex while only 65 were in a provider call.
+        //
+        // Turns are held by shared_ptr so this outlives its map entry: a waiter keeps its
+        // own reference, and erasing the session's entry cannot destroy the cv underneath
+        // a thread waiting on it.
+        std::condition_variable               cv;
+        // Set when the turn leaves the map, so a waiter can tell "my turn was taken away"
+        // from a spurious wake without consulting the map at all.
+        bool                                  detached = false;
     };
 
-    void stream_turn(const std::string& session, uint64_t seq, const BodyWriter& write);
-    // Erases the session's turn only if it is still the one identified by `seq`.
-    // Caller must hold turn_mutex_.
+    using TurnRef = std::shared_ptr<Turn>;
+
+    void stream_turn(const std::string& session, const TurnRef& turn,
+                     const BodyWriter& write);
+    // Detaches and erases the session's turn if it is still the one identified by `seq`,
+    // waking whoever waits on it. Caller must hold turn_mutex_.
     void erase_turn(const std::string& session, uint64_t seq);
     // Ends every in-flight turn with an error and wakes the threads writing them.
     void release_pending_turns(const std::string& reason);
@@ -126,9 +144,10 @@ private:
     std::condition_variable     inbound_cv_;
     std::vector<ChannelMessage> inbound_queue_;
 
+    // Still one mutex: the map is small and every critical section under it is a handful
+    // of instructions. What changed is who gets woken — see Turn::cv.
     std::mutex                                     turn_mutex_;
-    std::condition_variable                        turn_cv_;
-    std::unordered_map<std::string, Turn>          turns_;
+    std::unordered_map<std::string, TurnRef>       turns_;
     uint64_t                                       next_turn_seq_ = 1;
 };
 
