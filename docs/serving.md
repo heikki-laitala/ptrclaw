@@ -281,14 +281,24 @@ provider held open 8 s:
 Raising `max_connections` raises both halves; the accept queue tracks it (`listen_backlog`).
 
 A pod configured wide — `workers: 512`, `max_connections: 2000`, `max_sessions: 5000` —
-accepted **1000 concurrent requests with zero failures at ~43 MB**. It did not serve them
-1000-at-a-time: effective parallelism plateaus around **40 turns in flight**, so the last
-caller waited ~57 s. That plateau is not the worker count (512 and 1000 behave identically),
-not CPU (0.2 % during the burst), not session creation (a warm burst on existing sessions
-matches a cold one to a tenth of a second), and not the test harness (the mock provider
-alone serves 1000 concurrent in 3.1 s). Something in the turn path serialises at roughly
-70-120 ms per turn and has not been isolated yet — treat ~40 concurrent turns per pod as the
-working figure until it has.
+accepts **1000 concurrent requests with zero failures at ~43 MB**. How fast it drains them
+is set by `workers`, and by how evenly the session ids hash across them:
+
+| Concurrent | Wall (3 s per turn) | Effective concurrency |
+| --- | --- | --- |
+| 25 | 3.0 s | 25 |
+| 50 | 3.0 s | 50 |
+| 100 | 6.0 s | 50 |
+| 250 | 9.0 s | 83 |
+| 500 | 15.3 s | 98 |
+
+Perfect parallelism would be 3 s at every level. The gap is the sharding: 500 sessions over
+512 shards leaves the deepest shard holding about five, and the burst is finished when that
+shard is. Wall clock tracks the deepest shard, not the average — which is why raising
+`workers` well above the concurrency you expect still pays.
+
+Each worker costs about **15 KB** resident: 64 idle at ~6 MB, 1024 at ~21 MB. Threads are
+cheap; the turns they run are not (~300 KB each in flight).
 
 **The other caveat is bursts.** `TurnPool` routes an event to `fnv1a(session_id) % workers`,
 so a session always lands on the same thread — the whole safety argument for `Agent` and its

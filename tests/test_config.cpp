@@ -821,3 +821,33 @@ TEST_CASE("Config: the default provider is registered", "[config]") {
     if (cfg.provider.empty()) return;  // a build with no providers at all
     REQUIRE(PluginRegistry::instance().has_provider(cfg.provider));
 }
+
+// ── The worker ceiling ──────────────────────────────────────────
+//
+// The cap silently rewrites a configured value, which is the worst kind of limit to get
+// wrong: a pod asking for 512 workers ran with 64 and looked like it had a concurrency
+// ceiling of its own. Measured, a worker costs ~15 KB resident — 1024 of them is ~21 MB,
+// so the ceiling exists to catch a typo, not to ration memory.
+
+TEST_CASE("Config: a large worker count is honoured, not silently reduced", "[config]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({"workers": 512})");
+    REQUIRE(Config::load().workers == 512);
+}
+
+TEST_CASE("Config: workers are capped at the documented ceiling", "[config]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({"workers": 999999})");
+    REQUIRE(Config::load().workers == kMaxWorkers);
+}
+
+TEST_CASE("Config: zero workers means one", "[config]") {
+    // Zero would mean "run turns inline"; the pool already treats <= 1 that way, and a
+    // configured 0 is far more likely to be a mistake than a request for it.
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({"workers": 0})");
+    REQUIRE(Config::load().workers == 1);
+}

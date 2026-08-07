@@ -132,6 +132,15 @@ static void setup_request(CurlRequest& req, const std::string& url,
     curl_easy_setopt(req.curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(req.curl, CURLOPT_HTTPHEADER, req.hlist);
     curl_easy_setopt(req.curl, CURLOPT_TIMEOUT, timeout);
+    // Required in a threaded process, not merely advisable. Without it libcurl installs and
+    // restores a SIGPIPE handler around every transfer, and sigaction() is process-global —
+    // so concurrent requests serialise inside the kernel rather than in any lock of ours.
+    // Sampling a pod with 500 turns in flight put __sigaction at the top of the profile.
+    //
+    // It also stops libcurl using SIGALRM for name-resolution timeouts, which is documented
+    // as unsafe when several threads share a process: the handler and the alarm are global,
+    // so one thread's DNS timeout can land on another's transfer.
+    curl_easy_setopt(req.curl, CURLOPT_NOSIGNAL, 1L);
     apply_abort_hook(req.curl);
 }
 

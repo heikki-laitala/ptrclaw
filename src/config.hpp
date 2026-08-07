@@ -166,7 +166,14 @@ struct ServingConfig {
 };
 
 // Upper bound on Config::workers.
-constexpr uint32_t kMaxWorkers = 64;
+// A typo guard, not a memory budget. It was 64, which silently rewrote any larger value —
+// so a pod configured for 512 workers ran 64 and looked like it had a concurrency ceiling
+// of its own: 500 concurrent turns took 36 s where the same pod uncapped takes 15 s.
+//
+// The old justification was that "a typo of 1000 would be a memory problem". Measured, it
+// is not: a worker costs ~15 KB resident, so 64 workers idle at ~6 MB and 1024 at ~21 MB.
+// Turns in flight cost far more than the threads waiting to run them (~300 KB each).
+constexpr uint32_t kMaxWorkers = 1024;
 
 struct Config {
     // Build-dependent, like memory.backend below: a binary compiled without Anthropic
