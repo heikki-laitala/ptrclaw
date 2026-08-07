@@ -362,6 +362,14 @@ std::string Agent::process(const std::string& user_message) {
                         timeout_ev.output = "Tool call timed out after "
                             + std::to_string(config_.agent.tool_timeout) + "s";
                         collector->on_result(timeout_ev);
+                        // Published as well as collected. The collector feeds history; the
+                        // bus is what anything watching the turn sees, and a synthesised
+                        // result that never reaches it leaves an observer holding a call
+                        // with no answer — which a channel exporting the exchange cannot
+                        // replay, because a window with an unanswered call is refused.
+                        // The collector's own subscription is already cancelled above, so
+                        // this cannot feed it twice.
+                        event_bus_->publish(timeout_ev);
                     }
                 }
             }

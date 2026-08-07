@@ -1003,3 +1003,123 @@ TEST_CASE("HttpChannel: several calls in one turn are answered together", "[http
     });
     REQUIRE(ch.handle_request(req).status == 200);
 }
+
+TEST_CASE("HttpChannel: tool frames carry the batch they belong to", "[http_channel]") {
+    // A batch's calls are published one at a time and results arrive as they finish, so a
+    // fast result can land before the next call. Without the batch a transcript owner
+    // cannot tell one interleaved round from two, and the assistant `tool_calls` array it
+    // has to rebuild groups exactly one round.
+    EventBus bus;
+    HttpChannel ch(test_config());
+    ch.set_event_bus(&bus);
+    auto resp = ch.handle_request(chat_request({{"session", "s1"}, {"message", "go"}}));
+
+    ToolCallRequestEvent call;
+    call.session_id = "s1";
+    call.batch_id = "batch-7";
+    call.tool_call_id = "call_1";
+    call.tool_name = "file_read";
+    call.arguments_json = "{}";
+    bus.publish(call);
+
+    ToolCallResultEvent done;
+    done.session_id = "s1";
+    done.batch_id = "batch-7";
+    done.tool_call_id = "call_1";
+    done.tool_name = "file_read";
+    done.success = true;
+    done.output = "body";
+    bus.publish(done);
+
+    std::string seen;
+    std::thread consumer([&] {
+        resp.stream([&](std::string_view c) { seen.append(c); return true; });
+    });
+    ch.send_message("s1", "ok");
+    consumer.join();
+
+    REQUIRE(seen.find("batch-7") != std::string::npos);
+    // Both halves carry it, or the pairing cannot be reconstructed from the stream alone.
+    REQUIRE(seen.find("batch-7") != seen.rfind("batch-7"));
+}
+
+TEST_CASE("HttpChannel: a failed tool exports what history holds", "[http_channel]") {
+    // The agent stores a failure as "Error: ..." — the role alone does not tell the model
+    // it failed. Exporting the raw output would let a caller replay content the agent never
+    // saw, with the failure silently erased.
+    EventBus bus;
+    HttpChannel ch(test_config());
+    ch.set_event_bus(&bus);
+    auto resp = ch.handle_request(chat_request({{"session", "s1"}, {"message", "go"}}));
+
+    ToolCallResultEvent failed;
+    failed.session_id = "s1";
+    failed.tool_call_id = "call_1";
+    failed.tool_name = "file_read";
+    failed.success = false;
+    failed.output = "no such file";
+    bus.publish(failed);
+
+    std::string seen;
+    std::thread consumer([&] {
+        resp.stream([&](std::string_view c) { seen.append(c); return true; });
+    });
+    ch.send_message("s1", "ok");
+    consumer.join();
+
+    REQUIRE(seen.find("Error: no such file") != std::string::npos);
+    REQUIRE(seen.find("\"success\":false") != std::string::npos);
+}
+
+TEST_CASE("HttpChannel: a late result cannot contradict the one already reported",
+          "[http_channel]") {
+    // A tool cancelled for exceeding the timeout can still finish and publish. History
+    // already holds the synthesised timeout, so emitting the late one would hand the caller
+    // a transcript the agent never had — and two results for one call is a window no
+    // provider accepts.
+    EventBus bus;
+    HttpChannel ch(test_config());
+    ch.set_event_bus(&bus);
+    auto resp = ch.handle_request(chat_request({{"session", "s1"}, {"message", "go"}}));
+
+    ToolCallResultEvent timed_out;
+    timed_out.session_id = "s1";
+    timed_out.tool_call_id = "call_1";
+    timed_out.tool_name = "shell";
+    timed_out.success = false;
+    timed_out.output = "Tool call timed out after 120s";
+    bus.publish(timed_out);
+
+    ToolCallResultEvent late = timed_out;
+    late.success = true;
+    late.output = "finished eventually";
+    bus.publish(late);
+
+    std::string seen;
+    std::thread consumer([&] {
+        resp.stream([&](std::string_view c) { seen.append(c); return true; });
+    });
+    ch.send_message("s1", "ok");
+    consumer.join();
+
+    REQUIRE(seen.find("timed out") != std::string::npos);
+    REQUIRE(seen.find("finished eventually") == std::string::npos);
+}
+
+TEST_CASE("HttpChannel: arguments that are not JSON are refused", "[http_channel]") {
+    // Unchecked, this fails far away and quietly: Anthropic drops a tool_use block whose
+    // arguments will not parse but keeps the tool_result answering it.
+    HttpChannel ch(test_config());
+    auto resp = ch.handle_request(chat_request({
+        {"session", "s1"},
+        {"message", "hi"},
+        {"history", {
+            {{"role", "assistant"}, {"content", ""}, {"tool_calls", {
+                {{"id", "call_1"}, {"name", "file_read"}, {"arguments", "not-json"}}}}},
+            {{"role", "tool"}, {"content", "x"}, {"tool_call_id", "call_1"}},
+        }},
+    }));
+    REQUIRE(resp.status == 400);
+    REQUIRE(resp.body.find("call_1") != std::string::npos);
+    REQUIRE(resp.body.find("JSON") != std::string::npos);
+}

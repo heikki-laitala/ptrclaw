@@ -120,12 +120,16 @@ std::string format_tool_results_xml(const std::string& tool_name,
            output + "</tool_result>";
 }
 
+std::string tool_result_content(bool success, const std::string& output) {
+    return success ? output : "Error: " + output;
+}
+
 ChatMessage format_tool_result_message(const std::string& tool_call_id,
                                        const std::string& tool_name,
                                        bool success,
                                        const std::string& output) {
-    std::string content = success ? output : "Error: " + output;
-    return ChatMessage{Role::Tool, content, tool_name, tool_call_id};
+    return ChatMessage{Role::Tool, tool_result_content(success, output), tool_name,
+                       tool_call_id};
 }
 
 } // namespace ptrclaw

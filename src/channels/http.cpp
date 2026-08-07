@@ -1,6 +1,7 @@
 #include "channels/http.hpp"
 
 #include <algorithm>
+#include "dispatcher.hpp"
 #include "event.hpp"
 #include "event_bus.hpp"
 #include "plugin.hpp"
@@ -85,6 +86,16 @@ bool parse_tool_calls(const json& raw, std::string& encoded,
                 return false;
             }
             arguments = call["arguments"].get<std::string>();
+            // Parsed to check, then discarded: the original text is what gets stored, so a
+            // model's exact formatting survives the round trip. Unchecked, the failure
+            // lands far away and quietly — Anthropic drops the tool_use block whose
+            // arguments will not parse but keeps the tool_result that answers it, which is
+            // a corrupted replay rather than an error anyone can act on.
+            if (!json::accept(arguments)) {
+                error = "tool call '" + call["id"].get<std::string>() +
+                        "' has 'arguments' that are not valid JSON";
+                return false;
+            }
         }
         ids.push_back(call["id"].get<std::string>());
         calls.push_back({{"id", call["id"]}, {"name", call["name"]},
@@ -253,6 +264,12 @@ void HttpChannel::set_event_bus(EventBus* bus) {
         enqueue_frame(ev.session_id, sse_frame("tool_call", json{
             {"id", ev.tool_call_id},
             {"name", ev.tool_name},
+            // Which assistant message this call belongs to. The agent publishes a batch's
+            // calls one at a time and results arrive as they finish, so a fast result can
+            // land before the next call is announced — without this a transcript owner
+            // cannot tell one interleaved batch from two successive rounds, and the
+            // `tool_calls` array it has to rebuild groups exactly one batch.
+            {"batch", ev.batch_id},
             // The raw JSON string the model produced, not a re-encoded object: a caller
             // pushing it back must be able to hand over exactly what was sent.
             {"arguments", ev.arguments_json},
@@ -260,11 +277,20 @@ void HttpChannel::set_event_bus(EventBus* bus) {
     });
 
     subscribe<ToolCallResultEvent>(*bus_, [this](const ToolCallResultEvent& ev) {
+        // First result per call wins, matching what the agent keeps. A tool cancelled for
+        // exceeding the timeout can still finish and publish afterwards; history already
+        // holds the synthesised timeout by then, so emitting the late one would hand the
+        // caller a transcript the agent never had.
+        if (!claim_tool_result(ev.session_id, ev.tool_call_id)) return;
         enqueue_frame(ev.session_id, sse_frame("tool_result", json{
             {"id", ev.tool_call_id},
             {"name", ev.tool_name},
+            {"batch", ev.batch_id},
             {"success", ev.success},
-            {"output", ev.output},
+            // Exactly what goes into the agent's own history, prefix and all. Exporting the
+            // raw output instead would let a caller replay content the model never saw —
+            // and, for a failure, drop the only signal that the tool failed at all.
+            {"output", tool_result_content(ev.success, ev.output)},
         }));
     });
 
@@ -576,6 +602,13 @@ void HttpChannel::stream_turn(const std::string& session, const TurnRef& turn,
 
 void HttpChannel::append_delta(const std::string& session, const std::string& delta) {
     enqueue_frame(session, sse_frame("token", json{{"delta", delta}}));
+}
+
+bool HttpChannel::claim_tool_result(const std::string& session, const std::string& id) {
+    std::lock_guard<std::mutex> lk(turn_mutex_);
+    auto it = turns_.find(session);
+    if (it == turns_.end()) return false;  // no turn to report into
+    return it->second->reported_results.insert(id).second;
 }
 
 void HttpChannel::enqueue_frame(const std::string& session, const std::string& frame) {
