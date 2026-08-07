@@ -288,19 +288,18 @@ is set by `workers`, and by how evenly the session ids hash across them:
 | --- | --- | --- |
 | 25 | 3.0 s | 25 |
 | 50 | 3.0 s | 50 |
-| 100 | 6.0 s | 50 |
-| 250 | 9.0 s | 83 |
-| 500 | 15.3 s | 98 |
-| 1000 (`workers: 1024`) | 12.1 s | 248 |
+| 100 | 3.0 s | 99 |
+| 250 | 3.0 s | 246 |
+| 500 | 3.1 s | 485 |
+| 1000 (`workers: 1024`) | 3.1 s | 968 |
 
-Perfect parallelism would be 3 s at every level. The gap is the sharding: 500 sessions over
-512 shards leaves the deepest shard holding about five, and the burst is finished when that
-shard is. Wall clock tracks the deepest shard, not the average — which is why raising
-`workers` well above the concurrency you expect still pays.
+Perfect parallelism is 3 s, and the pod is within a rounding error of it at every level: a
+burst of N turns takes about as long as one turn, up to the ceiling `workers` sets.
 
-Each worker costs about **15 KB** resident: 64 idle at ~6 MB, 1024 at ~21 MB. Threads are
-cheap; the turns they run are not — ~57 KB in flight for a one-line prompt, ~300 KB for an
-8 KB one. A pod holding 1000 turns at once peaked at **78 MB**.
+**Threads exist only while turns do.** A pod configured for 1024 concurrent turns holds four
+threads and ~5 MB while nothing is happening — idle cost does not track the ceiling, so
+there is no reason to keep it tight. What costs is turns actually in flight: ~57 KB for a
+one-line prompt, ~300 KB for an 8 KB one. A pod running 1000 at once peaked at **61 MB**.
 
 The defaults are not this pod. The same 1000-request burst against `workers: 8` and
 `max_connections: 32` loses 928 of them: 48 fit in the system and the rest are refused at
@@ -312,14 +311,13 @@ the socket. Concurrency of this order is a configuration, not something to expec
   "agent": { "max_sessions": 2000 } }
 ```
 
-**The other caveat is bursts.** `TurnPool` routes an event to `fnv1a(session_id) % workers`,
-so a session always lands on the same thread — the whole safety argument for `Agent` and its
-`ToolManager` having no locks. Under sustained load the queues even out and all workers stay
-busy, which is why the table above reaches a full 8. A *burst* of arbitrary ids does not: 16
-simultaneous requests across 8 workers finished in 6.1 s rather than 3, because some shards
-took three turns while others took none. There is no work stealing, and adding it would cost
-the lock-free invariant. Size for the sustained rate, and expect burst latency to be uneven
-rather than the throughput to drop.
+**One session is still one turn at a time.** `TurnPool` runs a session's turns in arrival
+order and never concurrently — the whole safety argument for `Agent` and its `ToolManager`
+having no locks. A second request for a session already running is queued behind the first,
+not run beside it, which is the same thing the channel's 409 tells a caller directly.
+
+Concurrency is therefore across *sessions*. A single session cannot be made faster by adding
+workers, and a caller that funnels unrelated work through one session id gets it serialised.
 
 ### Sizing against a memory limit
 
@@ -459,6 +457,76 @@ and must not be predictable from other ids the pod has handed out.
 
 The channel still refuses a second concurrent turn for one session with 409: two turns
 interleaving over one history is not a conversation.
+
+## History: who owns it
+
+A session keeps its conversation in memory across turns, and a request may also carry a
+`history` window. Both work, and the choice decides how much the pod is allowed to forget.
+
+**The pod remembers.** Send a message with no `history`. The session accumulates the
+conversation, bounded by `agent.max_history_messages` and compacted when it approaches the
+token limit.
+
+```
+POST /chat  {"session": "task-42", "message": "and what about the second one?"}
+```
+
+**The caller remembers.** Send `history` with every request. `Agent::set_history()`
+**replaces** whatever the session had accumulated, and the new message is appended to it.
+
+```
+POST /chat  {"session": "task-42", "message": "...", "history": [ ... ]}
+```
+
+This is the shape to use when something outside the pod already owns the transcript — a
+context service in front of several agents, a queue that replays work, anything that can
+reconstruct the conversation. It makes the pod stateless per turn: eviction costs nothing, a
+restart costs nothing, and the session id narrows to what it uniquely provides — a private
+workspace and one turn at a time.
+
+**What to avoid is the hybrid**: pushing context on the first message and relying on the
+session afterwards. It works until `agent.session_max_idle_seconds` passes — 15 minutes by
+default — and then the session is evicted and the next message arrives at an agent with no
+memory of the conversation. No error, no warning, just amnesia, and only for the users who
+paused. A pod restart does the same thing at any moment, since `memory.backend` defaults to
+`"none"` and nothing is written down.
+
+So: push history every turn, or never. If you push it every turn, the eviction settings stop
+being a correctness question and become purely a memory one.
+
+### Pushed history and tool calls
+
+A pushed window carries `system`, `user` and `assistant` text. **`role: "tool"` is refused
+with a 400**, deliberately: a tool result is only meaningful paired with the `tool_call_id`
+of the call it answers, and the assistant turn carrying the original `tool_calls` cannot be
+expressed in this schema either. Accepting the role and dropping the association would send
+unassociated tool results to the provider, which fails in more confusing ways than a refusal.
+
+Within a turn this changes nothing. The agent runs its whole tool loop internally, bounded by
+`agent.max_tool_iterations`, and the intermediate assistant and tool messages live in the
+pod for the duration. The caller sees the final reply.
+
+Across turns it does. Replaying a window reconstructs the conversation as if the tools had
+never been called: the model sees the question and its own answer, not the file it read or
+the command's output. In practice that is usually enough, because the answer states what the
+tool found — but a fact the model learned only from raw tool output and never wrote into its
+reply is gone, and it may re-run a tool whose result it no longer has.
+
+Two things follow, and the second is the useful one:
+
+- Prompt for it. A persona that tells the agent to state the facts its answer rests on makes
+  the reply carry what the next turn needs. The reply *is* the memory in this mode.
+- **Use the workspace for anything that must survive.** A session's directory is derived
+  from its id, so the same id gets the same directory even after the session has been
+  evicted and rebuilt — files outlive the conversation, unlike history, and are removed only
+  by `POST /session/end`. Writing a tool's output to a file and reading it back next turn is
+  durable where replayed history is not.
+
+One trap when pushing: **do not send a system message as `history[0]`**. `set_history()`
+then treats it as the whole prompt and ptrclaw's own is never injected — the session loses
+the Workspace section naming its roots, and the model starts guessing at paths its tools
+will refuse. Configure `agent.persona` instead, which is added to the built-in prompt rather
+than replacing it.
 
 ## Ending a session
 

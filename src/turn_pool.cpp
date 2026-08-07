@@ -1,120 +1,106 @@
 #include "turn_pool.hpp"
 #include "event_bus.hpp"
-#include "util.hpp"
 #include <iostream>
+#include <system_error>
+#include <thread>
+#include <utility>
 
 namespace ptrclaw {
 
-TurnPool::TurnPool(EventBus& bus, uint32_t workers) : bus_(bus) {
-    if (workers <= 1) return;  // inline mode — no shards, no threads
-
-    shards_.reserve(workers);
-    for (uint32_t i = 0; i < workers; ++i) {
-        shards_.push_back(std::make_unique<Shard>());
-    }
-
-    threads_.reserve(workers);
-    try {
-        for (uint32_t i = 0; i < workers; ++i) {
-            threads_.emplace_back([this, i] { run(i); });
-        }
-    } catch (...) {
-        // A thread that cannot be created throws, and unwinding here would destroy the
-        // joinable threads already started — which calls std::terminate and takes the
-        // process down before main can report anything. stop() signals them, drains the
-        // queues and joins, leaving an empty pool to destroy. Reachable in a container with
-        // a low pid limit, and more so now that workers may be configured in the hundreds.
-        stop();
-        throw;
-    }
-}
+TurnPool::TurnPool(EventBus& bus, uint32_t workers)
+    : bus_(bus), max_concurrent_(workers <= 1 ? 0 : workers) {}
 
 TurnPool::~TurnPool() {
     stop();
 }
 
-size_t TurnPool::shard_for(const std::string& session_id, uint32_t workers) {
-    if (workers <= 1) return 0;
-    return static_cast<size_t>(fnv1a(session_id) % workers);
-}
-
-void TurnPool::submit(MessageReceivedEvent ev) {
-    if (shards_.empty()) {
-        bus_.publish(ev);
-        return;
-    }
-
-    Shard& shard = *shards_[shard_for(ev.session_id, workers())];
-    {
-        std::unique_lock<std::mutex> lock(shard.mutex);
-        shard.space_cv.wait(lock, [&] {
-            return stopping_.load() || shard.queue.size() < kMaxQueuedPerShard;
-        });
-        if (stopping_.load()) return;
-        shard.queue.push_back(std::move(ev));
-    }
-    shard.work_cv.notify_one();
-}
-
-bool TurnPool::idle() const {
-    for (auto& shard : shards_) {
-        std::lock_guard<std::mutex> lock(shard->mutex);
-        if (!shard->queue.empty() || shard->busy) return false;
+bool TurnPool::quiet() const {
+    if (in_flight_ > 0) return false;
+    for (const auto& [id, session] : sessions_) {
+        (void)id;
+        if (!session.queue.empty()) return false;
     }
     return true;
 }
 
-void TurnPool::drain() {
-    for (auto& shard : shards_) {
-        std::unique_lock<std::mutex> lock(shard->mutex);
-        shard->idle_cv.wait(lock, [&] {
-            return stopping_.load() || (shard->queue.empty() && !shard->busy);
-        });
-    }
+uint32_t TurnPool::in_flight() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return in_flight_;
 }
 
-void TurnPool::stop() {
-    if (stopping_.exchange(true)) return;
-
-    for (auto& shard : shards_) {
-        {
-            std::lock_guard<std::mutex> lock(shard->mutex);
-            shard->queue.clear();
-        }
-        shard->work_cv.notify_all();
-        shard->space_cv.notify_all();
-        shard->idle_cv.notify_all();
+void TurnPool::submit(MessageReceivedEvent ev) {
+    if (max_concurrent_ == 0) {
+        bus_.publish(ev);
+        return;
     }
 
-    for (auto& thread : threads_) {
-        if (thread.joinable()) thread.join();
-    }
-    threads_.clear();
-}
+    const std::string id = ev.session_id;
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
 
-void TurnPool::run(size_t index) {
-    Shard& shard = *shards_[index];
-
-    for (;;) {
-        MessageReceivedEvent ev;
-        {
-            std::unique_lock<std::mutex> lock(shard.mutex);
-            shard.work_cv.wait(lock, [&] {
-                return stopping_.load() || !shard.queue.empty();
+        // Already running: queue behind it, so this session's turns stay ordered and
+        // never overlap. The thread running the current turn picks this up.
+        auto it = sessions_.find(id);
+        if (it != sessions_.end() && it->second.running) {
+            // The entry is re-looked-up on every wake rather than held across the wait:
+            // the running thread may finish and erase it while this one is parked.
+            space_cv_.wait(lock, [&] {
+                if (stopping_.load()) return true;
+                auto cur = sessions_.find(id);
+                return cur == sessions_.end() || !cur->second.running ||
+                       cur->second.queue.size() < kMaxQueuedPerSession;
             });
-            // Drop anything still queued at shutdown rather than working through
-            // the backlog — the channel fails its pending callers on teardown.
             if (stopping_.load()) return;
 
-            ev = std::move(shard.queue.front());
-            shard.queue.pop_front();
-            shard.busy = true;
+            auto& session = sessions_[id];
+            if (session.running) {
+                session.queue.push_back(std::move(ev));
+                return;
+            }
+            // It drained while we waited, so fall through and start it here instead.
         }
-        shard.space_cv.notify_one();  // a submitter may be waiting for room
 
-        // A turn must not take the process down. Inline on the poll loop an
-        // exception reached main()'s handler and exited; on a worker thread it
-        // would be std::terminate, killing every other session's turn with it.
+        // Not running: this turn needs one of the concurrency slots.
+        space_cv_.wait(lock, [&] {
+            return stopping_.load() || in_flight_ < max_concurrent_;
+        });
+        if (stopping_.load()) return;
+
+        sessions_[id].running = true;
+        ++in_flight_;
+    }
+
+    start(id, std::move(ev));
+}
+
+void TurnPool::start(std::string session_id, MessageReceivedEvent ev) {
+    try {
+        // The lambda owns the id, so the reference run_session takes stays valid for as
+        // long as the thread runs.
+        std::thread([this, id = std::move(session_id),
+                     event = std::move(ev)]() mutable {
+            run_session(id, std::move(event));
+        }).detach();
+    } catch (const std::system_error& e) {
+        // The system will not give us a thread — a pid or thread-count limit, which a
+        // container can impose well below what `workers` allows. Running the turn here
+        // degrades to the inline path: slower, and correct. Dropping it or letting the
+        // exception escape would lose a caller's turn over a limit that has likely
+        // passed by the next request. The slot is already counted, and run_session
+        // releases it either way.
+        std::cerr << "[turnpool] no thread available (" << e.what()
+                  << "); running this turn inline\n";
+        run_session(session_id, std::move(ev));
+    }
+}
+
+void TurnPool::run_session(const std::string& session_id, MessageReceivedEvent first) {
+    MessageReceivedEvent ev = std::move(first);
+
+    for (;;) {
+        // A turn must not take the process down. Inline on the poll loop an exception
+        // reached main()'s handler and exited; on a worker thread it would be
+        // std::terminate, killing every other session's turn with it.
         try {
             bus_.publish(ev);
         } catch (const std::exception& e) {
@@ -125,12 +111,74 @@ void TurnPool::run(size_t index) {
                       << ": unknown error\n";
         }
 
+        bool more = false;
         {
-            std::lock_guard<std::mutex> lock(shard.mutex);
-            shard.busy = false;
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = sessions_.find(session_id);
+
+            // Take this session's next turn without releasing the slot. Staying on the
+            // same thread is not required for correctness — every handoff goes through
+            // this mutex either way — but it avoids handing the session to a new thread
+            // for no reason.
+            //
+            // Dropping the backlog at shutdown rather than working through it: the
+            // channel fails its pending callers on teardown.
+            if (!stopping_.load() && it != sessions_.end() &&
+                !it->second.queue.empty()) {
+                ev = std::move(it->second.queue.front());
+                it->second.queue.pop_front();
+                more = true;
+            } else {
+                if (it != sessions_.end()) {
+                    it->second.running = false;
+                    // Nothing left to remember about this session. Keeping the entry
+                    // would leak a map slot per session id the pod has ever seen.
+                    if (it->second.queue.empty()) sessions_.erase(it);
+                }
+                --in_flight_;
+            }
         }
-        shard.idle_cv.notify_all();
+
+        // Both waiters are outside the lock. A submitter may be parked for room in this
+        // session's queue or for a free slot, and drain()/stop() may be waiting for the
+        // pool to fall quiet.
+        space_cv_.notify_all();
+        if (!more) {
+            quiet_cv_.notify_all();
+            return;  // nothing below this line touches the pool
+        }
     }
+}
+
+bool TurnPool::idle() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return quiet();
+}
+
+void TurnPool::drain() {
+    if (max_concurrent_ == 0) return;  // inline: a turn is over before submit() returns
+    std::unique_lock<std::mutex> lock(mutex_);
+    quiet_cv_.wait(lock, [this] { return quiet(); });
+}
+
+void TurnPool::stop() {
+    if (stopping_.exchange(true)) return;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        // Queued turns that never started are dropped; the ones running are waited for
+        // below, because their threads are detached and would otherwise outlive the
+        // pool they hold a pointer to.
+        for (auto& [id, session] : sessions_) {
+            (void)id;
+            session.queue.clear();
+        }
+    }
+    space_cv_.notify_all();  // release submitters parked for room or a slot
+
+    std::unique_lock<std::mutex> lock(mutex_);
+    quiet_cv_.wait(lock, [this] { return in_flight_ == 0; });
+    sessions_.clear();
 }
 
 } // namespace ptrclaw

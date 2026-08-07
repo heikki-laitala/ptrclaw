@@ -38,26 +38,53 @@ bool wait_for(Pred pred, std::chrono::milliseconds timeout = std::chrono::second
 
 } // namespace
 
-// ── Sharding ────────────────────────────────────────────────────
+// ── Threads exist only while turns do ───────────────────────────
+//
+// These replace two tests that asserted the hash mapped a session to a fixed shard.
+// There are no shards now; what those tests were really protecting — one turn per
+// session at a time, in order — is asserted directly further down.
 
-TEST_CASE("TurnPool: a session id always maps to the same shard", "[turn_pool]") {
-    // The whole safety argument rests on this: one session, one thread, so no two
-    // threads ever touch one Agent.
-    for (uint32_t workers : {2u, 4u, 8u, 17u}) {
-        size_t first = TurnPool::shard_for("session-abc", workers);
-        for (int i = 0; i < 100; ++i) {
-            REQUIRE(TurnPool::shard_for("session-abc", workers) == first);
-        }
-        REQUIRE(first < workers);
-    }
+TEST_CASE("TurnPool: a pool with nothing to do holds no threads", "[turn_pool]") {
+    // The point of the change: a pod configured for a thousand concurrent turns pays
+    // for none of them while idle.
+    EventBus bus;
+    TurnPool pool(bus, 1024);
+    REQUIRE(pool.workers() == 1024);
+    REQUIRE(pool.in_flight() == 0);
+    REQUIRE(pool.idle());
 }
 
-TEST_CASE("TurnPool: sessions spread across shards", "[turn_pool]") {
-    std::set<size_t> shards;
-    for (int i = 0; i < 200; ++i) {
-        shards.insert(TurnPool::shard_for("session-" + std::to_string(i), 4));
+TEST_CASE("TurnPool: threads appear for work and leave when it is done",
+          "[turn_pool]") {
+    EventBus bus;
+    std::mutex m;
+    std::condition_variable cv;
+    bool release = false;
+    std::atomic<int> started{0};
+
+    subscribe<MessageReceivedEvent>(bus, [&](const MessageReceivedEvent&) {
+        ++started;
+        std::unique_lock<std::mutex> lock(m);
+        cv.wait(lock, [&] { return release; });
+    });
+
+    TurnPool pool(bus, 8);
+    pool.submit(make_event("s1"));
+    pool.submit(make_event("s2"));
+
+    // Both turns are held inside the handler, so both slots are occupied.
+    for (int i = 0; i < 200 && started.load() < 2; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    REQUIRE(shards.size() == 4);
+    REQUIRE(started.load() == 2);
+    REQUIRE(pool.in_flight() == 2);
+
+    { std::lock_guard<std::mutex> lock(m); release = true; }
+    cv.notify_all();
+    pool.drain();
+
+    // ...and released once the turns finish, rather than parked for the next one.
+    REQUIRE(pool.in_flight() == 0);
 }
 
 // ── Inline mode ─────────────────────────────────────────────────
@@ -157,10 +184,10 @@ TEST_CASE("TurnPool: turns for different sessions run in parallel",
         }
     });
 
-    // Two ids the hash puts on different shards — asserted, not assumed.
+    // Any two distinct ids will do now: parallelism no longer depends on where a hash
+    // puts them, which is the point of dropping the shards.
     std::string a = "session-a";
     std::string b = "session-b";
-    REQUIRE(TurnPool::shard_for(a, 4) != TurnPool::shard_for(b, 4));
 
     pool.submit(make_event(a));
     pool.submit(make_event(b));
@@ -171,7 +198,7 @@ TEST_CASE("TurnPool: turns for different sessions run in parallel",
 
 // ── drain() ─────────────────────────────────────────────────────
 
-TEST_CASE("TurnPool: a full shard applies back-pressure to the submitter",
+TEST_CASE("TurnPool: a full session queue applies back-pressure to the submitter",
           "[turn_pool]") {
     // Publishing inline used to bound intake to one turn at a time. An unbounded
     // queue would let a channel with no per-session gate grow without limit while
@@ -212,7 +239,7 @@ TEST_CASE("TurnPool: a full shard applies back-pressure to the submitter",
     REQUIRE(submitted.load() == 500);
 }
 
-TEST_CASE("TurnPool: stop releases a submitter blocked on a full shard",
+TEST_CASE("TurnPool: stop releases a submitter blocked on a full queue",
           "[turn_pool]") {
     // Otherwise shutdown deadlocks: stop() joins the workers while the poll
     // thread is still parked waiting for room that will never come.
