@@ -293,9 +293,11 @@ TEST_CASE("SessionManager: an existing session is served at the cap", "[session]
     REQUIRE(mgr.list_sessions().size() == 1);
 }
 
-TEST_CASE("SessionManager: no cap by default", "[session]") {
+TEST_CASE("SessionManager: zero means no cap", "[session]") {
+    // The subject is what 0 means, not what the default is — a serving build defaults to a
+    // real ceiling, and this behaviour has to keep working underneath it.
     auto cfg = make_test_config();
-    REQUIRE(cfg.agent.max_sessions == 0);
+    cfg.agent.max_sessions = 0;
     SessionManager mgr(cfg, test_http);
 
     mgr.get_session("one");

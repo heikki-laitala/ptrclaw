@@ -24,7 +24,16 @@ struct HttpChannelConfig {
     // Concurrent connections. Turns run in parallel only up to the `workers` config key
     // (see the class comment), so above that this governs how many callers can be
     // *waiting* rather than how many are served.
+    // Concurrent connections, not concurrent turns — past this the acceptor stops
+    // accepting and the kernel backlog queues callers. It has to stay above `workers`, or
+    // callers that could have been served are waiting on a connection instead. A serving
+    // build defaults above 2x its own worker default; each connection is a detached thread
+    // and costs little while it waits.
+#ifdef PTRCLAW_HAS_SERVING
+    uint32_t    max_connections = 32;
+#else
     uint32_t    max_connections = 8;
+#endif
     // How long a single turn may take before the stream is closed with an error. Without
     // it a provider that never answers would hold a connection open forever.
     uint32_t    turn_timeout_seconds = 120;
