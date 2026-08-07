@@ -43,6 +43,15 @@ private:
 // Type-safe subscribe helper: auto-casts Event& to the concrete type.
 template<typename E>
 uint64_t subscribe(EventBus& bus, std::function<void(const E&)> handler) {
+    // The analyzer reports a possible leak of std::function's heap buffer here, but there
+    // is no raw ownership to lose: `handler` is taken by value, moved into the lambda, and
+    // the lambda is moved into the EventHandler that EventBus stores — every step is
+    // std::function's own RAII. It is the known libc++ false positive where the analyzer
+    // loses track of __f_ across the move into the subscriber vector.
+    //
+    // Suppressed rather than reproduced: it fires on the CI macOS runner and not on a local
+    // toolchain of the same clang-tidy version, so it tracks the SDK's libc++ headers.
+    // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks)
     return bus.subscribe(E::TAG, [h = std::move(handler)](const Event& e) {
         h(static_cast<const E&>(e));
     });

@@ -1,6 +1,8 @@
 #include "turn_pool.hpp"
 #include "event_bus.hpp"
 #include <iostream>
+#include <memory>
+#include <string>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -74,12 +76,19 @@ void TurnPool::submit(MessageReceivedEvent ev) {
 }
 
 void TurnPool::start(std::string session_id, MessageReceivedEvent ev) {
+    // Held by shared_ptr rather than captured directly. The lambda's captures are
+    // constructed before std::thread's constructor runs, so moving into them would leave
+    // the originals empty by the time a creation failure is caught — the fallback would
+    // then publish an empty event under an empty session id, while the real session stayed
+    // marked running and wedged every turn queued behind it. Copying the shared_ptr costs
+    // nothing and keeps one intact copy for whichever path runs.
+    auto payload = std::make_shared<std::pair<std::string, MessageReceivedEvent>>(
+        std::move(session_id), std::move(ev));
     try {
-        // The lambda owns the id, so the reference run_session takes stays valid for as
-        // long as the thread runs.
-        std::thread([this, id = std::move(session_id),
-                     event = std::move(ev)]() mutable {
-            run_session(id, std::move(event));
+        // The payload outlives this scope through the capture, so the reference
+        // run_session takes stays valid for as long as the thread runs.
+        std::thread([this, payload] {
+            run_session(payload->first, std::move(payload->second));
         }).detach();
     } catch (const std::system_error& e) {
         // The system will not give us a thread — a pid or thread-count limit, which a
@@ -90,7 +99,7 @@ void TurnPool::start(std::string session_id, MessageReceivedEvent ev) {
         // releases it either way.
         std::cerr << "[turnpool] no thread available (" << e.what()
                   << "); running this turn inline\n";
-        run_session(session_id, std::move(ev));
+        run_session(payload->first, std::move(payload->second));
     }
 }
 
@@ -128,6 +137,7 @@ void TurnPool::run_session(const std::string& session_id, MessageReceivedEvent f
                 ev = std::move(it->second.queue.front());
                 it->second.queue.pop_front();
                 more = true;
+                space_cv_.notify_all();  // room freed in this session's queue
             } else {
                 if (it != sessions_.end()) {
                     it->second.running = false;
@@ -136,17 +146,22 @@ void TurnPool::run_session(const std::string& session_id, MessageReceivedEvent f
                     if (it->second.queue.empty()) sessions_.erase(it);
                 }
                 --in_flight_;
+
+                // Notified while the mutex is still held, and that is the whole point:
+                // stop() waits for in_flight_ to reach zero, and the moment it can observe
+                // zero it may return and let the pool be destroyed. A notify issued after
+                // releasing the lock would then be a call on a destroyed condition
+                // variable — this thread is detached, so nothing else is holding the pool
+                // open for it. Holding the mutex across the notify costs a wakeup that
+                // immediately blocks; that is the price of the guarantee.
+                space_cv_.notify_all();
+                quiet_cv_.notify_all();
             }
         }
 
-        // Both waiters are outside the lock. A submitter may be parked for room in this
-        // session's queue or for a free slot, and drain()/stop() may be waiting for the
-        // pool to fall quiet.
-        space_cv_.notify_all();
-        if (!more) {
-            quiet_cv_.notify_all();
-            return;  // nothing below this line touches the pool
-        }
+        // Past this point a finished worker touches no member of the pool, which is what
+        // makes stop()'s wait an actual join for detached threads.
+        if (!more) return;
     }
 }
 
