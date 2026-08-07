@@ -173,20 +173,34 @@ struct Config {
     // cannot construct the provider its own default names, so a config that omits
     // "provider" would fail at startup rather than run. Both halves move together — an
     // OpenAI build defaulting to a Claude model would authenticate and then be refused.
+    // PTRCLAW_HAS_OPENAI_PROVIDER, not PTRCLAW_HAS_OPENAI: the latter only means
+    // OpenAIProvider's code is compiled, and openrouter and compatible inherit from it — so
+    // it is defined for builds that never enabled OpenAI. Since openai.cpp registers
+    // "openai" whenever it compiles, keying on it would default an OpenRouter-only pod to a
+    // provider that constructs fine and then fails for want of a credential.
 #ifdef PTRCLAW_HAS_ANTHROPIC
     std::string provider = "anthropic";
     std::string model = "claude-sonnet-4-6";
-#elif defined(PTRCLAW_HAS_OPENAI)
+#elif defined(PTRCLAW_HAS_OPENAI_PROVIDER)
     std::string provider = "openai";
     std::string model = "gpt-5.6-sol";
 #elif defined(PTRCLAW_HAS_OPENROUTER)
     std::string provider = "openrouter";
+    // Vendor-prefixed, which is how OpenRouter names models; an operator pointing at a
+    // different catalogue sets their own.
     std::string model = "openai/gpt-5.6";
 #elif defined(PTRCLAW_HAS_OLLAMA)
     std::string provider = "ollama";
     std::string model = "llama3.2";
-#else
+#elif defined(PTRCLAW_HAS_COMPATIBLE)
+    // The endpoint and its model names are the operator's, so there is no default worth
+    // guessing beyond the provider itself.
     std::string provider = "compatible";
+    std::string model = "";
+#else
+    // No provider was compiled in. Naming one would only move the failure from "nothing to
+    // talk to" to "unknown provider".
+    std::string provider = "";
     std::string model = "";
 #endif
     double temperature = 0.7;

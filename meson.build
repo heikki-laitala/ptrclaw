@@ -74,6 +74,14 @@ opt_openai     = get_option('with_openai') or get_option('with_openrouter') or g
 if opt_openai
   add_project_arguments('-DPTRCLAW_HAS_OPENAI', language: 'cpp')
 endif
+# Distinct from PTRCLAW_HAS_OPENAI, which only says OpenAIProvider's *code* is present —
+# openrouter and compatible inherit from it, so that macro is defined for builds that never
+# enabled OpenAI itself. openai.cpp registers the "openai" provider whenever it compiles, so
+# a default keyed on the shared macro would pick a provider the operator did not ask for and
+# fail on its missing credentials rather than using the one they chose.
+if get_option('with_openai')
+  add_project_arguments('-DPTRCLAW_HAS_OPENAI_PROVIDER', language: 'cpp')
+endif
 # The OAuth flow is a separate axis from the provider: openrouter and compatible
 # only ever authenticate with an API key, so they should not have to carry the
 # browser sign-in flow just because they inherit from OpenAIProvider.
@@ -96,6 +104,9 @@ if opt_openrouter
 endif
 if opt_ollama
   add_project_arguments('-DPTRCLAW_HAS_OLLAMA', language: 'cpp')
+endif
+if opt_compatible
+  add_project_arguments('-DPTRCLAW_HAS_COMPATIBLE', language: 'cpp')
 endif
 opt_telegram   = get_option('with_telegram')
 opt_whatsapp   = get_option('with_whatsapp')
