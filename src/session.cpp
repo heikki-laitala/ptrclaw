@@ -332,8 +332,18 @@ void SessionManager::dispatch_message(const MessageReceivedEvent& ev) {
     // window away and answer the user with an interview question instead. A caller
     // that supplies the history has already said who this agent is, and there is
     // nobody at the far end of an onboarding interview to answer it.
-    if (!ev.message.history && agent.memory() && !agent.is_hatched()
-        && !agent.hatching()) {
+    //
+    // Never under per-session memory either, and for the same reason one step further
+    // out. With a shared store "has this agent been hatched" is asked once for the whole
+    // process, and the first visitor is the operator often enough for the interview to be
+    // worth having. With a store per session it is asked again for every session, so a pod
+    // serving many callers would open each one with the ceremony — and start_hatch()
+    // replaces the entire system prompt with the interview, which carries no tools, so the
+    // session cannot do the work it was asked for until somebody answers questions about
+    // what to call the assistant. Nobody at the far end of an HTTP request is going to.
+    const bool memory_per_session = config_.memory.isolation == "session";
+    if (!ev.message.history && agent.memory() && !memory_per_session
+        && !agent.is_hatched() && !agent.hatching()) {
         agent.start_hatch();
     }
 

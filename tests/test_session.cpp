@@ -91,6 +91,57 @@ TEST_CASE("SessionManager: evict_idle keeps recent sessions", "[session]") {
     REQUIRE(mgr.list_sessions().size() == 1);
 }
 
+// ── auto-hatching ───────────────────────────────────────────────
+
+namespace {
+
+// Publishes one channel message with no history, which is the shape that decides whether
+// the identity interview starts.
+void send_channel_message(Config& cfg, HttpClient& http, const std::string& session_id,
+                          const std::function<void(SessionManager&)>& inspect) {
+    EventBus bus;
+    SessionManager mgr(cfg, http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    MessageReceivedEvent ev;
+    ev.session_id = session_id;
+    ev.message.content = "do the task";
+    bus.publish(ev);
+
+    inspect(mgr);
+}
+
+} // namespace
+
+// A shared store makes hatching a once-per-process question, and the first visitor is the
+// operator often enough for the interview to be worth having. Unchanged.
+TEST_CASE("SessionManager: a shared memory store still hatches", "[session][hatch]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    cfg.memory.isolation = "shared";
+    send_channel_message(cfg, test_http, "visitor", [](SessionManager& mgr) {
+        REQUIRE(mgr.get_session("visitor").hatching());
+    });
+}
+
+// With a store per session it is a per-session question, and nobody at the far end of an
+// HTTP request is going to answer an interview about what to call the assistant — they
+// asked for work. Every session would otherwise open with the ceremony, and the hatch
+// prompt replaces the whole system prompt, so the agent has no tools while it runs.
+TEST_CASE("SessionManager: per-session memory does not hatch", "[session][hatch]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    cfg.memory.isolation = "session";
+    send_channel_message(cfg, test_http, "task-42", [](SessionManager& mgr) {
+        REQUIRE_FALSE(mgr.get_session("task-42").hatching());
+    });
+}
+
 // ── session cap ─────────────────────────────────────────────────
 
 // Generated session ids make the count caller-driven: a front end that never echoes the
