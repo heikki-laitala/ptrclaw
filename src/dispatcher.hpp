@@ -23,6 +23,12 @@ std::string format_tool_results_xml(const std::string& tool_name,
                                     const std::string& output);
 
 // Format tool results as ChatMessage for native tool-call providers
+// What a tool result looks like once it is message content: a failure is prefixed so the
+// model is told it failed, since role alone does not carry that. Exposed because anything
+// exporting a result — the HTTP stream, for one — has to export exactly what history holds,
+// or a caller replaying it sends the model something different from what the agent saw.
+std::string tool_result_content(bool success, const std::string& output);
+
 ChatMessage format_tool_result_message(const std::string& tool_call_id,
                                        const std::string& tool_name,
                                        bool success,

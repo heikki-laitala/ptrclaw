@@ -512,9 +512,26 @@ data: {"id":"call_1","name":"file_read","success":true,"output":"Deadline: 30 Ap
 ```
 
 `arguments` is the raw JSON string the model produced rather than a re-encoded object, so
-what a caller stores is exactly what was sent. New event types are additive for SSE — a
-client subscribes to the names it knows — so one reading only `token` and `done` is
-unaffected by these.
+what a caller stores is exactly what was sent — and it is validated as JSON on the way back
+in, because a provider that cannot parse it drops the call while keeping the result that
+answers it. New event types are additive for SSE — a client subscribes to the names it knows
+— so one reading only `token` and `done` is unaffected by these.
+
+`batch` groups the calls that came from one assistant message. The agent publishes a batch's
+calls one at a time and results arrive as they finish, so a fast result can land before the
+next call is announced; without the batch a transcript owner cannot tell one interleaved
+round from two successive ones, and the `tool_calls` array it rebuilds has to group exactly
+one round.
+
+`output` is what the agent's own history holds, not the raw tool output: a failure appears as
+`Error: ...`, because the role alone does not tell the model the tool failed. `success` is
+there for display. Replaying `output` verbatim therefore gives the model what it saw the
+first time.
+
+Every call gets exactly one result frame, including one the agent had to invent: a tool that
+exceeds `agent.tool_timeout` is answered with a synthesised timeout, and a cancelled tool
+that finishes late does not overwrite it. A call with no result would be unreplayable, since
+the window would be refused.
 
 **Back in**, as two entry shapes `history` accepts:
 

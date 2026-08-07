@@ -5,6 +5,7 @@
 #include "memory/json_memory.hpp"
 #include "tool_manager.hpp"
 #include "event_bus.hpp"
+#include <mutex>
 #include <stdexcept>
 #include <filesystem>
 #include <fstream>
@@ -1251,4 +1252,45 @@ TEST_CASE("Agent: the response cache still hits for a genuinely identical turn",
     mock->next_response.content = "SHOULD-NOT-BE-USED";
     REQUIRE(agent.process("the same question") == "CACHED-ANSWER");
     REQUIRE(mock->chat_call_count == 1);  // served from cache, provider untouched
+}
+
+// ── Tool timeout is observable ──────────────────────────────────
+
+TEST_CASE("Agent: a timed-out tool publishes its synthesised result", "[agent]") {
+    // The result the agent invents for a tool that never answered goes into its history, so
+    // anything watching the turn has to see it too. Fed only to the collector, an observer
+    // is left holding a call with no answer — and a channel exporting the exchange cannot
+    // replay that, because a window with an unanswered call is refused.
+    Config cfg;
+    cfg.agent.tool_timeout = 1;      // the whole test waits this out
+    cfg.agent.max_tool_iterations = 2;
+
+    auto provider = std::make_unique<MockProvider>();
+    ChatResponse with_call;
+    with_call.tool_calls = {ToolCall{"call_1", "slow_tool", "{}"}};
+    ChatResponse final;
+    final.content = "gave up";
+    provider->responses = {with_call, final};
+
+    EventBus bus;
+    Agent agent(std::move(provider), cfg, nullptr, nullptr);
+    agent.set_session_id("s1");
+    agent.set_event_bus(&bus);
+
+    // Nothing subscribes to run the tool, so the call is never answered and the agent must
+    // synthesise the result itself.
+    std::vector<ToolCallResultEvent> observed;
+    std::mutex m;
+    subscribe<ToolCallResultEvent>(bus, [&](const ToolCallResultEvent& ev) {
+        std::lock_guard<std::mutex> lock(m);
+        observed.push_back(ev);
+    });
+
+    agent.process("do the slow thing");
+
+    std::lock_guard<std::mutex> lock(m);
+    REQUIRE(observed.size() == 1);
+    REQUIRE(observed[0].tool_call_id == "call_1");
+    REQUIRE_FALSE(observed[0].success);
+    REQUIRE(observed[0].output.find("timed out") != std::string::npos);
 }

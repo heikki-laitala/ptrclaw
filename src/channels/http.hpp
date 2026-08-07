@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace ptrclaw {
@@ -126,6 +127,9 @@ private:
         // Set when the turn leaves the map, so a waiter can tell "my turn was taken away"
         // from a spurious wake without consulting the map at all.
         bool                                  detached = false;
+        // Calls already reported to the caller, so a late result for a cancelled tool
+        // cannot contradict the one the agent recorded.
+        std::unordered_set<std::string>       reported_results;
     };
 
     using TurnRef = std::shared_ptr<Turn>;
@@ -140,6 +144,8 @@ private:
     void append_delta(const std::string& session, const std::string& delta);
     // Queues an already-rendered frame on the session's turn, if one is in flight.
     void enqueue_frame(const std::string& session, const std::string& frame);
+    // True the first time this call's result is reported on the session's turn.
+    bool claim_tool_result(const std::string& session, const std::string& id);
     void fail_turn(const std::string& session, const std::string& error);
 
     HttpChannelConfig              config_;
