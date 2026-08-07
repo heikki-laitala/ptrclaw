@@ -63,14 +63,31 @@ struct AgentConfig {
     // that runs one process per agent: there, an hour of retention after the last visitor
     // message is memory paid for nothing. Also the only way to observe reclamation in
     // less than an hour, which makes per-session memory measurable at all.
+    // A pod lets go of a session sooner than the personal agent does. Freeing one costs
+    // the caller a reconstruction rather than a conversation — the history can be pushed
+    // back on the next request — and holding it costs memory for as long as the window.
+#ifdef PTRCLAW_HAS_SERVING
+    uint32_t session_max_idle_seconds = 900;
+#else
     uint32_t session_max_idle_seconds = 3600;
+#endif
     // Live sessions allowed at once; 0 = unlimited, which is the behaviour before this key
     // existed. Matters once session ids can be generated: a caller that never echoes the
     // announced id back mints a new session per request, and each holds an Agent, a Config
     // copy and a memory backend until idle eviction. A session beyond the cap is refused
     // rather than evicted — freeing one while another worker may be mid-dispatch is the
     // use-after-free that eviction drains the turn pool to avoid.
+    // 0 means unlimited, which is right for a personal agent — there is one user. On a pod
+    // the session count is chosen by whoever is calling, especially with generated ids, so
+    // unlimited means memory growth an operator cannot bound. Measured cost is ~16 KB for a
+    // session that has exchanged a short turn and roughly 60-100 KB once it carries a full
+    // history window, so this ceiling is tens of MB rather than hundreds. Raise it with the
+    // pod's memory limit; see docs/serving.md.
+#ifdef PTRCLAW_HAS_SERVING
+    uint32_t max_sessions = 200;
+#else
     uint32_t max_sessions = 0;
+#endif
     // Empty means the identity comes from memory, as it always has.
     PersonaConfig persona;
 };
@@ -192,7 +209,20 @@ struct Config {
     // Worker threads running agent turns. 1 = turns run inline on the poll loop,
     // one at a time for the whole process. Above 1, turns for different sessions
     // run in parallel; turns for one session stay serialised. Channel modes only.
+    // One worker is right for a personal agent: turns are sequential anyway, and a thread
+    // that never runs two things at once is a thread that cannot race. A pod serving
+    // several conversations serialises every one of them at 1.
+    //
+    // 8, not 4: TurnPool shards by fnv1a(session_id) % workers so a session always lands on
+    // the same thread, which is what keeps Agent lock-free — but it also means random ids
+    // collide, and measured throughput is roughly half the worker count. 8 workers buys
+    // about 5 concurrent turns. Idle cost is negligible: 1 to 64 workers moved resident
+    // memory by under 1 MB.
+#ifdef PTRCLAW_HAS_SERVING
+    uint32_t workers = 8;
+#else
     uint32_t workers = 1;
+#endif
 
     std::unordered_map<std::string, ProviderEntry> providers;
 

@@ -156,10 +156,13 @@ session reading mid-write. This is the same atomicity ptrclaw uses for its own s
 
 ## Pod configuration
 
+A serving build already defaults to the values below — this is what you get with none of
+them set, so the block is here to be read and overridden, not copied:
+
 ```json
 {
   "workers": 8,
-  "channels": { "http": { "listen": "0.0.0.0:8080", "max_connections": 16 } },
+  "channels": { "http": { "listen": "0.0.0.0:8080", "max_connections": 32 } },
   "agent": { "session_max_idle_seconds": 900, "max_sessions": 200 },
   "allow_channel_commands": false,
   "serving": {
@@ -170,12 +173,19 @@ session reading mid-write. This is the same atomicity ptrclaw uses for its own s
 }
 ```
 
-Two of these are easy to miss and change everything:
+The three capacity defaults differ from the personal agent, which serves one person and is
+right to serialise:
 
-- **`workers` defaults to 1**, which means turns run inline, one at a time for the whole
-  process — simultaneous chats serialise. Raise it to run them in parallel. Turns are
-  sharded by session id, so a session stays serialised with itself; it is not work-stealing,
-  so uneven session load leaves workers idle.
+- **`workers`: 8** instead of 1. At 1 the pool runs turns inline, one at a time for the
+  whole process, so simultaneous chats serialise completely.
+- **`max_connections`: 32** instead of 8, above `2 x workers` — see the sizing section for
+  why the multiplier is 2.
+- **`max_sessions`: 200** instead of 0 (unlimited), and **`session_max_idle_seconds`: 900**
+  instead of an hour. With generated ids the session count is chosen by whoever is calling,
+  so unlimited means memory growth an operator cannot bound.
+
+Every one is a default, not a policy: an explicit value in config always wins.
+
 - **`memory.backend`** defaults to `"none"` in a serving build. A pod's per-session store is
   write-only in practice: the session records facts, ends, and nobody returns to that id — so
   it would pay an embedding call per turn, a synthesis call every few turns, and three files
@@ -185,9 +195,75 @@ Two of these are easy to miss and change everything:
   everywhere else), so a pod that *does* enable a backend is isolated without extra
   configuration.
 
-`max_connections` governs how many callers can be *waiting*, so keep it above `workers`.
 `allow_channel_commands` stays false: slash commands are the operator's surface, and `/auth`
 is refused on channels regardless.
+
+### Concurrency: three different limits
+
+They are routinely confused, and only one of them is about sessions.
+
+| Limit | Set by | What it bounds |
+| --- | --- | --- |
+| Sessions **held** | `agent.max_sessions` | conversations in memory at once — a memory question |
+| Turns **running** | `workers` | how many turns execute in parallel |
+| Callers **connected** | `channels.http.max_connections` | open connections; past it the acceptor stops accepting and the kernel backlog queues |
+
+**Effective parallelism is about half the worker count.** `TurnPool` routes an event to
+`fnv1a(session_id) % workers`, so a session always lands on the same thread — that is the
+whole safety argument for `Agent` and its `ToolManager` having no locks. It also means
+random session ids collide while other workers sit idle. Measured, with each provider call
+held open 2 s:
+
+| Config | 16 requests | Effective |
+| --- | --- | --- |
+| `workers: 1` | 32.2 s | 1 |
+| `workers: 4`, `max_connections: 8` | 10.1 s | ~3 |
+| `workers: 8`, `max_connections: 16` | 6.1 s | ~5 |
+| `workers: 16`, `max_connections: 32` (32 requests) | 8.1 s | ~8 |
+
+So size `workers` at roughly **2x the concurrent turns you want**, and `max_connections`
+above `workers` again — a connection limit at or below the worker count turns callers who
+could be served into callers waiting for a socket.
+
+There is no work stealing, and adding it would cost the lock-free invariant, so uneven
+session load leaving workers idle is the design rather than a regression.
+
+### Sizing against a memory limit
+
+Measured on the shipped binary against a stub provider, so these are the pod's own costs
+rather than the model's:
+
+| Component | Cost |
+| --- | --- |
+| Fixed baseline | **~5.5 MB** |
+| Each worker | **~0** — 1 to 64 workers moved resident memory under 1 MB |
+| Session, one short turn | **~16 KB** |
+| Session carrying history | **~1.9 KB per turn**, bounded by `agent.max_history_messages` (50) |
+| Turn in flight | **~250-420 KB** with an 8 KB prompt |
+
+Which gives:
+
+```
+RSS ≈ 5.5 MB + (sessions × 16 KB … 100 KB) + (turns_in_flight × 300 KB)
+```
+
+The defaults land at **~5.5 MB idle** and a ceiling near **30 MB** — 200 sessions each
+carrying a full history window, plus 8 turns in flight. Measured points on the curve, one
+short turn per session: 100 sessions 9.4 MB, 500 sessions 14.6 MB, 1000 sessions 21.6 MB.
+
+Two things follow that are worth knowing before tuning:
+
+- **Concurrency is cheap; sessions held are not.** Workers cost nothing at rest, so raising
+  `workers` for throughput is close to free. It is `max_sessions` and the idle window that
+  decide the pod's memory ceiling.
+- **The idle window is the cheaper lever.** A session freed early costs the caller a
+  reconstruction, not a conversation — it can push history back with the next request. So
+  shortening `session_max_idle_seconds` reclaims memory without losing anything, while
+  lowering `max_sessions` makes the pod refuse work.
+
+For a pod with a 128 MB limit the defaults leave roughly 4x headroom. If the limit is
+tighter, cut the idle window first; if traffic is bursty and the limit is generous, raise
+`max_sessions` and leave the rest alone.
 
 ### Turning memory back on
 

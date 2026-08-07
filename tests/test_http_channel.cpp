@@ -2,6 +2,7 @@
 #include <nlohmann/json.hpp>
 
 #include "channels/http.hpp"
+#include "config.hpp"
 #include "event.hpp"
 #include "event_bus.hpp"
 
@@ -800,4 +801,17 @@ TEST_CASE("HttpChannel: an ended stream cannot consume the next turn's tokens",
     ch.send_message("s1", "second done");
     reader.join();
     REQUIRE(second_seen.find("SECOND-TURN-TOKEN") != std::string::npos);
+}
+
+TEST_CASE("HttpChannel: a serving build admits more callers than workers",
+          "[http_channel]") {
+    // max_connections bounds concurrent *connections*; workers bound concurrent *turns*.
+    // Past the connection limit the acceptor stops accepting and the backlog queues, so a
+    // limit at or below the worker count turns waiting callers into stalled ones.
+    HttpChannelConfig cfg;
+#ifdef PTRCLAW_HAS_SERVING
+    REQUIRE(cfg.max_connections > Config{}.workers);
+#else
+    REQUIRE(cfg.max_connections == 8);
+#endif
 }

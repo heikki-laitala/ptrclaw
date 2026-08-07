@@ -21,7 +21,7 @@ nlohmann::json Config::defaults_json() {
         {"dev", false},
         {"allow_channel_commands", false},
         {"base_url", ""},
-        {"workers", 1},
+        {"workers", Config{}.workers},
         {"providers", {
             {"anthropic", {{"api_key", ""}, {"prompt_caching", true}}},
             {"openai", {
@@ -48,7 +48,12 @@ nlohmann::json Config::defaults_json() {
             {"token_limit", 128000},
             {"disable_streaming", false},
             {"tee_mode", "off"},
-            {"tool_timeout", 120}
+            {"tool_timeout", 120},
+            // Visible in a generated config because they are the two knobs an operator
+            // tunes against a pod's memory limit, and mirrored from the struct so the
+            // build's defaults are not overwritten on migration.
+            {"max_sessions", Config{}.agent.max_sessions},
+            {"session_max_idle_seconds", Config{}.agent.session_max_idle_seconds}
         }},
         {"channels", {
             {"telegram", {{"bot_token", ""}, {"allow_from", nlohmann::json::array()}, {"reply_in_private", true}, {"proxy", ""}}},

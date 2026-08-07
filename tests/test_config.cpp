@@ -28,9 +28,14 @@ TEST_CASE("AgentConfig: default values", "[config]") {
     REQUIRE(ac.max_tool_iterations == 50);
     REQUIRE(ac.max_history_messages == 50);
     REQUIRE(ac.token_limit == 128000);
-    // The hour that used to be hard-coded at the eviction call site. Pinned so making it
-    // configurable cannot quietly change what an unconfigured deployment does.
+    // The hour that used to be hard-coded at the eviction call site. Still pinned for the
+    // personal agent, so making it configurable cannot quietly change what an unconfigured
+    // deployment does — a serving build deliberately lets go sooner, asserted separately.
+#ifdef PTRCLAW_HAS_SERVING
+    REQUIRE(ac.session_max_idle_seconds == 900);
+#else
     REQUIRE(ac.session_max_idle_seconds == 3600);
+#endif
 }
 
 // ── api_key_for ──────────────────────────────────────────────────
@@ -432,7 +437,10 @@ TEST_CASE("AgentConfig: a non-numeric session_max_idle_seconds keeps the default
     ConfigTestGuard g;
     REQUIRE_FALSE(g.dir.empty());
     g.write_config(R"({"agent": {"session_max_idle_seconds": "not-a-number"}})");
-    REQUIRE(Config::load().agent.session_max_idle_seconds == 3600);
+    // Against the build's default rather than a literal: what this asserts is that a bad
+    // value is ignored, whichever default it falls back to.
+    REQUIRE(Config::load().agent.session_max_idle_seconds ==
+            AgentConfig{}.session_max_idle_seconds);
 }
 
 TEST_CASE("Config::load: env vars override config file", "[config]") {
@@ -707,4 +715,71 @@ TEST_CASE("Config: defaults_json carries the build's provider", "[config]") {
 #else
     REQUIRE(defaults["provider"] != "anthropic");
 #endif
+}
+
+// ── Capacity defaults for a pod ──────────────────────────────────
+//
+// The personal agent talks to one person: one worker, no session cap, and an hour of idle
+// grace are right for it. A pod serves many conversations at once, and each of those
+// defaults is wrong there in a way that is invisible until load arrives — workers=1
+// serialises every turn, and an unbounded session count is caller-driven memory growth.
+
+TEST_CASE("Config: a serving build runs turns in parallel by default", "[config][serving]") {
+    Config cfg;
+#ifdef PTRCLAW_HAS_SERVING
+    REQUIRE(cfg.workers > 1);
+#else
+    REQUIRE(cfg.workers == 1);
+#endif
+}
+
+TEST_CASE("Config: a serving build bounds how many sessions it holds",
+          "[config][serving]") {
+    Config cfg;
+#ifdef PTRCLAW_HAS_SERVING
+    // Zero means unlimited, and with generated session ids the count is chosen by whoever
+    // is calling — so a pod that never refuses grows until the kernel refuses for it.
+    REQUIRE(cfg.agent.max_sessions > 0);
+    // And it lets go sooner: the caller can push history back, so a session freed early
+    // costs a reconstruction rather than a conversation.
+    REQUIRE(cfg.agent.session_max_idle_seconds < 3600);
+#else
+    REQUIRE(cfg.agent.max_sessions == 0);
+    REQUIRE(cfg.agent.session_max_idle_seconds == 3600);
+#endif
+}
+
+// Through load(), for the reason the memory-backend tests give: defaults_json() is merged
+// into the config file and parsed back, so a hardcoded worker count there would overwrite
+// the build's default and serialise a pod's turns.
+TEST_CASE("Config: the capacity defaults survive Config::load", "[config][serving]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config("{}");
+
+    Config cfg = Config::load();
+    Config defaults;
+    REQUIRE(cfg.workers == defaults.workers);
+    REQUIRE(cfg.agent.max_sessions == defaults.agent.max_sessions);
+    REQUIRE(cfg.agent.session_max_idle_seconds == defaults.agent.session_max_idle_seconds);
+}
+
+TEST_CASE("Config: defaults_json carries the build's worker count", "[config][serving]") {
+    auto defaults = Config::defaults_json();
+    REQUIRE(defaults.contains("workers"));
+    REQUIRE(defaults["workers"] == Config{}.workers);
+}
+
+// An explicit value always wins — these are starting points, not policy.
+TEST_CASE("Config: explicit capacity settings beat the build defaults",
+          "[config][serving]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({"workers": 3, "agent": {"max_sessions": 7,
+                       "session_max_idle_seconds": 42}})");
+
+    Config cfg = Config::load();
+    REQUIRE(cfg.workers == 3);
+    REQUIRE(cfg.agent.max_sessions == 7);
+    REQUIRE(cfg.agent.session_max_idle_seconds == 42);
 }
