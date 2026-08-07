@@ -43,7 +43,8 @@ struct ScopeFixture {
     ScopeFixture& operator=(const ScopeFixture&) = delete;
 
     SessionWorkspace scope() const {
-        return SessionWorkspace{workspace.string(), context.string()};
+        return SessionWorkspace{workspace.string(), context.string(),
+                                (root / "sessions").string()};
     }
 
     static int counter() {

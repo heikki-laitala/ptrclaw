@@ -46,7 +46,10 @@ struct WorkspaceFixture {
     WorkspaceFixture& operator=(const WorkspaceFixture&) = delete;
 
     SessionWorkspace scope() const {
-        return SessionWorkspace{workspace.string(), context.string()};
+        // All three roots named: the fixture's workspaces live under root/sessions, which
+        // is what lets a test tell "shared" from "another session's directory".
+        return SessionWorkspace{workspace.string(), context.string(),
+                                (root / "sessions").string()};
     }
 
     static int counter() {
@@ -104,7 +107,7 @@ TEST_CASE("resolve_in_workspace: the shared context is not writable", "[workspac
 TEST_CASE("resolve_in_workspace: no context configured means only the workspace",
           "[workspace]") {
     WorkspaceFixture fx;
-    SessionWorkspace ws{fx.workspace.string(), ""};
+    SessionWorkspace ws{fx.workspace.string(), "", (fx.root / "sessions").string()};
 
     REQUIRE_FALSE(resolve_in_workspace(ws, (fx.context / "shared.txt").string(),
                                        WorkspaceAccess::Read).has_value());
@@ -299,7 +302,7 @@ TEST_CASE("session_workspace: reports the root it derived the workspace under",
 
 TEST_CASE("resolve_in_workspace: no workspace means nothing is writable", "[workspace]") {
     WorkspaceFixture fx;
-    SessionWorkspace ws{"", fx.context.string()};
+    SessionWorkspace ws{"", fx.context.string(), ""};
 
     REQUIRE_FALSE(resolve_in_workspace(ws, "notes.md", WorkspaceAccess::Write).has_value());
     // Reads still work for the shared context, which is the read-only-pod case.
@@ -311,7 +314,7 @@ TEST_CASE("resolve_in_workspace: an unscoped session resolves nothing", "[worksp
     // Both roots empty is the personal-agent shape: the scoped tools are not compiled in,
     // and if they somehow were they would refuse everything rather than fall back to the
     // process cwd.
-    SessionWorkspace ws{"", ""};
+    SessionWorkspace ws{"", "", ""};
     REQUIRE_FALSE(resolve_in_workspace(ws, "notes.md", WorkspaceAccess::Read).has_value());
     REQUIRE_FALSE(resolve_in_workspace(ws, "/tmp/x", WorkspaceAccess::Write).has_value());
 }
