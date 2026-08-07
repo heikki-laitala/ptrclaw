@@ -221,25 +221,42 @@ They are routinely confused, and only one of them is about sessions.
 | Turns **running** | `workers` | how many turns execute in parallel |
 | Callers **connected** | `channels.http.max_connections` | open connections; past it the acceptor stops accepting and the kernel backlog queues |
 
-**Effective parallelism is about half the worker count.** `TurnPool` routes an event to
-`fnv1a(session_id) % workers`, so a session always lands on the same thread — that is the
-whole safety argument for `Agent` and its `ToolManager` having no locks. It also means
-random session ids collide while other workers sit idle. Measured, with each provider call
-held open 2 s:
+**Sustained throughput is `workers / turn_latency`.** Measured at the defaults against a
+provider held open 1.5 s per call, clients looping on their own session:
 
-| Config | 16 requests | Effective |
-| --- | --- | --- |
-| `workers: 1` | 32.2 s | 1 |
-| `workers: 4`, `max_connections: 8` | 10.1 s | ~3 |
-| `workers: 8`, `max_connections: 16` | 6.1 s | ~5 |
-| `workers: 16`, `max_connections: 32` (32 requests) | 8.1 s | ~8 |
+| Clients | Throughput | p50 | p95 |
+| --- | --- | --- | --- |
+| 1 | 0.66 turns/s | 1.51 s | 1.51 s |
+| 4 | 2.66 turns/s | 1.51 s | 1.51 s |
+| 8 | **5.30 turns/s** | 1.51 s | 1.51 s |
+| 16 | 4.98 turns/s | 3.01 s | 4.52 s |
+| 32 | 4.75 turns/s | 4.52 s | 9.04 s |
+| 64 | 5.06 turns/s | 7.53 s | 12.05 s |
 
-So size `workers` at roughly **2x the concurrent turns you want**, and `max_connections`
-above `workers` again — a connection limit at or below the worker count turns callers who
-could be served into callers waiting for a socket.
+Service capacity flattens at ~5 turns/s — `8 workers / 1.5 s` — and past 8 clients the extra
+load turns into latency, not throughput: p50 doubles at 16 and quintuples at 64 while the
+completion rate holds. That is the queue being honest, and it is the shape to watch for in
+production: rising p95 at a flat request rate means `workers` is the binding constraint.
 
-There is no work stealing, and adding it would cost the lock-free invariant, so uneven
-session load leaving workers idle is the design rather than a regression.
+So the throughput a pod can serve is roughly:
+
+```
+turns/s ≈ workers / seconds_per_turn
+```
+
+At the default 8 workers: ~5/s for a 1.5 s turn, ~2.7/s at 3 s, ~0.8/s at 10 s. Raise
+`workers` for more — it costs almost nothing in memory — and keep `max_connections` above
+it, since a connection limit at or below the worker count turns callers who could be served
+into callers waiting for a socket.
+
+**The one caveat is bursts.** `TurnPool` routes an event to `fnv1a(session_id) % workers`,
+so a session always lands on the same thread — the whole safety argument for `Agent` and its
+`ToolManager` having no locks. Under sustained load the queues even out and all workers stay
+busy, which is why the table above reaches a full 8. A *burst* of arbitrary ids does not: 16
+simultaneous requests across 8 workers finished in 6.1 s rather than 3, because some shards
+took three turns while others took none. There is no work stealing, and adding it would cost
+the lock-free invariant. Size for the sustained rate, and expect burst latency to be uneven
+rather than the throughput to drop.
 
 ### Sizing against a memory limit
 

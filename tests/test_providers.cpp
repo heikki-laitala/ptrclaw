@@ -1353,3 +1353,74 @@ TEST_CASE("setup_oauth_refresh: a refresh is written back to config and file", "
     REQUIRE(j["providers"]["openai"]["oauth_access_token"] == "new-at");
     REQUIRE(j["providers"]["openai"]["oauth_refresh_token"] == "new-rt");
 }
+
+// ── The `user` field reaches every OpenAI-dialect provider ──────
+//
+// providers.openai.user identifies the caller to the endpoint, and a gateway can require
+// it — hirebell-llm answers 400 missing_user without one. Only the openai factory forwarded
+// it, so pointing the compatible or openrouter provider at such a gateway failed every call
+// while the config plainly set the field.
+
+TEST_CASE("create_provider: compatible forwards the configured user", "[providers]") {
+    REQUIRE_TEST_PROVIDER("compatible");
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gw-model",
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+    })"};
+
+    ProviderEntry entry;
+    entry.api_key = "test-key";
+    entry.user = "pub_demo123";
+    auto p = create_provider("compatible", entry.api_key, mock, "http://gw.local/v1",
+                             false, &entry);
+    REQUIRE(p != nullptr);
+    p->chat({{Role::User, "hi", std::nullopt, std::nullopt}}, {}, "gw-model", 0.7);
+
+    auto body = json::parse(mock.last_body);
+    REQUIRE(body.contains("user"));
+    REQUIRE(body["user"] == "pub_demo123");
+}
+
+TEST_CASE("create_provider: openrouter forwards the configured user", "[providers]") {
+    REQUIRE_TEST_PROVIDER("openrouter");
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "openai/gpt-4o",
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+    })"};
+
+    ProviderEntry entry;
+    entry.api_key = "or-key";
+    entry.user = "pub_demo123";
+    auto p = create_provider("openrouter", entry.api_key, mock, "", false, &entry);
+    REQUIRE(p != nullptr);
+    p->chat({{Role::User, "hi", std::nullopt, std::nullopt}}, {}, "openai/gpt-4o", 0.7);
+
+    auto body = json::parse(mock.last_body);
+    REQUIRE(body.contains("user"));
+    REQUIRE(body["user"] == "pub_demo123");
+}
+
+TEST_CASE("create_provider: no configured user sends no user field", "[providers]") {
+    // The field is omitted rather than sent empty: an endpoint that validates it should see
+    // a missing key, which is what its own error message is about.
+    REQUIRE_TEST_PROVIDER("compatible");
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gw-model",
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+    })"};
+
+    ProviderEntry entry;
+    entry.api_key = "test-key";
+    auto p = create_provider("compatible", entry.api_key, mock, "http://gw.local/v1",
+                             false, &entry);
+    REQUIRE(p != nullptr);
+    p->chat({{Role::User, "hi", std::nullopt, std::nullopt}}, {}, "gw-model", 0.7);
+
+    REQUIRE_FALSE(json::parse(mock.last_body).contains("user"));
+}
