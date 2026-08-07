@@ -958,3 +958,48 @@ TEST_CASE("HttpChannel: a tool entry without an id is refused", "[http_channel]"
     REQUIRE(resp.status == 400);
     REQUIRE(resp.body.find("tool_call_id") != std::string::npos);
 }
+
+TEST_CASE("HttpChannel: a tool result separated from its call is refused",
+          "[http_channel]") {
+    // Pairing is not enough — position matters. OpenAI requires the results to follow the
+    // assistant message that made the calls; anything between them is rejected upstream.
+    // A window trimmer that drops turns oldest-first can produce exactly this, so it is
+    // caught here where the error can say which call is stranded.
+    HttpChannel ch(test_config());
+
+    auto req = chat_request({
+        {"session", "s1"},
+        {"message", "hi"},
+        {"history", {
+            {{"role", "assistant"}, {"content", ""}, {"tool_calls", {
+                {{"id", "call_1"}, {"name", "file_read"}, {"arguments", "{}"}}}}},
+            {{"role", "user"}, {"content", "are you there?"}},
+            {{"role", "tool"}, {"content", "the file body"},
+             {"tool_call_id", "call_1"}, {"name", "file_read"}},
+        }},
+    });
+    auto resp = ch.handle_request(req);
+    REQUIRE(resp.status == 400);
+    REQUIRE(resp.body.find("call_1") != std::string::npos);
+}
+
+TEST_CASE("HttpChannel: several calls in one turn are answered together", "[http_channel]") {
+    // Multi-tool rounds are the normal case, and all the results belong to the same
+    // assistant message rather than being spread across the window.
+    HttpChannel ch(test_config());
+
+    auto req = chat_request({
+        {"session", "s1"},
+        {"message", "hi"},
+        {"history", {
+            {{"role", "user"}, {"content", "read both files"}},
+            {{"role", "assistant"}, {"content", ""}, {"tool_calls", {
+                {{"id", "call_1"}, {"name", "file_read"}, {"arguments", "{}"}},
+                {{"id", "call_2"}, {"name", "file_read"}, {"arguments", "{}"}}}}},
+            {{"role", "tool"}, {"content", "first"},  {"tool_call_id", "call_1"}},
+            {{"role", "tool"}, {"content", "second"}, {"tool_call_id", "call_2"}},
+            {{"role", "assistant"}, {"content", "Both read."}},
+        }},
+    });
+    REQUIRE(ch.handle_request(req).status == 200);
+}

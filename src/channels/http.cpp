@@ -103,12 +103,16 @@ bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& 
         error = "history must be an array";
         return false;
     }
-    // Every tool_call_id offered by an assistant entry, and every one answered by a tool
-    // entry. They have to match: a result answering nothing, or a call left unanswered, is
-    // rejected by the provider rather than tolerated — so it is caught here, where the
-    // error can name the id.
-    std::vector<std::string> offered;
-    std::vector<std::string> answered;
+    // Calls made by the assistant entry immediately preceding the current position, still
+    // waiting for their results.
+    //
+    // Position matters, not just pairing. A provider requires the results to follow the
+    // assistant message that made the calls: anything in between, or a call left
+    // unanswered, is a 400 upstream. A caller trimming a window to fit a size limit can
+    // produce exactly that by dropping whole turns oldest-first, splitting a call from its
+    // result — so it is caught here, where the error can name the call that is stranded
+    // rather than surfacing as a provider error nobody can act on.
+    std::vector<std::string> outstanding;
 
     for (const auto& entry : raw) {
         if (!entry.is_object() || !entry.contains("role") || !entry.contains("content") ||
@@ -119,6 +123,15 @@ bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& 
         const std::string role = entry["role"].get<std::string>();
         const std::string content = entry["content"].get<std::string>();
 
+        // Anything that is not a tool result ends the answering window, so a call still
+        // outstanding at that point was never answered where the provider expects it.
+        if (role != "tool" && !outstanding.empty()) {
+            error = "tool call '" + outstanding.front() +
+                    "' must be answered by a tool result immediately after the assistant "
+                    "message that made it";
+            return false;
+        }
+
         if (role == "system") {
             out.push_back(ChatMessage{Role::System, content, {}, {}});
         } else if (role == "user") {
@@ -127,7 +140,7 @@ bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& 
             std::optional<std::string> encoded;
             if (entry.contains("tool_calls")) {
                 std::string calls;
-                if (!parse_tool_calls(entry["tool_calls"], calls, offered, error)) {
+                if (!parse_tool_calls(entry["tool_calls"], calls, outstanding, error)) {
                     return false;
                 }
                 encoded = calls;
@@ -141,11 +154,12 @@ bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& 
                 return false;
             }
             const std::string id = entry["tool_call_id"].get<std::string>();
-            if (std::find(offered.begin(), offered.end(), id) == offered.end()) {
+            auto waiting = std::find(outstanding.begin(), outstanding.end(), id);
+            if (waiting == outstanding.end()) {
                 error = "tool result '" + id + "' answers no preceding tool call";
                 return false;
             }
-            answered.push_back(id);
+            outstanding.erase(waiting);
             // `name` carries the tool name, matching format_tool_result_message().
             std::optional<std::string> name;
             if (entry.contains("name") && entry["name"].is_string()) {
@@ -158,11 +172,9 @@ bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& 
         }
     }
 
-    for (const auto& id : offered) {
-        if (std::find(answered.begin(), answered.end(), id) == answered.end()) {
-            error = "tool call '" + id + "' has no result in this window";
-            return false;
-        }
+    if (!outstanding.empty()) {
+        error = "tool call '" + outstanding.front() + "' has no result in this window";
+        return false;
     }
     return true;
 }

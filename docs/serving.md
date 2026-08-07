@@ -528,14 +528,23 @@ They map onto the representation the agent builds for its own history, so the pr
 replay them the way they replay a turn they ran themselves — Anthropic as `tool_use` and
 `tool_result` blocks, OpenAI as a `tool_calls` array with `role: "tool"` answers.
 
-**The pairing is checked, and an unbalanced window is a 400 naming the id.** A result whose
-call is absent, or a call with no result, is rejected by the provider outright, so it is
-caught here where the error can say which id is at fault:
+**Pairing and position are both checked, and a broken window is a 400 naming the call.** A
+provider requires the results to follow the assistant message that made them: a result whose
+call is absent, a call left unanswered, or anything wedged between the two is a 400 upstream.
+It is caught at the boundary instead, where the error can say which call is at fault:
 
 ```
 {"error":"tool result 'call_1' answers no preceding tool call"}
 {"error":"tool call 'call_1' has no result in this window"}
+{"error":"tool call 'call_1' must be answered by a tool result immediately after the
+          assistant message that made it"}
 ```
+
+**This constrains anything that trims a window to fit a size limit.** Dropping whole turns
+oldest-first will eventually split a call from its result, and tool results are usually the
+largest entries in a transcript — so it is the common path, not an edge case. A trimmer has
+to treat an assistant message and the tool results answering it as one indivisible unit, and
+must not leave a lone tool result as the only surviving turn.
 
 Two things worth deciding deliberately:
 
