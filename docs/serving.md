@@ -30,9 +30,20 @@ make build-serving SERVING_PROVIDERS="-Dwith_anthropic=true"
 An OpenAI-compatible *gateway* needs no extra provider: point `providers.openai.base_url`
 at it and the `openai` provider posts to `<base_url>/chat/completions`. A custom base URL
 also wins over the Responses API, so a gateway keeps receiving chat completions even with
-`use_oauth` on. Note that the `compatible` and `openrouter` providers do **not** forward
-`providers.openai.user` — only the `openai` factory calls `set_user()` — so a gateway that
-requires a `user` field must be reached through the `openai` provider.
+`use_oauth` on.
+
+A gateway that meters per caller usually requires a `user` field — hirebell-llm answers
+`400 missing_user` without one. Every OpenAI-dialect provider forwards it, and each reads
+**its own** config entry, so put the identifier under the provider you actually use:
+
+| Provider in use | Field |
+| --- | --- |
+| `openai` | `providers.openai.user`, or the `OPENAI_USER` environment variable |
+| `compatible` | `providers.compatible.user` |
+| `openrouter` | `providers.openrouter.user` |
+
+Unset, the key is omitted from the request rather than sent empty, so an endpoint that
+validates it sees a missing field.
 
 `Config`'s default provider follows the build (`src/config.hpp`), so a pod config that omits
 `"provider"` still starts on OpenAI rather than failing with `Unknown provider: anthropic`.
