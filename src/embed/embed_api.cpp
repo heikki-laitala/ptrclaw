@@ -191,6 +191,21 @@ extern "C" PtrClawHandle ptrclaw_create(const char* config_json) {
                     h->config.model = j["model"].get<std::string>();
                 if (j.contains("temperature") && j["temperature"].is_number())
                     h->config.temperature = j["temperature"].get<double>();
+                if (j.contains("api_key") && j["api_key"].is_string())
+                    h->config.providers[h->config.provider].api_key =
+                        j["api_key"].get<std::string>();
+                if (j.contains("max_history_messages") &&
+                        j["max_history_messages"].is_number_integer())
+                    h->config.agent.max_history_messages =
+                        j["max_history_messages"].get<uint32_t>();
+                if (j.contains("disable_streaming") &&
+                        j["disable_streaming"].is_boolean())
+                    h->config.agent.disable_streaming =
+                        j["disable_streaming"].get<bool>();
+                if (j.contains("tool_timeout") &&
+                        j["tool_timeout"].is_number_integer())
+                    h->config.agent.tool_timeout =
+                        j["tool_timeout"].get<uint32_t>();
             } catch (const std::exception& e) {
                 h->last_error = std::string("config parse error: ") + e.what();
                 // Continue with base config
@@ -258,6 +273,18 @@ extern "C" void ptrclaw_destroy(PtrClawHandle handle) {
 extern "C" const char* ptrclaw_last_error(PtrClawHandle handle) {
     if (!handle) return "null handle";
     return handle->last_error.c_str();
+}
+
+extern "C" int ptrclaw_reset_session(PtrClawHandle handle,
+                                      const char* session_id) {
+    if (!handle || !session_id) return PTRCLAW_ERR_INVALID;
+
+    handle->sessions->remove_session(session_id);
+
+    std::lock_guard<std::mutex> lock(handle->session_mutex);
+    handle->session_state.erase(session_id);
+
+    return PTRCLAW_OK;
 }
 
 // ── Messaging ────────────────────────────────────────────────────
