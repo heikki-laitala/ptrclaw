@@ -127,18 +127,46 @@ TEST_CASE("SessionManager: a shared memory store still hatches", "[session][hatc
     });
 }
 
-// With a store per session it is a per-session question, and nobody at the far end of an
-// HTTP request is going to answer an interview about what to call the assistant — they
-// asked for work. Every session would otherwise open with the ceremony, and the hatch
-// prompt replaces the whole system prompt, so the agent has no tools while it runs.
-TEST_CASE("SessionManager: per-session memory does not hatch", "[session][hatch]") {
+// Per-session memory on its own is not the signal. docs/memory.md:161 documents one
+// interview per chat under session isolation, and a Telegram user is a person who can answer
+// it — while /hatch lives behind allow_channel_commands, so suppressing it here would leave
+// them no way to create an identity at all.
+TEST_CASE("SessionManager: per-session memory alone still hatches", "[session][hatch]") {
     HomeGuard home;
     home.write_default_config();
 
     auto cfg = make_test_config();
     cfg.memory.isolation = "session";
+    send_channel_message(cfg, test_http, "chat-42", [](SessionManager& mgr) {
+        REQUIRE(mgr.get_session("chat-42").hatching());
+    });
+}
+
+// A configured workspace is the signal, because that is a deployment stating it serves
+// callers rather than a person: nobody at the far end of such a request is going to answer
+// questions about what to call the assistant, and the hatch prompt replaces the whole system
+// prompt — tools included — so the session cannot do the work it was asked for.
+TEST_CASE("SessionManager: a serving pod does not hatch", "[session][hatch]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    cfg.memory.isolation = "session";
+    cfg.serving.workspace_root = "/work/sessions";
     send_channel_message(cfg, test_http, "task-42", [](SessionManager& mgr) {
         REQUIRE_FALSE(mgr.get_session("task-42").hatching());
+    });
+}
+
+// A shared context alone means the same thing: files staged for many sessions.
+TEST_CASE("SessionManager: a shared context also marks a pod", "[session][hatch]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    cfg.serving.context_dir = "/work/context";
+    send_channel_message(cfg, test_http, "task-43", [](SessionManager& mgr) {
+        REQUIRE_FALSE(mgr.get_session("task-43").hatching());
     });
 }
 

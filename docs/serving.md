@@ -153,8 +153,14 @@ pod would open each one with the ceremony instead of the work, and the interview
 entire system prompt, tools included — the session cannot do anything until somebody answers.
 Nobody at the far end of an HTTP request will.
 
-So auto-hatching is skipped whenever memory is per-session. `/hatch` still works on the CLI,
+So auto-hatching is skipped whenever a workspace or shared context is configured — a
+deployment stating it serves callers rather than a person. `/hatch` still works on the CLI,
 where an operator is present to answer.
+
+Per-session memory is deliberately *not* the signal: session isolation is a storage layout,
+and `docs/memory.md` documents one interview per chat under it. A Telegram user is a person
+who can answer one, and `/hatch` sits behind `allow_channel_commands`, so keying on isolation
+would leave those chats no way to create an identity at all.
 
 ## Session ids
 
