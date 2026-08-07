@@ -63,6 +63,19 @@ struct WebhookResponse {
 //
 // The distinction matters most for WebhookResponse::stream, because a streamed response
 // occupies its handler for the whole reply rather than for a few milliseconds.
+// Depth of the kernel's accept queue: connections that have completed the handshake and are
+// waiting for the acceptor to take them.
+//
+// It has to track max_connections rather than sit at a constant. The acceptor deliberately
+// leaves a connection over capacity in this queue instead of accepting it to answer 503 —
+// so the queue *is* the waiting room, and a fixed 16 capped a pod at 16 waiters however
+// high max_connections was set. Past the queue the kernel drops the handshake and the
+// client sees a reset rather than an answer.
+//
+// The kernel caps this itself (SOMAXCONN, net.core.somaxconn), so a large value asks for
+// what the system allows rather than promising it.
+int listen_backlog(uint32_t max_connections);
+
 class WebhookServer {
 public:
     using Handler = std::function<WebhookResponse(const WebhookRequest&)>;

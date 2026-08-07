@@ -249,7 +249,37 @@ At the default 8 workers: ~5/s for a 1.5 s turn, ~2.7/s at 3 s, ~0.8/s at 10 s. 
 it, since a connection limit at or below the worker count turns callers who could be served
 into callers waiting for a socket.
 
-**The one caveat is bursts.** `TurnPool` routes an event to `fnv1a(session_id) % workers`,
+### How many requests can be in flight
+
+Three limits stack, and only the first is about throughput. Measured at the defaults with a
+provider held open 8 s:
+
+| Fired at once | Served | Failed |
+| --- | --- | --- |
+| 32 | 32 | 0 |
+| 48 | 48 | 0 |
+| 64 | 48 | **16** |
+
+- **8 execute** — `workers`.
+- **32 are connected** — `max_connections`. The rest hold an open connection and wait.
+- **+`max_connections` more wait in the kernel accept queue**, so 48 are in the system at
+  the defaults. Past that the handshake is dropped and the caller sees a reset rather than a
+  status code — the acceptor deliberately does not answer 503, because that would turn a
+  wait into an error for everyone over the line.
+
+Raising `max_connections` raises both halves; the accept queue tracks it (`listen_backlog`).
+
+A pod configured wide — `workers: 512`, `max_connections: 2000`, `max_sessions: 5000` —
+accepted **1000 concurrent requests with zero failures at ~43 MB**. It did not serve them
+1000-at-a-time: effective parallelism plateaus around **40 turns in flight**, so the last
+caller waited ~57 s. That plateau is not the worker count (512 and 1000 behave identically),
+not CPU (0.2 % during the burst), not session creation (a warm burst on existing sessions
+matches a cold one to a tenth of a second), and not the test harness (the mock provider
+alone serves 1000 concurrent in 3.1 s). Something in the turn path serialises at roughly
+70-120 ms per turn and has not been isolated yet — treat ~40 concurrent turns per pod as the
+working figure until it has.
+
+**The other caveat is bursts.** `TurnPool` routes an event to `fnv1a(session_id) % workers`,
 so a session always lands on the same thread — the whole safety argument for `Agent` and its
 `ToolManager` having no locks. Under sustained load the queues even out and all workers stay
 busy, which is why the table above reaches a full 8. A *burst* of arbitrary ids does not: 16

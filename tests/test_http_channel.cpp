@@ -815,3 +815,22 @@ TEST_CASE("HttpChannel: a serving build admits more callers than workers",
     REQUIRE(cfg.max_connections == 8);
 #endif
 }
+
+// ── Accept queue depth ──────────────────────────────────────────
+
+TEST_CASE("listen_backlog: tracks max_connections", "[http_channel]") {
+    // The acceptor leaves an over-capacity connection in the kernel queue rather than
+    // accepting it to answer 503, so that queue is the waiting room. A constant 16 capped a
+    // pod at 16 waiters no matter how high max_connections went — measured as exactly 48
+    // requests served out of 64 fired at max_connections=32.
+    REQUIRE(listen_backlog(32) == 32);
+    REQUIRE(listen_backlog(256) == 256);
+}
+
+TEST_CASE("listen_backlog: keeps a floor for small servers", "[http_channel]") {
+    // A single-connection server still wants somewhere for the next caller to wait instead
+    // of being reset while the current one is served.
+    REQUIRE(listen_backlog(1) == 16);
+    REQUIRE(listen_backlog(0) == 16);
+    REQUIRE(listen_backlog(16) == 16);
+}
