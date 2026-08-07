@@ -7,6 +7,7 @@
 #include "tool_manager.hpp"
 #include "plugin.hpp"
 #include "util.hpp"
+#include "workspace.hpp"
 #include <iostream>
 #ifdef PTRCLAW_HAS_OPENAI_OAUTH
 #include "providers/oauth_openai.hpp"
@@ -130,6 +131,17 @@ Agent& SessionManager::get_session(const std::string& session_id) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
+        // Ended, and not yet reaped. Neither answer available here is right: handing back
+        // the old Agent continues a conversation the caller declared over, and creating a
+        // second one under the same id would leave two ToolManagers subscribed to that
+        // session's tool requests until the reap ran. Refusing says so, and the window is
+        // one poll iteration — the loop reaps as soon as the pool is idle.
+        if (ending_.count(session_id) > 0) {
+            throw std::runtime_error(
+                "session '" + session_id +
+                "' has ended and is being cleaned up: retry shortly, or start a new one");
+        }
+
         auto it = sessions_.find(session_id);
         if (it != sessions_.end()) {
             it->second.last_active = epoch_seconds();
@@ -171,6 +183,52 @@ Agent& SessionManager::get_session(const std::string& session_id) {
     }
 
     return *agent;
+}
+
+void SessionManager::end_session(const std::string& session_id) {
+    if (session_id.empty()) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Recorded even with no live session: the id may have been evicted for idleness while
+    // its workspace stayed on disk, and the reap is what removes that.
+    ending_.insert(session_id);
+}
+
+bool SessionManager::has_pending_end() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return !ending_.empty();
+}
+
+size_t SessionManager::reap_ended() {
+    std::vector<std::string> reaped;
+    size_t freed = 0;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        reaped.assign(ending_.begin(), ending_.end());
+        for (const auto& id : reaped) {
+            // erase() reports whether a session was actually freed; the workspace goes
+            // either way, since an id may be ended after its session was already evicted.
+            if (sessions_.erase(id) > 0) ++freed;
+            session_memory_.erase(id);
+            session_cache_.erase(id);
+        }
+        ending_.clear();
+    }
+
+    // Both outside the lock: the deletion touches the filesystem, and publishing runs
+    // handlers that call back into this manager — the reason given in get_session().
+    for (const auto& id : reaped) {
+        remove_session_workspace(config_.serving.workspace_root, id);
+    }
+    if (event_bus_) {
+        for (const auto& id : reaped) {
+            SessionEvictedEvent ev;
+            ev.session_id = id;
+            event_bus_->publish(ev);
+        }
+    }
+
+    return freed;
 }
 
 void SessionManager::remove_session(const std::string& session_id) {
@@ -498,6 +556,14 @@ void SessionManager::subscribe_events() {
     ptrclaw::subscribe<MessageReceivedEvent>(*event_bus_,
         [this](const MessageReceivedEvent& ev) {
             handle_message(ev);
+        });
+
+    // Only marks the session. The channel publishes this from its own thread, where
+    // another session's turn may be running, so the freeing itself waits for the poll
+    // loop's quiescent window — see reap_ended().
+    ptrclaw::subscribe<SessionEndRequestedEvent>(*event_bus_,
+        [this](const SessionEndRequestedEvent& ev) {
+            end_session(ev.session_id);
         });
 }
 

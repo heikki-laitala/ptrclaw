@@ -621,3 +621,102 @@ TEST_CASE("HttpChannel: shutdown does not wait for the turn timeout", "[http_cha
     REQUIRE(elapsed < std::chrono::seconds(5));
     ::close(fd);
 }
+
+// ── Ending a session ────────────────────────────────────────────────
+//
+// A context manager knows when a task is over; the pod cannot infer it. Without this the
+// only exit was the idle timer, which keeps the session's files for as long as it keeps the
+// session — and then keeps the files forever.
+
+namespace {
+
+WebhookRequest end_request(const json& body) {
+    WebhookRequest req;
+    req.method = "POST";
+    req.path = "/session/end";
+    req.body = body.dump();
+    return req;
+}
+
+} // namespace
+
+TEST_CASE("HttpChannel: ending a session asks for cleanup", "[http_channel]") {
+    EventBus bus;
+    HttpChannel ch(test_config());
+    ch.set_event_bus(&bus);
+
+    std::vector<std::string> ended;
+    subscribe<SessionEndRequestedEvent>(bus, [&ended](const SessionEndRequestedEvent& ev) {
+        ended.push_back(ev.session_id);
+    });
+
+    auto resp = ch.handle_request(end_request({{"session", "s1"}}));
+    // 202, not 200: the session is freed once no turn is in flight anywhere in the pod, so
+    // the request is accepted rather than completed.
+    REQUIRE(resp.status == 202);
+    REQUIRE(json::parse(resp.body)["session"] == "s1");
+    REQUIRE(ended == std::vector<std::string>{"s1"});
+    // Not a turn: nothing may reach the agent, and no reply is owed.
+    REQUIRE(ch.poll_updates().empty());
+}
+
+TEST_CASE("HttpChannel: ending validates the session id", "[http_channel]") {
+    HttpChannel ch(test_config());
+
+    REQUIRE(ch.handle_request(end_request(json::object())).status == 400);
+    REQUIRE(ch.handle_request(end_request({{"session", ""}})).status == 400);
+    REQUIRE(ch.handle_request(end_request({{"session", 7}})).status == 400);
+    // generate_session_ids exists so a *new* conversation need not name itself; there is no
+    // such thing as ending a session nobody named.
+    auto cfg = test_config();
+    cfg.generate_session_ids = true;
+    HttpChannel gen(cfg);
+    REQUIRE(gen.handle_request(end_request(json::object())).status == 400);
+}
+
+TEST_CASE("HttpChannel: ending requires the secret and the right method",
+          "[http_channel]") {
+    auto cfg = test_config();
+    cfg.secret = "s3cret";
+    EventBus bus;
+    HttpChannel ch(cfg);
+    ch.set_event_bus(&bus);
+
+    std::vector<std::string> ended;
+    subscribe<SessionEndRequestedEvent>(bus, [&ended](const SessionEndRequestedEvent& ev) {
+        ended.push_back(ev.session_id);
+    });
+
+    // Deleting another tenant's work is exactly what the secret is for.
+    auto req = end_request({{"session", "s1"}});
+    REQUIRE(ch.handle_request(req).status == 403);
+    REQUIRE(ended.empty());
+
+    WebhookRequest wrong_method;
+    wrong_method.method = "GET";
+    wrong_method.path = "/session/end";
+    wrong_method.headers["authorization"] = "Bearer s3cret";
+    REQUIRE(ch.handle_request(wrong_method).status == 405);
+    REQUIRE(ended.empty());
+
+    req.headers["authorization"] = "Bearer s3cret";
+    REQUIRE(ch.handle_request(req).status == 202);
+    REQUIRE(ended == std::vector<std::string>{"s1"});
+}
+
+TEST_CASE("HttpChannel: ending a session clears its in-flight guard", "[http_channel]") {
+    // A caller that ends a session whose turn never completed — the client hung up, or the
+    // turn is being abandoned — must not leave the id wedged behind a 409 for the lifetime
+    // of the process.
+    EventBus bus;
+    HttpChannel ch(test_config());
+    ch.set_event_bus(&bus);
+
+    ch.handle_request(chat_request({{"session", "s1"}, {"message", "hi"}}));
+    REQUIRE(ch.handle_request(chat_request({{"session", "s1"}, {"message", "again"}}))
+                .status == 409);
+
+    ch.handle_request(end_request({{"session", "s1"}}));
+    REQUIRE(ch.handle_request(chat_request({{"session", "s1"}, {"message", "fresh"}}))
+                .status == 200);
+}

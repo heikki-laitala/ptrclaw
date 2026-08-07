@@ -374,3 +374,86 @@ TEST_CASE("session_workspace: no root or no id means no workspace", "[workspace]
     // The shared context survives either way: a read-only pod is a legitimate shape.
     REQUIRE(session_workspace("", "/work/context", "").context_dir == "/work/context");
 }
+
+// ── remove_session_workspace ────────────────────────────────────
+//
+// A session that has ended leaves its files behind, and a pod running ephemeral tasks
+// accumulates them without bound. These cover the deletion itself; the lifecycle that
+// decides *when* to call it is in test_session.cpp.
+
+TEST_CASE("remove_session_workspace: removes the session's directory and contents",
+          "[workspace]") {
+    WorkspaceFixture fx;
+    auto root = fx.root / "sessions";
+    auto scope = session_workspace(root.string(), "", "task-42");
+    std::filesystem::create_directories(std::filesystem::path(scope.workspace) / "nested");
+    std::ofstream(std::filesystem::path(scope.workspace) / "out.txt") << "result\n";
+    std::ofstream(std::filesystem::path(scope.workspace) / "nested" / "deep.txt") << "x\n";
+
+    REQUIRE(remove_session_workspace(root.string(), "task-42"));
+    REQUIRE_FALSE(std::filesystem::exists(scope.workspace));
+    // The root survives: it is shared by every session, and the pod keeps serving.
+    REQUIRE(std::filesystem::exists(root));
+}
+
+TEST_CASE("remove_session_workspace: leaves other sessions untouched", "[workspace]") {
+    WorkspaceFixture fx;
+    auto root = fx.root / "sessions";
+    auto mine = session_workspace(root.string(), "", "task-42");
+    auto theirs = session_workspace(root.string(), "", "task-43");
+    std::filesystem::create_directories(mine.workspace);
+    std::filesystem::create_directories(theirs.workspace);
+    std::ofstream(std::filesystem::path(theirs.workspace) / "keep.txt") << "theirs\n";
+
+    REQUIRE(remove_session_workspace(root.string(), "task-42"));
+    REQUIRE_FALSE(std::filesystem::exists(mine.workspace));
+    REQUIRE(std::filesystem::exists(std::filesystem::path(theirs.workspace) / "keep.txt"));
+}
+
+TEST_CASE("remove_session_workspace: nothing to remove is not a failure", "[workspace]") {
+    WorkspaceFixture fx;
+    auto root = fx.root / "sessions";
+    std::filesystem::create_directories(root);
+    // A session that never touched a file has no directory — session_workspace() does not
+    // create one — and ending it is still an ordinary success.
+    REQUIRE_FALSE(remove_session_workspace(root.string(), "never-wrote"));
+    REQUIRE(std::filesystem::exists(root));
+}
+
+TEST_CASE("remove_session_workspace: refuses without a root or an id", "[workspace]") {
+    WorkspaceFixture fx;
+    // No root configured is the personal-agent shape: there is no per-session directory to
+    // delete, and an empty root must never be read as "delete relative to the cwd".
+    REQUIRE_FALSE(remove_session_workspace("", "task-42"));
+    REQUIRE_FALSE(remove_session_workspace(fx.root.string(), ""));
+    REQUIRE(std::filesystem::exists(fx.root));
+}
+
+TEST_CASE("remove_session_workspace: a symlinked workspace does not delete its target",
+          "[workspace]") {
+    WorkspaceFixture fx;
+    auto root = fx.root / "sessions";
+    std::filesystem::create_directories(root);
+    auto scope = session_workspace(root.string(), "", "task-42");
+    // Whoever planted this cannot choose the name — it is a hash of the id — but if one
+    // exists, following it would delete a tree outside the root. remove_all() on a symlink
+    // removes the link, and that is the behaviour being pinned.
+    std::error_code ec;
+    std::filesystem::create_directory_symlink(fx.outside, scope.workspace, ec);
+    if (ec) return;  // no symlink support: nothing to assert
+
+    remove_session_workspace(root.string(), "task-42");
+    REQUIRE(std::filesystem::exists(fx.outside / "secret.txt"));
+}
+
+TEST_CASE("remove_session_workspace: refuses a path outside the root", "[workspace]") {
+    WorkspaceFixture fx;
+    // The root itself, reached by an id that sanitises to nothing meaningful, must not be
+    // removable — and neither must anything above it. The key derivation already prevents
+    // this, so the check is defence in depth against a future change to it.
+    std::filesystem::create_directories(fx.root / "sessions");
+    REQUIRE_FALSE(remove_session_workspace((fx.root / "sessions").string(), "."));
+    REQUIRE_FALSE(remove_session_workspace((fx.root / "sessions").string(), ".."));
+    REQUIRE(std::filesystem::exists(fx.root / "sessions"));
+    REQUIRE(std::filesystem::exists(fx.root));
+}

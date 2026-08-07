@@ -200,8 +200,9 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
         return r;
     }
 
-    if (req.path != "/chat")   return json_error(404, "not found");
-    if (req.method != "POST")  return json_error(405, "method not allowed");
+    const bool ending = req.path == "/session/end";
+    if (!ending && req.path != "/chat") return json_error(404, "not found");
+    if (req.method != "POST")           return json_error(405, "method not allowed");
 
     if (!config_.secret.empty()) {
         auto it = req.headers.find("authorization");
@@ -218,6 +219,40 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
         return json_error(400, "body is not valid JSON");
     }
     if (!body.is_object()) return json_error(400, "body must be a JSON object");
+
+    if (ending) {
+        // The id is always required here. generate_session_ids exists so a new conversation
+        // need not name itself; there is no ending a session nobody named, and inventing an
+        // id to delete would be the one place where guessing costs someone their files.
+        if (!body.contains("session") || !body["session"].is_string())
+            return json_error(400, "'session' is required and must be a string");
+        const std::string session = body["session"].get<std::string>();
+        if (session.empty()) return json_error(400, "'session' must not be empty");
+
+        // Whatever the session was doing, it is over. Clearing the guard here means a
+        // caller whose turn was abandoned — the client hung up, and nothing else would
+        // ever clear the entry — can end the session rather than wait out the timeout.
+        {
+            std::lock_guard<std::mutex> lk(turn_mutex_);
+            turns_.erase(session);
+        }
+
+        if (bus_) {
+            SessionEndRequestedEvent ev;
+            ev.session_id = session;
+            bus_->publish(ev);
+        }
+
+        // 202, not 200: SessionManager frees the session once no turn is in flight anywhere
+        // in the pod, which is a poll iteration away. Accepted is the honest answer, and it
+        // is the same answer for an id the pod has never seen — the caller asked for it to
+        // be gone, and it is.
+        WebhookResponse r;
+        r.status = 202;
+        r.content_type = "application/json";
+        r.body = json{{"session", session}, {"status", "ending"}}.dump();
+        return r;
+    }
 
     // A caller starting a new conversation has nothing to name it yet, so an absent, null
     // or empty session may be filled in — but only where that was asked for. Everywhere

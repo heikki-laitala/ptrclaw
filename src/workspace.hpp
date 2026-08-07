@@ -50,4 +50,16 @@ SessionWorkspace session_workspace(const std::string& workspace_root,
                                    const std::string& context_dir,
                                    const std::string& session_id);
 
+// Deletes one session's workspace and everything in it, returning whether a directory was
+// removed. A session that never wrote a file has none, which is an ordinary false.
+//
+// Only ever the single directory `session_workspace()` would hand that session: the root is
+// shared by every session and survives, and a path that does not sit directly beneath it is
+// refused rather than deleted. A symlink in that position is unlinked, not followed.
+//
+// Nothing is removed without both a root and an id, so the personal agent — which has
+// neither — cannot delete anything through this call.
+bool remove_session_workspace(const std::string& workspace_root,
+                              const std::string& session_id);
+
 } // namespace ptrclaw

@@ -237,11 +237,46 @@ and must not be predictable from other ids the pod has handed out.
 The channel still refuses a second concurrent turn for one session with 409: two turns
 interleaving over one history is not a conversation.
 
+## Ending a session
+
+```
+POST /session/end  {"session": "task-42"}
+→ 202 {"session":"task-42","status":"ending"}
+```
+
+The pod cannot tell a finished task from an idle one; only the caller knows. Without this the
+sole exit was `agent.session_max_idle_seconds`, which drops the conversation and keeps the
+workspace — so a pod running short tasks accumulated a directory per task, permanently.
+
+Ending a session frees its conversation, its memory and cache instances, and **deletes its
+workspace directory and everything in it**. Collect whatever the task produced before calling
+this. The shared context directory is untouched — no session owns it — and so are the other
+sessions' workspaces.
+
+`202`, not `200`: an Agent's event handlers are copied out of the bus before being called, so
+freeing one while a worker is mid-turn is a use-after-free. The request marks the session and
+the poll loop frees it in the same quiescent window eviction uses — the next iteration once
+the pool is idle, or the eviction deadline under sustained load. In between, the id is
+refused with an error naming the reason rather than serving either the old conversation or a
+new one under a live sibling's tool subscriptions.
+
+The same call is the way to clean up after a task whose session has *already* been evicted
+for idleness: the pod has forgotten the conversation but still holds the directory, and an id
+it has never heard of is accepted rather than 404'd. `DELETE`-shaped semantics — asking twice
+is not an error, and the answer is the same either way.
+
+Use the shared secret if the pod is reachable by more than one tenant. Deleting another
+tenant's work product is exactly what it protects.
+
 ## Known limits
 
-- **Workspaces are never deleted.** Eviction drops the session's in-memory state, not its
-  directory — matching the memory stores, which outlive a session on purpose. For ephemeral
-  tasks that is unbounded disk growth in the pod, and there is no retention mechanism yet.
+- **Idle eviction still leaves the workspace behind.** Only `POST /session/end` deletes it,
+  so a caller that never says a task is over — or a pod that is killed before the reap runs —
+  still accumulates directories. There is no age-based sweep and nothing removes orphans at
+  startup; `session_max_idle_seconds` bounds memory, not disk.
+- **Memory stores outlive the session on purpose**, and ending one does not delete its store.
+  That is the documented behaviour for every backend (`docs/memory.md`), and the serving
+  default of `memory.backend: "none"` means there is usually nothing there to remove.
 - **Eviction briefly stops polling.** Sessions are freed only when no worker is mid-dispatch,
   so the poll loop drains the turn pool first. Under steady load it waits for the deadline
   and then blocks until every queue is empty — a periodic latency spike.

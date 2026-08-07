@@ -6,6 +6,10 @@
 #include "plugin.hpp"
 #include "event.hpp"
 #include "event_bus.hpp"
+#include "workspace.hpp"
+#include <filesystem>
+#include <fstream>
+#include <unistd.h>
 #ifdef PTRCLAW_HAS_OPENAI_OAUTH
 #include "providers/oauth_openai.hpp"
 #endif
@@ -952,4 +956,163 @@ TEST_CASE("SessionManager: a blocked command is answered, not rejected", "[sessi
     // ordinary message that happens to start with a slash fail for no visible reason.
     auto cfg = command_test_config(false);
     REQUIRE_FALSE(reply_to(cfg, "visitor", "/status").empty());
+}
+
+// ── Ending a session ────────────────────────────────────────────
+//
+// A pod is told when a task is over. Until then the only way a session left was the idle
+// timer, and its workspace never left at all.
+
+namespace {
+
+// A serving-shaped manager: a workspace root under a temp directory, so ending a session
+// has files to remove.
+struct EndFixture {
+    std::filesystem::path root;
+    Config cfg;
+
+    EndFixture() {
+        root = std::filesystem::temp_directory_path() /
+               ("ptrclaw_end_" + std::to_string(getpid()) + "_" + std::to_string(seq()));
+        std::filesystem::create_directories(root / "sessions");
+        root = std::filesystem::canonical(root);
+        cfg = make_test_config();
+        cfg.serving.workspace_root = (root / "sessions").string();
+    }
+    ~EndFixture() {
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+    }
+    EndFixture(const EndFixture&) = delete;
+    EndFixture& operator=(const EndFixture&) = delete;
+
+    // The directory a session would work in, created as the write tool would create it.
+    std::filesystem::path populate(const std::string& id) const {
+        auto dir = std::filesystem::path(
+            session_workspace(cfg.serving.workspace_root, "", id).workspace);
+        std::filesystem::create_directories(dir);
+        std::ofstream(dir / "out.txt") << "work product\n";
+        return dir;
+    }
+
+    static int seq() { static int n = 0; return ++n; }
+};
+
+} // namespace
+
+TEST_CASE("SessionManager: ending a session removes it and its workspace", "[session]") {
+    EndFixture fx;
+    SessionManager mgr(fx.cfg, test_http);
+    mgr.get_session("task-42");
+    auto dir = fx.populate("task-42");
+
+    mgr.end_session("task-42");
+    // Marked, not yet gone: freeing an Agent while a worker may be mid-dispatch is the
+    // hazard eviction drains the pool for, so the reap is what the poll loop calls.
+    REQUIRE(mgr.has_pending_end());
+
+    REQUIRE(mgr.reap_ended() == 1);
+    REQUIRE(mgr.list_sessions().empty());
+    REQUIRE_FALSE(std::filesystem::exists(dir));
+    REQUIRE_FALSE(mgr.has_pending_end());
+}
+
+TEST_CASE("SessionManager: an ending session refuses further turns", "[session]") {
+    EndFixture fx;
+    SessionManager mgr(fx.cfg, test_http);
+    mgr.get_session("task-42");
+    mgr.end_session("task-42");
+
+    // Between the request and the reap the id must not serve: handing back the old Agent
+    // would continue a conversation the caller has declared over, and creating a second
+    // one under the same id would give two ToolManagers the same session's tool requests.
+    REQUIRE_THROWS_AS(mgr.get_session("task-42"), std::runtime_error);
+}
+
+TEST_CASE("SessionManager: the id is reusable once reaped", "[session]") {
+    EndFixture fx;
+    SessionManager mgr(fx.cfg, test_http);
+    auto& first = mgr.get_session("task-42");
+    first.set_history({ChatMessage{Role::User, "remember this", {}, {}}});
+    REQUIRE_FALSE(first.history().empty());
+
+    mgr.end_session("task-42");
+    mgr.reap_ended();
+
+    // A fresh session, not the old one resurrected: ending is what a caller does to make
+    // the pod forget, and an id it can reuse must not carry the last task's history.
+    auto& second = mgr.get_session("task-42");
+    REQUIRE(second.history().empty());
+}
+
+TEST_CASE("SessionManager: ending an unknown session still clears its files", "[session]") {
+    EndFixture fx;
+    SessionManager mgr(fx.cfg, test_http);
+    // An id whose session has already been evicted for idleness, or that a previous pod
+    // process left behind. The caller knows the task is over; the pod has forgotten the
+    // conversation but still holds the directory, so this is the one route that removes it.
+    auto dir = fx.populate("gone-42");
+
+    mgr.end_session("gone-42");
+    mgr.reap_ended();
+    REQUIRE_FALSE(std::filesystem::exists(dir));
+}
+
+TEST_CASE("SessionManager: ending is idempotent", "[session]") {
+    EndFixture fx;
+    SessionManager mgr(fx.cfg, test_http);
+    mgr.get_session("task-42");
+
+    mgr.end_session("task-42");
+    mgr.end_session("task-42");
+    REQUIRE(mgr.reap_ended() == 1);
+    REQUIRE_FALSE(mgr.has_pending_end());
+    // And after everything is gone, saying so again changes nothing.
+    mgr.end_session("task-42");
+    REQUIRE(mgr.reap_ended() == 0);
+}
+
+TEST_CASE("SessionManager: reaping publishes the session's departure", "[session]") {
+    EndFixture fx;
+    EventBus bus;
+    SessionManager mgr(fx.cfg, test_http);
+    mgr.set_event_bus(&bus);
+
+    std::vector<std::string> gone;
+    subscribe<SessionEvictedEvent>(bus, [&gone](const SessionEvictedEvent& ev) {
+        gone.push_back(ev.session_id);
+    });
+
+    mgr.get_session("task-42");
+    mgr.end_session("task-42");
+    // Nothing announced yet — the session is still alive until the reap.
+    REQUIRE(gone.empty());
+    mgr.reap_ended();
+    REQUIRE(gone == std::vector<std::string>{"task-42"});
+}
+
+TEST_CASE("SessionManager: ending without a workspace root touches no files", "[session]") {
+    // The personal-agent shape. Ending a session is still meaningful — it drops the
+    // conversation — but there is no per-session directory, and nothing may be deleted
+    // relative to the process's cwd.
+    auto cfg = make_test_config();
+    SessionManager mgr(cfg, test_http);
+    mgr.get_session("cli");
+    mgr.end_session("cli");
+    REQUIRE(mgr.reap_ended() == 1);
+    REQUIRE(mgr.list_sessions().empty());
+}
+
+TEST_CASE("SessionManager: a session that is ending frees its slot on reap", "[session]") {
+    EndFixture fx;
+    fx.cfg.agent.max_sessions = 1;
+    SessionManager mgr(fx.cfg, test_http);
+    mgr.get_session("task-42");
+    // The limit is what a pod uses to bound its own memory, so ending a task has to give
+    // the room back. Before the reap the slot is still held.
+    mgr.end_session("task-42");
+    REQUIRE_THROWS_AS(mgr.get_session("task-43"), std::runtime_error);
+
+    mgr.reap_ended();
+    REQUIRE_NOTHROW(mgr.get_session("task-43"));
 }
