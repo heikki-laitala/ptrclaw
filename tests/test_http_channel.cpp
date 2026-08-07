@@ -720,3 +720,84 @@ TEST_CASE("HttpChannel: ending a session clears its in-flight guard", "[http_cha
     REQUIRE(ch.handle_request(chat_request({{"session", "s1"}, {"message", "fresh"}}))
                 .status == 200);
 }
+
+TEST_CASE("HttpChannel: ending a session releases a waiting stream", "[http_channel]") {
+    // The connection thread parks in stream_turn() until something notifies it. Ending the
+    // session erases the turn it is waiting on, and without a notify it would sleep out the
+    // whole turn timeout holding a connection slot — so a caller cancelling its own tasks
+    // could exhaust max_connections while every one of them was already finished.
+    auto cfg = test_config();
+    cfg.turn_timeout_seconds = 30;  // far longer than this should take
+    EventBus bus;
+    HttpChannel ch(cfg);
+    ch.set_event_bus(&bus);
+
+    auto resp = ch.handle_request(chat_request({{"session", "s1"}, {"message", "hi"}}));
+    REQUIRE(resp.status == 200);
+
+    std::atomic<bool> returned{false};
+    std::thread consumer([&] {
+        resp.stream([](std::string_view) { return true; });
+        returned = true;
+    });
+
+    // Give the consumer time to reach the wait before the turn is taken away.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    ch.handle_request(end_request({{"session", "s1"}}));
+
+    for (int i = 0; i < 200 && !returned; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE(returned);
+    consumer.join();
+}
+
+TEST_CASE("HttpChannel: an ended stream cannot consume the next turn's tokens",
+          "[http_channel]") {
+    // WebhookServer invokes the producer after handle_request() has returned, so a stream
+    // can begin writing when its turn has already been ended and the id reused. Identifying
+    // a turn by session id alone, the old connection would then stream the new turn's tokens
+    // to the wrong client — and its own cleanup would erase a turn that is still live.
+    //
+    // Ordered rather than raced: the second turn is registered before the first stream runs
+    // at all, so the hazard is reached every time instead of when the scheduler allows.
+    auto cfg = test_config();
+    cfg.turn_timeout_seconds = 2;  // bounds the failing case; the fixed one returns at once
+    EventBus bus;
+    HttpChannel ch(cfg);
+    ch.set_event_bus(&bus);
+
+    auto first = ch.handle_request(chat_request({{"session", "s1"}, {"message", "one"}}));
+    REQUIRE(first.status == 200);
+
+    ch.handle_request(end_request({{"session", "s1"}}));
+
+    // The id is reused, as a context manager retrying a cancelled task would.
+    auto second = ch.handle_request(chat_request({{"session", "s1"}, {"message", "two"}}));
+    REQUIRE(second.status == 200);
+    StreamChunkEvent chunk;
+    chunk.session_id = "s1";
+    chunk.delta = "SECOND-TURN-TOKEN";
+    bus.publish(chunk);
+
+    std::string seen;
+    first.stream([&](std::string_view piece) {
+        seen.append(piece);
+        return true;
+    });
+    // Its own turn is gone, so it has nothing to say and says nothing.
+    REQUIRE(seen.find("SECOND-TURN-TOKEN") == std::string::npos);
+
+    // And the second turn still has its token to deliver: the dead stream must not have
+    // erased somebody else's live turn on the way out.
+    std::string second_seen;
+    std::thread reader([&] {
+        second.stream([&](std::string_view piece) {
+            second_seen.append(piece);
+            return true;
+        });
+    });
+    ch.send_message("s1", "second done");
+    reader.join();
+    REQUIRE(second_seen.find("SECOND-TURN-TOKEN") != std::string::npos);
+}

@@ -92,9 +92,18 @@ private:
         // an entry nothing will ever clear — and with one turn per session enforced, that
         // would wedge the session permanently.
         std::chrono::steady_clock::time_point started{};
+        // Distinguishes this turn from the next one under the same session id. The id alone
+        // is not enough: a turn can be taken away while its connection thread is parked —
+        // by POST /session/end, or by the stale-turn path — and the id reused before that
+        // thread wakes. Finding *an* entry would then stream one client's tokens to another
+        // and let the dead stream's cleanup erase a live turn.
+        uint64_t                              seq = 0;
     };
 
-    void stream_turn(const std::string& session, const BodyWriter& write);
+    void stream_turn(const std::string& session, uint64_t seq, const BodyWriter& write);
+    // Erases the session's turn only if it is still the one identified by `seq`.
+    // Caller must hold turn_mutex_.
+    void erase_turn(const std::string& session, uint64_t seq);
     // Ends every in-flight turn with an error and wakes the threads writing them.
     void release_pending_turns(const std::string& reason);
     void append_delta(const std::string& session, const std::string& delta);
@@ -111,6 +120,7 @@ private:
     std::mutex                                     turn_mutex_;
     std::condition_variable                        turn_cv_;
     std::unordered_map<std::string, Turn>          turns_;
+    uint64_t                                       next_turn_seq_ = 1;
 };
 
 } // namespace ptrclaw

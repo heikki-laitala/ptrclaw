@@ -248,8 +248,6 @@ int main(int argc, char* argv[]) try {
         // there rather than needing a later hook.
         channel->set_event_bus(&bus);
 
-        channel->initialize();
-
         std::signal(SIGINT, signal_handler);
         std::signal(SIGTERM, signal_handler);
         ptrclaw::http_set_abort_flag(&g_shutdown);
@@ -261,6 +259,14 @@ int main(int argc, char* argv[]) try {
         // SessionManager subscribes last — runs after channel handler sets up
         // typing + stream state
         sessions.subscribe_events();
+
+        // Only now does the channel start accepting requests. HttpChannel publishes
+        // SessionEndRequestedEvent straight from its connection thread, so a listener
+        // opened before this point could take an end request that no subscriber would
+        // hear: the caller gets its 202 and the workspace is never deleted, with nothing
+        // queued for the poll loop to recover. Every other channel merely queues, so
+        // starting later costs them nothing.
+        channel->initialize();
 
         ptrclaw::TurnPool pool(bus, config.workers);
 

@@ -457,3 +457,42 @@ TEST_CASE("remove_session_workspace: refuses a path outside the root", "[workspa
     REQUIRE(std::filesystem::exists(fx.root / "sessions"));
     REQUIRE(std::filesystem::exists(fx.root));
 }
+
+TEST_CASE("remove_session_workspace: a root reached through a symlink still resolves",
+          "[workspace]") {
+    // The configured spelling of workspace_root is whatever the operator wrote. On macOS a
+    // pod pointed at /tmp or /var is reached through a symlink, so comparing a canonical
+    // root against an uncanonicalised target would refuse every deletion — and the endpoint
+    // would answer 202 while quietly keeping the files.
+    WorkspaceFixture fx;
+    auto real = fx.root / "real-sessions";
+    auto link = fx.root / "linked-sessions";
+    std::filesystem::create_directories(real);
+    std::error_code ec;
+    std::filesystem::create_directory_symlink(real, link, ec);
+    if (ec) return;  // no symlink support
+
+    auto scope = session_workspace(link.string(), "", "task-42");
+    std::filesystem::create_directories(scope.workspace);
+    std::ofstream(std::filesystem::path(scope.workspace) / "out.txt") << "work\n";
+
+    REQUIRE(remove_session_workspace(link.string(), "task-42"));
+    REQUIRE_FALSE(std::filesystem::exists(scope.workspace));
+    REQUIRE(std::filesystem::exists(real));
+}
+
+TEST_CASE("remove_session_workspace: a root with relative components resolves",
+          "[workspace]") {
+    // ".." inside the configured path is unusual but legal, and it must not silently turn
+    // every end request into a no-op.
+    WorkspaceFixture fx;
+    auto sessions = fx.root / "sessions";
+    std::filesystem::create_directories(sessions);
+    const std::string indirect = (fx.root / "context" / ".." / "sessions").string();
+
+    auto scope = session_workspace(indirect, "", "task-42");
+    std::filesystem::create_directories(scope.workspace);
+
+    REQUIRE(remove_session_workspace(indirect, "task-42"));
+    REQUIRE_FALSE(std::filesystem::exists(sessions / std::filesystem::path(scope.workspace).filename()));
+}

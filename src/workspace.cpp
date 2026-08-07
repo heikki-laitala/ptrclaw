@@ -157,16 +157,21 @@ bool remove_session_workspace(const std::string& workspace_root,
     // the process's cwd, which is the pod itself.
     if (workspace_root.empty() || session_id.empty()) return false;
 
-    auto scope = session_workspace(workspace_root, "", session_id);
-    if (scope.workspace.empty()) return false;
-
-    fs::path target(scope.workspace);
     std::error_code ec;
 
     // The root has to exist for there to be anything under it, and canonicalising it also
-    // resolves the symlinks a temp directory is reached through (/var → /private/var).
+    // resolves the symlinks a configured path is reached through (/tmp → /private/tmp on
+    // macOS) and any ".." components in it.
     fs::path root = fs::canonical(workspace_root, ec);
     if (ec) return false;
+
+    // Built from the canonical root rather than from the configured spelling, so the
+    // containment check below compares like with like. Deriving it from the spelling and
+    // then canonicalising the whole path would be wrong in the other direction: it resolves
+    // the leaf too, so a symlink planted at the workspace pointing at a *sibling* session
+    // would land inside the root and pass — deleting somebody else's work. The leaf is
+    // deliberately left unresolved, and remove_all() unlinks a symlink without following it.
+    fs::path target = root / session_store_key(session_id);
 
     // Defence in depth. session_store_key() already guarantees one component that is
     // neither "." nor "..", so this cannot trigger today — but the call deletes a tree
