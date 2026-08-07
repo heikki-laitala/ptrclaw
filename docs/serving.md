@@ -291,6 +291,7 @@ is set by `workers`, and by how evenly the session ids hash across them:
 | 100 | 6.0 s | 50 |
 | 250 | 9.0 s | 83 |
 | 500 | 15.3 s | 98 |
+| 1000 (`workers: 1024`) | 12.1 s | 248 |
 
 Perfect parallelism would be 3 s at every level. The gap is the sharding: 500 sessions over
 512 shards leaves the deepest shard holding about five, and the burst is finished when that
@@ -298,7 +299,18 @@ shard is. Wall clock tracks the deepest shard, not the average — which is why 
 `workers` well above the concurrency you expect still pays.
 
 Each worker costs about **15 KB** resident: 64 idle at ~6 MB, 1024 at ~21 MB. Threads are
-cheap; the turns they run are not (~300 KB each in flight).
+cheap; the turns they run are not — ~57 KB in flight for a one-line prompt, ~300 KB for an
+8 KB one. A pod holding 1000 turns at once peaked at **78 MB**.
+
+The defaults are not this pod. The same 1000-request burst against `workers: 8` and
+`max_connections: 32` loses 928 of them: 48 fit in the system and the rest are refused at
+the socket. Concurrency of this order is a configuration, not something to expect for free:
+
+```json
+{ "workers": 1024,
+  "channels": { "http": { "max_connections": 1200 } },
+  "agent": { "max_sessions": 2000 } }
+```
 
 **The other caveat is bursts.** `TurnPool` routes an event to `fnv1a(session_id) % workers`,
 so a session always lands on the same thread — the whole safety argument for `Agent` and its
