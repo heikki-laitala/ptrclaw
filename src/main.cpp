@@ -320,7 +320,17 @@ int main(int argc, char* argv[]) try {
                 (pool.idle() || since >= evict_deadline)) {
                 pool.drain();
                 sessions.evict_idle(config.agent.session_max_idle_seconds);
+                sessions.reap_ended();
                 last_eviction = now;
+            } else if (sessions.has_pending_end() && pool.idle()) {
+                // A caller that has ended a session is waiting on the id: until the reap it
+                // is refused, and the files it asked to have deleted are still there. So
+                // this does not wait for the interval — but it does still require an idle
+                // pool, because the freeing is unsafe otherwise and a session that has
+                // ended is not urgent enough to stall the channel for. Under sustained
+                // load the periodic branch above collects it at the deadline.
+                pool.drain();
+                sessions.reap_ended();
             }
         }
 

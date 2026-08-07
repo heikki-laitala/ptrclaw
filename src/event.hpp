@@ -26,6 +26,7 @@ namespace event_tags {
     constexpr const char* ToolCallResult   = "ToolCallResult";
     constexpr const char* SessionCreated   = "SessionCreated";
     constexpr const char* SessionEvicted   = "SessionEvicted";
+    constexpr const char* SessionEndRequested = "SessionEndRequested";
     constexpr const char* StreamStart      = "StreamStart";
     constexpr const char* StreamChunk      = "StreamChunk";
     constexpr const char* ToolsAvailable   = "ToolsAvailable";
@@ -141,6 +142,16 @@ struct SessionEvictedEvent : Event {
     std::string session_id;
 
     SessionEvictedEvent() { type_tag = TAG; }
+};
+
+// A caller declaring a conversation over. Distinct from SessionEvictedEvent, which reports
+// that a session has already gone: this one is a request, and the session outlives it until
+// the poll loop can free it safely.
+struct SessionEndRequestedEvent : Event {
+    static constexpr const char* TAG = event_tags::SessionEndRequested;
+    std::string session_id;
+
+    SessionEndRequestedEvent() { type_tag = TAG; }
 };
 
 struct StreamStartEvent : Event {

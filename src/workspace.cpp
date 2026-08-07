@@ -150,4 +150,41 @@ SessionWorkspace session_workspace(const std::string& workspace_root,
     return scope;
 }
 
+bool remove_session_workspace(const std::string& workspace_root,
+                              const std::string& session_id) {
+    // Empty either way means there is no per-session directory — the personal-agent shape.
+    // Deleting nothing is the only safe reading: a relative fallback would resolve against
+    // the process's cwd, which is the pod itself.
+    if (workspace_root.empty() || session_id.empty()) return false;
+
+    auto scope = session_workspace(workspace_root, "", session_id);
+    if (scope.workspace.empty()) return false;
+
+    fs::path target(scope.workspace);
+    std::error_code ec;
+
+    // The root has to exist for there to be anything under it, and canonicalising it also
+    // resolves the symlinks a temp directory is reached through (/var → /private/var).
+    fs::path root = fs::canonical(workspace_root, ec);
+    if (ec) return false;
+
+    // Defence in depth. session_store_key() already guarantees one component that is
+    // neither "." nor "..", so this cannot trigger today — but the call deletes a tree
+    // recursively, and a later change to the key derivation must fail closed rather than
+    // widen what remove_all() is pointed at.
+    if (target.parent_path().lexically_normal() != root ||
+        !inside(target.lexically_normal(), root)) {
+        return false;
+    }
+
+    // symlink_status, not status: if the workspace is a symlink, remove_all() unlinks the
+    // link itself rather than following it, and reporting on the link is what happened.
+    // exists() would follow it and answer about a tree outside the root.
+    auto info = fs::symlink_status(target, ec);
+    if (ec || !fs::exists(info)) return false;
+
+    fs::remove_all(target, ec);
+    return !ec;
+}
+
 } // namespace ptrclaw

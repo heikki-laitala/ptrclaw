@@ -9,6 +9,7 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 #include <optional>
 #include <functional>
@@ -41,6 +42,24 @@ public:
     // Evict idle sessions (older than max_idle_seconds)
     void evict_idle(uint64_t max_idle_seconds = 3600);
 
+    // Declare a conversation over. The session stops serving immediately and is freed by
+    // reap_ended(), which the poll loop calls where freeing one is safe.
+    //
+    // Safe to call for an id with no live session: a task whose session was already evicted
+    // for idleness still has a workspace on disk, and this is what removes it.
+    void end_session(const std::string& session_id);
+
+    // Whether end_session() has left anything for reap_ended() to do.
+    bool has_pending_end() const;
+
+    // Frees the sessions end_session() marked and deletes their workspaces, returning how
+    // many were freed.
+    //
+    // MUST run with no turn in flight — see the comment in main.cpp's poll loop. An Agent's
+    // event handlers are copied out of the bus before being called, so destroying one while
+    // a worker is mid-publish is a use-after-free, exactly as for evict_idle().
+    size_t reap_ended();
+
     // List active session IDs
     std::vector<std::string> list_sessions() const;
 
@@ -60,6 +79,10 @@ private:
     Config& config_;
     HttpClient& http_;
     std::unordered_map<std::string, Session> sessions_;
+    // Ids whose conversation has been declared over, waiting for reap_ended(). Held between
+    // the two calls rather than freed on the spot because the request arrives on the channel
+    // thread, where another session's turn may be running.
+    std::unordered_set<std::string> ending_;
     mutable std::mutex mutex_;
     std::string binary_path_;
     EventBus* event_bus_ = nullptr;
