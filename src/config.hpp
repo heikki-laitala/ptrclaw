@@ -152,8 +152,26 @@ struct ServingConfig {
 constexpr uint32_t kMaxWorkers = 64;
 
 struct Config {
+    // Build-dependent, like memory.backend below: a binary compiled without Anthropic
+    // cannot construct the provider its own default names, so a config that omits
+    // "provider" would fail at startup rather than run. Both halves move together — an
+    // OpenAI build defaulting to a Claude model would authenticate and then be refused.
+#ifdef PTRCLAW_HAS_ANTHROPIC
     std::string provider = "anthropic";
     std::string model = "claude-sonnet-4-6";
+#elif defined(PTRCLAW_HAS_OPENAI)
+    std::string provider = "openai";
+    std::string model = "gpt-5.6-sol";
+#elif defined(PTRCLAW_HAS_OPENROUTER)
+    std::string provider = "openrouter";
+    std::string model = "openai/gpt-5.6";
+#elif defined(PTRCLAW_HAS_OLLAMA)
+    std::string provider = "ollama";
+    std::string model = "llama3.2";
+#else
+    std::string provider = "compatible";
+    std::string model = "";
+#endif
     double temperature = 0.7;
     bool dev = false;      // Enables developer-only commands (e.g. /soul)
     // Whether slash commands are dispatched for messages arriving over a channel.

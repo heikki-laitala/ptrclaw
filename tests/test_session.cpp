@@ -24,7 +24,7 @@ static MockHttpClient test_http;
 
 static Config make_test_config() {
     Config cfg;
-    cfg.provider = "anthropic";
+    use_build_provider(cfg);
     cfg.providers["anthropic"].api_key = "test-key";
     cfg.providers["openai"].api_key = "test-key";
     cfg.providers["openrouter"].api_key = "test-key";
@@ -490,10 +490,15 @@ TEST_CASE("SessionManager: /auth openai finish honours oauth_models for the defa
 
 TEST_CASE("SessionManager: /auth openai finish reports a model no credential can serve",
           "[session]") {
+    // The session has to run on something other than OpenAI, whose only credential this
+    // test removes — so it needs a second provider in the build, not merely a second entry
+    // in the config.
+    REQUIRE_TEST_PROVIDER("anthropic");
     HomeGuard home;
     home.write_default_config();
 
     auto cfg = make_test_config();
+    cfg.provider = "anthropic";
     cfg.allow_channel_commands = true;
     cfg.providers["openai"].api_key.clear();            // OAuth is the only credential
     cfg.providers["openai"].oauth_models = {"gpt-4o"};  // ...and it excludes the default
@@ -767,6 +772,9 @@ TEST_CASE("SessionManager: /model on one channel session leaves others alone",
 // exists for: a set_history() call that never reached a request would satisfy an
 // agent.history() assertion while being useless.
 
+// Anthropic on purpose, not because it is the default: these tests assert where the system
+// prompt travels, and Anthropic carries it out-of-band in body["system"] while OpenAI puts
+// it in the message array. The callers guard with REQUIRE_TEST_PROVIDER.
 static Config make_pushed_history_config() {
     Config cfg;
     cfg.provider = "anthropic";
@@ -789,6 +797,7 @@ TEST_CASE("SessionManager: a pushed history window reaches the provider in order
           "[session]") {
     MockHttpClient http;
     http.next_response = {200, kStubReply};
+    REQUIRE_TEST_PROVIDER("anthropic");
     auto cfg = make_pushed_history_config();
 
     EventBus bus;
@@ -835,6 +844,7 @@ TEST_CASE("SessionManager: a pushed window replaces what the session accumulated
     // history would pass the test above and fail this one.
     MockHttpClient http;
     http.next_response = {200, kStubReply};
+    REQUIRE_TEST_PROVIDER("anthropic");
     auto cfg = make_pushed_history_config();
 
     EventBus bus;

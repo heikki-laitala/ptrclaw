@@ -14,7 +14,17 @@ make build-serving      # binary at builddir-serving/ptrclaw
 make test-serving       # the profile's own assertions
 ```
 
-That is `-Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false -Dwith_http=true`.
+That is `-Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false -Dwith_http=true`,
+plus `-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false
+-Dwith_compatible=false` — **the pod talks to OpenAI and nothing else**, over chat
+completions and the ChatGPT-subscription OAuth flow. Re-enable any of them with
+`-Dwith_<name>=true` if a deployment needs it; nothing else in the profile depends on the
+choice.
+
+`Config`'s default provider follows the build (`src/config.hpp`), so a pod config that omits
+`"provider"` still starts on OpenAI rather than failing with `Unknown provider: anthropic`.
+CI builds and tests this exact configuration — a trimmed binary is not merely a smaller one,
+and the suite has to hold where Anthropic cannot be constructed.
 The tool flags are not decoration: `with_serving` registers `file_read` and `file_write`
 scoped to the calling session, and the unscoped tools register the same names —
 `PluginRegistry` keys factories by name, so having both would leave static-init order to
@@ -41,8 +51,9 @@ Measured on macOS arm64, stripped:
 
 | | pod binary | idle RSS | 200 sessions |
 | --- | --- | --- | --- |
-| before size flags (`-O3`) | 948 KB | ~5.8 MB | ~10.7 MB |
-| as shipped (`-Os`, `NDEBUG`) | **565 KB** | ~5.6 MB | ~10.2 MB |
+| before (`-O3`, every provider) | 948 KB | ~5.8 MB | ~10.7 MB |
+| size flags only (`-Os`, `NDEBUG`) | 565 KB | ~5.6 MB | ~10.2 MB |
+| as shipped (also OpenAI-only) | **548 KB** | ~5.6 MB | ~10.2 MB |
 
 The binary is the part that moves: `-O3` inlines for speed and costs ~40% of the image
 here. Resident memory barely does, and it is worth being precise about why. Idle RSS drops
@@ -57,18 +68,22 @@ is the knob that bounds it.
 
 ### Trimming further
 
-`-Os` is applied for you. Beyond it, what is left costs capability rather than dead weight,
-so the profile does not choose for you — the prices, each measured against the 565 KB build:
+`-Os` and the OpenAI-only provider set are applied for you. What is left costs capability
+rather than dead weight, so the profile stops here — the prices, measured against the
+548 KB build:
 
 | Also disabled | Binary | Gives up |
 | --- | --- | --- |
-| `-Dwith_openai_oauth=false` | 549 KB | ChatGPT-subscription auth; API keys only |
-| `-Dwith_anthropic/ollama/openrouter/compatible=false` | 548 KB | every provider but OpenAI |
-| `-Dwith_sqlite_memory=false` | 547 KB | the FTS5 backend, if you turn memory on |
-| all of the above | 514 KB | |
+| `-Dwith_openai_oauth=false` | 532 KB | ChatGPT-subscription auth; API keys only |
+| `-Dwith_sqlite_memory=false` | 514 KB | the FTS5 backend, if you turn memory on |
+| both | 514 KB | |
 
-Roughly 9% for a pod that can only ever talk to one provider with one auth method. Worth it
-for a fixed deployment, not worth baking into the profile.
+Roughly 6% for a pod that cannot use a subscription and cannot ever turn memory on. The
+OAuth flow is what this deployment authenticates with, so it stays.
+
+The two do not add up, and the table says what was measured rather than the sum: dropping
+SQLite alone already reaches 514 KB. Under LTO the OAuth code and the SQLite backend pull
+in overlapping machinery, so removing either one collects most of the same dead weight.
 
 ## The two roots
 

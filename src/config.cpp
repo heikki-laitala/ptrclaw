@@ -11,8 +11,12 @@ namespace ptrclaw {
 
 nlohmann::json Config::defaults_json() {
     return {
-        {"provider", "anthropic"},
-        {"model", "claude-sonnet-4-6"},
+        // Mirrors the struct defaults in config.hpp, deliberately. load() merges this into
+        // the config file and parses the result, so a hardcoded provider here would
+        // overwrite the build's default and hand a trimmed binary a provider it cannot
+        // create — the mistake review caught on memory.isolation.
+        {"provider", Config{}.provider},
+        {"model", Config{}.model},
         {"temperature", 0.7},
         {"dev", false},
         {"allow_channel_commands", false},
