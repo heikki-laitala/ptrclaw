@@ -56,8 +56,19 @@ else
 	sudo apt-get install -y g++ clang meson ninja-build pkg-config libssl-dev libmbedtls-dev libsqlite3-dev clang-tidy lld gcovr
 endif
 
+# Extra options for the default build directory. CI sets it to widen the lint database:
+# clang-tidy only ever sees files the build compiles, so a feature left off is a file that
+# is never linted. Empty for a local `make build`, which then behaves exactly as before —
+# including not reconfiguring a directory that already exists.
+MESON_SETUP_EXTRA ?=
+
 setup:
-	@if [ ! -d $(BUILDDIR) ]; then meson setup $(BUILDDIR) $(NATIVE_ARGS) -Dcatch2:tests=false; fi
+	@if [ ! -d $(BUILDDIR) ]; then \
+		meson setup $(BUILDDIR) $(NATIVE_ARGS) -Dcatch2:tests=false $(MESON_SETUP_EXTRA); \
+	elif [ -n "$(MESON_SETUP_EXTRA)" ]; then \
+		meson setup --reconfigure $(BUILDDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
+			$(MESON_SETUP_EXTRA); \
+	fi
 
 build: setup
 	meson compile -C $(BUILDDIR)

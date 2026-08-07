@@ -207,7 +207,12 @@ jobs:
           restore-keys: meson-${{ matrix.os }}-
 
       - name: Build
-        run: make build
+        # with_http on purpose: the lint database only contains what the build compiles, so
+        # a feature left off is a file clang-tidy never sees. src/channels/http.cpp — the
+        # serving pod's whole surface — was going unlinted on both platforms for exactly
+        # that reason. Serving's scoped tools cannot join the same build (meson refuses
+        # with_serving alongside with_tools), so they stay covered by test-serving.
+        run: make build MESON_SETUP_EXTRA=-Dwith_http=true
 
       - name: Lint (changed files on PR)
         if: github.event_name == 'pull_request'
@@ -216,6 +221,23 @@ jobs:
           set -eo pipefail
           git fetch origin main --depth=1
           CHANGED=$(git diff --name-only --diff-filter=d origin/main...HEAD -- '*.cpp' '*.hpp' | grep -E '^(src|tests)/' || true)
+          # Lint only what this platform actually compiles. A source the build excludes has
+          # no entry in the compilation database, so clang-tidy falls back to guessed flags
+          # and fails on headers it cannot find — src/http.cpp is the libcurl backend and
+          # Linux builds the socket one instead. `make lint` never hits this because
+          # run-clang-tidy filters the database itself; passing filenames bypasses that.
+          # Headers are kept: they are never in the database and have always been linted
+          # through whichever compile command clang-tidy picks.
+          FILTERED=""
+          for f in $CHANGED; do
+            case "$f" in
+              *.hpp) FILTERED="$FILTERED $f" ;;
+              *) grep -q "\"[^\"]*/$f\"\|\"$f\"" builddir/compile_commands.json \
+                   && FILTERED="$FILTERED $f" \
+                   || echo "skipping $f: not compiled in this configuration" ;;
+            esac
+          done
+          CHANGED=$(echo "$FILTERED" | xargs || true)
           if [ -n "$CHANGED" ]; then
             if [ "$(uname)" = "Darwin" ]; then
               CLANG_TIDY_EXTRA="-extra-arg=-stdlib=libc++ -extra-arg=-isysroot$(xcrun --show-sdk-path)"
