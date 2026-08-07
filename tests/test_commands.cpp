@@ -203,6 +203,25 @@ TEST_CASE("cmd_model: other providers just take the model", "[commands]") {
     REQUIRE(agent.model() == "some-local-model");
 }
 
+// ── cmd_hatch ────────────────────────────────────────────────────
+
+// Explicit /hatch is an operator asking for the interview by name, so it runs — unless there
+// is nowhere to put the result. NoneMemory::store() is a no-op and the agent would still
+// announce "identity has been saved", so refusing up front beats a run that spends model
+// calls and lies about the outcome.
+TEST_CASE("cmd_hatch: refuses when memory is disabled", "[commands][hatch]") {
+    Config cfg;
+    cfg.memory.backend = "none";
+    cfg.agent.max_tool_iterations = 5;
+    Agent agent(std::make_unique<StubProvider>(), cfg);
+
+    auto result = cmd_hatch(agent);
+
+    REQUIRE(result.find("Memory") != std::string::npos);
+    REQUIRE(result.find("memory.backend") != std::string::npos);
+    REQUIRE_FALSE(agent.hatching());
+}
+
 // ── cmd_skill ────────────────────────────────────────────────────
 
 TEST_CASE("cmd_skill: no skills available", "[commands]") {

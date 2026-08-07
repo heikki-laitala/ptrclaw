@@ -61,6 +61,13 @@ std::string cmd_soul(const Agent& agent, bool dev) {
 }
 
 std::string cmd_hatch(Agent& agent) {
+    // Explicit /hatch is an operator asking by name, so it runs — unless there is nowhere to
+    // put the result. NoneMemory::store() is a no-op, so the interview would spend several
+    // model calls and then announce an identity that was not saved.
+    if (!agent.has_active_memory()) {
+        return "Memory is disabled (memory.backend = \"none\"), so an identity cannot be "
+               "stored. Set a memory backend, or configure agent.persona instead.";
+    }
     agent.start_hatch();
     return agent.process("Begin the hatching interview.");
 }

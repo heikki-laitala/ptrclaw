@@ -121,6 +121,7 @@ TEST_CASE("SessionManager: a shared memory store still hatches", "[session][hatc
     home.write_default_config();
 
     auto cfg = make_test_config();
+    cfg.memory.backend = "json";   // pinned: the serving build defaults to "none"
     cfg.memory.isolation = "shared";
     send_channel_message(cfg, test_http, "visitor", [](SessionManager& mgr) {
         REQUIRE(mgr.get_session("visitor").hatching());
@@ -136,6 +137,7 @@ TEST_CASE("SessionManager: per-session memory alone still hatches", "[session][h
     home.write_default_config();
 
     auto cfg = make_test_config();
+    cfg.memory.backend = "json";
     cfg.memory.isolation = "session";
     send_channel_message(cfg, test_http, "chat-42", [](SessionManager& mgr) {
         REQUIRE(mgr.get_session("chat-42").hatching());
@@ -151,6 +153,7 @@ TEST_CASE("SessionManager: a serving pod does not hatch", "[session][hatch]") {
     home.write_default_config();
 
     auto cfg = make_test_config();
+    cfg.memory.backend = "json";
     cfg.memory.isolation = "session";
     cfg.serving.workspace_root = "/work/sessions";
     send_channel_message(cfg, test_http, "task-42", [](SessionManager& mgr) {
@@ -164,6 +167,7 @@ TEST_CASE("SessionManager: a shared context also marks a pod", "[session][hatch]
     home.write_default_config();
 
     auto cfg = make_test_config();
+    cfg.memory.backend = "json";
     cfg.serving.context_dir = "/work/context";
     send_channel_message(cfg, test_http, "task-43", [](SessionManager& mgr) {
         REQUIRE_FALSE(mgr.get_session("task-43").hatching());
@@ -177,6 +181,7 @@ TEST_CASE("SessionManager: a configured persona does not hatch", "[session][hatc
     home.write_default_config();
 
     auto cfg = make_test_config();
+    cfg.memory.backend = "json";
     cfg.memory.isolation = "shared";          // the case that would otherwise hatch
     cfg.agent.persona.identity = "You are Atlas.";
     send_channel_message(cfg, test_http, "visitor", [](SessionManager& mgr) {
@@ -193,6 +198,7 @@ TEST_CASE("SessionManager: /start does not re-hatch over a persona", "[session][
 
     auto cfg = make_test_config();
     cfg.allow_channel_commands = true;
+    cfg.memory.backend = "json";
     cfg.agent.persona.identity = "You are Atlas.";
 
     EventBus bus;
@@ -207,6 +213,49 @@ TEST_CASE("SessionManager: /start does not re-hatch over a persona", "[session][
     bus.publish(ev);
 
     REQUIRE_FALSE(mgr.get_session("visitor").hatching());
+}
+
+// A store that cannot persist anything cannot hold a soul either: NoneMemory::store() is a
+// no-op, so is_hatched() stays false forever and every launch would run the interview again —
+// model calls spent to save nothing. agent.memory() is non-null for NoneMemory, which is why
+// the check has to be has_active_memory().
+TEST_CASE("SessionManager: no memory backend means no hatching", "[session][hatch]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    cfg.memory.backend = "none";
+    send_channel_message(cfg, test_http, "visitor", [](SessionManager& mgr) {
+        REQUIRE_FALSE(mgr.get_session("visitor").hatching());
+    });
+}
+
+TEST_CASE("SessionManager: /start does not hatch without a backend", "[session][hatch]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    cfg.allow_channel_commands = true;
+    cfg.memory.backend = "none";
+
+    EventBus bus;
+    SessionManager mgr(cfg, test_http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    std::string reply;
+    subscribe<MessageReadyEvent>(
+        bus, [&reply](const MessageReadyEvent& e) { reply = e.content; });
+
+    MessageReceivedEvent ev;
+    ev.session_id = "visitor";
+    ev.from_cli = true;
+    ev.message.content = "/start";
+    bus.publish(ev);
+
+    REQUIRE_FALSE(mgr.get_session("visitor").hatching());
+    // Greeted rather than interviewed.
+    REQUIRE(reply.find("Hello") != std::string::npos);
 }
 
 // ── session cap ─────────────────────────────────────────────────

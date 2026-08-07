@@ -351,8 +351,11 @@ void SessionManager::dispatch_message(const MessageReceivedEvent& ev) {
     const bool serving_pod = !config_.serving.workspace_root.empty() ||
                              !config_.serving.context_dir.empty();
     const bool persona_configured = !config_.agent.persona.empty();
-    if (!ev.message.history && agent.memory() && !serving_pod && !persona_configured
-        && !agent.is_hatched() && !agent.hatching()) {
+    // has_active_memory(), not memory(): the "none" backend is a real object whose store()
+    // is a no-op, so is_hatched() would stay false forever and every launch would run the
+    // interview again — model calls spent to save nothing.
+    if (!ev.message.history && agent.has_active_memory() && !serving_pod
+        && !persona_configured && !agent.is_hatched() && !agent.hatching()) {
         agent.start_hatch();
     }
 
@@ -372,7 +375,8 @@ bool SessionManager::handle_command(
         // only reads memory — so without this check it would replace a stated persona with
         // questions about one. Explicit /hatch still runs the interview: an operator asking
         // for it by name gets it.
-        if (agent.memory() && !agent.is_hatched() && config_.agent.persona.empty()) {
+        if (agent.has_active_memory() && !agent.is_hatched() &&
+            config_.agent.persona.empty()) {
             begin_hatch();
         } else {
             std::string greeting = "Hello";

@@ -405,7 +405,9 @@ std::string Agent::process(const std::string& user_message) {
     // Soul extraction during hatching
     if (hatching_ && !final_content.empty()) {
         auto parsed = parse_soul_json(final_content);
-        if (parsed.found() && memory_) {
+        // has_active_memory(), not memory_: storing into the "none" backend succeeds silently
+        // and the message below would report an identity that was never written.
+        if (parsed.found() && has_active_memory()) {
             for (const auto& entry : parsed.entries) {
                 memory_->store(entry.first, entry.second, MemoryCategory::Core, "");
             }
