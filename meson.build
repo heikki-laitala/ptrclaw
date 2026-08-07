@@ -363,7 +363,14 @@ test_sources = core_test_sources + optional_test_sources
 test_exe = executable('ptrclaw_tests', test_sources,
   dependencies: [ptrclaw_dep, catch2_dep])
 
-test('unit_tests', test_exe, args: ['~[cron]'])
+# timeout well above the suite's real cost, because meson's 30s default has never had
+# margin: the run is 13-26s depending on configuration, and most of that is wall-clock
+# sleeps — TTL expiry, hygiene thresholds, retry backoff — which do not shrink on faster
+# hardware. A loaded CI runner crossed 30s in the read-only configuration while the same
+# commit passed everywhere else, so the limit was measuring runner load rather than the
+# code. Generous enough that variance is not fatal, small enough that a genuinely hung
+# test still fails rather than occupying a runner for its whole allowance.
+test('unit_tests', test_exe, args: ['~[cron]'], timeout: 120)
 
 # ── Build summary ──────────────────────────────────────────────
 providers = []
