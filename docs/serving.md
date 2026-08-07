@@ -550,18 +550,35 @@ provider requires the results to follow the assistant message that made them: a 
 call is absent, a call left unanswered, or anything wedged between the two is a 400 upstream.
 It is caught at the boundary instead, where the error can say which call is at fault:
 
+```json
+{"error": "tool call 'call_1' has no result in this window",
+ "code": "history_unbalanced",
+ "tool_call_id": "call_1"}
 ```
-{"error":"tool result 'call_1' answers no preceding tool call"}
-{"error":"tool call 'call_1' has no result in this window"}
-{"error":"tool call 'call_1' must be answered by a tool result immediately after the
-          assistant message that made it"}
-```
+
+`code` is the part to branch on; the sentence is for a human reading a log and may be
+reworded. There are two:
+
+| `code` | Meaning | Worth retrying? |
+| --- | --- | --- |
+| `history_unbalanced` | a call and its result were separated, orphaned, or one is missing — `tool_call_id` names it | **Yes**, with a window repaired around that call |
+| `history_malformed` | the request itself is wrong: unknown role, missing `tool_call_id`, `arguments` that are not JSON | No — retrying the same body loops |
+
+An absent `code` means unclassified: other 400s from this endpoint do not carry one yet, so
+treat missing as "do not retry" rather than as a category.
 
 **This constrains anything that trims a window to fit a size limit.** Dropping whole turns
 oldest-first will eventually split a call from its result, and tool results are usually the
 largest entries in a transcript — so it is the common path, not an edge case. A trimmer has
 to treat an assistant message and the tool results answering it as one indivisible unit, and
 must not leave a lone tool result as the only surviving turn.
+
+The refusal is deliberate rather than a missing leniency. Dropping an orphaned pair here
+would replay a conversation in which a tool ran and its result vanished — which is exactly
+the failure this whole exchange exists to prevent, except silent and permanent. The pod
+cannot know which degradation a deployment finds acceptable; a `history_unbalanced` with the
+id lets the caller choose, including choosing to drop the pair. What it cannot reconstruct
+afterwards is the knowledge that anything was lost.
 
 Two things worth deciding deliberately:
 

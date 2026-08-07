@@ -1123,3 +1123,70 @@ TEST_CASE("HttpChannel: arguments that are not JSON are refused", "[http_channel
     REQUIRE(resp.body.find("call_1") != std::string::npos);
     REQUIRE(resp.body.find("JSON") != std::string::npos);
 }
+
+// ── Machine-readable history errors ─────────────────────────────
+//
+// The distinction that matters to a caller is not the sentence: it is whether retrying with
+// a repaired window can work. A window split by a size trimmer is worth re-trimming and
+// sending again; a malformed request is not, and retrying it is a loop. Both were 400 with
+// English text, so telling them apart meant matching on prose that could be reworded.
+
+TEST_CASE("HttpChannel: a split tool pair is reported as unbalanced", "[http_channel]") {
+    HttpChannel ch(test_config());
+    auto resp = ch.handle_request(chat_request({
+        {"session", "s1"}, {"message", "hi"},
+        {"history", {
+            {{"role", "assistant"}, {"content", ""}, {"tool_calls", {
+                {{"id", "call_1"}, {"name", "file_read"}, {"arguments", "{}"}}}}},
+            {{"role", "assistant"}, {"content", "done"}},
+        }},
+    }));
+    REQUIRE(resp.status == 400);
+    auto body = json::parse(resp.body);
+    REQUIRE(body["code"] == "history_unbalanced");
+    // Which call to repair, without parsing the sentence.
+    REQUIRE(body["tool_call_id"] == "call_1");
+    REQUIRE_FALSE(body["error"].get<std::string>().empty());
+}
+
+TEST_CASE("HttpChannel: an orphaned result is reported as unbalanced", "[http_channel]") {
+    HttpChannel ch(test_config());
+    auto resp = ch.handle_request(chat_request({
+        {"session", "s1"}, {"message", "hi"},
+        {"history", {
+            {{"role", "tool"}, {"content", "x"}, {"tool_call_id", "call_9"}},
+        }},
+    }));
+    REQUIRE(resp.status == 400);
+    auto body = json::parse(resp.body);
+    REQUIRE(body["code"] == "history_unbalanced");
+    REQUIRE(body["tool_call_id"] == "call_9");
+}
+
+TEST_CASE("HttpChannel: a schema fault is not reported as unbalanced", "[http_channel]") {
+    // Re-trimming cannot fix these, so they must not look like the retryable case.
+    HttpChannel ch(test_config());
+
+    auto bad_args = ch.handle_request(chat_request({
+        {"session", "s1"}, {"message", "hi"},
+        {"history", {
+            {{"role", "assistant"}, {"content", ""}, {"tool_calls", {
+                {{"id", "call_1"}, {"name", "file_read"}, {"arguments", "not-json"}}}}},
+            {{"role", "tool"}, {"content", "x"}, {"tool_call_id", "call_1"}},
+        }},
+    }));
+    REQUIRE(bad_args.status == 400);
+    REQUIRE(json::parse(bad_args.body)["code"] == "history_malformed");
+
+    auto unknown_role = ch.handle_request(chat_request({
+        {"session", "s1"}, {"message", "hi"},
+        {"history", {{{"role", "narrator"}, {"content", "x"}}}},
+    }));
+    REQUIRE(json::parse(unknown_role.body)["code"] == "history_malformed");
+
+    auto no_id = ch.handle_request(chat_request({
+        {"session", "s1"}, {"message", "hi"},
+        {"history", {{{"role", "tool"}, {"content", "x"}}}},
+    }));
+    REQUIRE(json::parse(no_id.body)["code"] == "history_malformed");
+}

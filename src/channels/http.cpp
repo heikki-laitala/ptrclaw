@@ -48,11 +48,34 @@ std::string sse_frame(const char* event, const json& data) {
     return std::string("event: ") + event + "\ndata: " + data.dump() + "\n\n";
 }
 
-WebhookResponse json_error(int status, const std::string& message) {
+// Why a pushed window was refused, in a form a caller can branch on.
+//
+// The sentence is for a human reading a log; `code` is the contract. What a caller needs to
+// decide is whether a repaired window could work — "history_unbalanced" says yes, and names
+// the call to repair around, while "history_malformed" says the request itself is wrong and
+// retrying it is a loop. Matching on the English would have tied callers to wording that
+// gets reworded.
+struct HistoryError {
+    std::string message;
+    std::string code;
+    std::string tool_call_id;  // empty when no single call is at fault
+};
+
+constexpr const char* kHistoryUnbalanced = "history_unbalanced";
+constexpr const char* kHistoryMalformed  = "history_malformed";
+
+WebhookResponse json_error(int status, const std::string& message,
+                           const std::string& code = "",
+                           const std::string& tool_call_id = "") {
     WebhookResponse r;
     r.status = status;
     r.content_type = "application/json";
-    r.body = json{{"error", message}}.dump();
+    json body{{"error", message}};
+    // Omitted rather than sent empty: an absent code means unclassified, and a caller
+    // switching on it should not have to treat "" as a category.
+    if (!code.empty())         body["code"] = code;
+    if (!tool_call_id.empty()) body["tool_call_id"] = tool_call_id;
+    r.body = body.dump();
     return r;
 }
 
@@ -64,16 +87,17 @@ WebhookResponse json_error(int status, const std::string& message) {
 // tool_calls array). Nothing new is invented here — this is the same encoding agent.cpp
 // writes at the end of every tool-calling iteration.
 bool parse_tool_calls(const json& raw, std::string& encoded,
-                      std::vector<std::string>& ids, std::string& error) {
+                      std::vector<std::string>& ids, HistoryError& error) {
     if (!raw.is_array()) {
-        error = "'tool_calls' must be an array";
+        error = {"'tool_calls' must be an array", kHistoryMalformed, ""};
         return false;
     }
     json calls = json::array();
     for (const auto& call : raw) {
         if (!call.is_object() || !call.contains("id") || !call["id"].is_string() ||
             !call.contains("name") || !call["name"].is_string()) {
-            error = "each tool call needs string 'id' and 'name'";
+            error = {"each tool call needs string 'id' and 'name'",
+                     kHistoryMalformed, ""};
             return false;
         }
         // Arguments travel as the raw JSON string the model produced, which is how
@@ -82,7 +106,8 @@ bool parse_tool_calls(const json& raw, std::string& encoded,
         std::string arguments = "{}";
         if (call.contains("arguments")) {
             if (!call["arguments"].is_string()) {
-                error = "tool call 'arguments' must be a string of JSON";
+                error = {"tool call 'arguments' must be a string of JSON",
+                         kHistoryMalformed, call["id"].get<std::string>()};
                 return false;
             }
             arguments = call["arguments"].get<std::string>();
@@ -92,8 +117,9 @@ bool parse_tool_calls(const json& raw, std::string& encoded,
             // arguments will not parse but keeps the tool_result that answers it, which is
             // a corrupted replay rather than an error anyone can act on.
             if (!json::accept(arguments)) {
-                error = "tool call '" + call["id"].get<std::string>() +
-                        "' has 'arguments' that are not valid JSON";
+                error = {"tool call '" + call["id"].get<std::string>() +
+                         "' has 'arguments' that are not valid JSON",
+                         kHistoryMalformed, call["id"].get<std::string>()};
                 return false;
             }
         }
@@ -102,16 +128,16 @@ bool parse_tool_calls(const json& raw, std::string& encoded,
                          {"arguments", arguments}});
     }
     if (calls.empty()) {
-        error = "'tool_calls' must not be empty";
+        error = {"'tool_calls' must not be empty", kHistoryMalformed, ""};
         return false;
     }
     encoded = calls.dump();
     return true;
 }
 
-bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& error) {
+bool parse_history(const json& raw, std::vector<ChatMessage>& out, HistoryError& error) {
     if (!raw.is_array()) {
-        error = "history must be an array";
+        error = {"history must be an array", kHistoryMalformed, ""};
         return false;
     }
     // Calls made by the assistant entry immediately preceding the current position, still
@@ -128,7 +154,8 @@ bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& 
     for (const auto& entry : raw) {
         if (!entry.is_object() || !entry.contains("role") || !entry.contains("content") ||
             !entry["role"].is_string() || !entry["content"].is_string()) {
-            error = "each history entry needs string 'role' and 'content'";
+            error = {"each history entry needs string 'role' and 'content'",
+                     kHistoryMalformed, ""};
             return false;
         }
         const std::string role = entry["role"].get<std::string>();
@@ -137,9 +164,10 @@ bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& 
         // Anything that is not a tool result ends the answering window, so a call still
         // outstanding at that point was never answered where the provider expects it.
         if (role != "tool" && !outstanding.empty()) {
-            error = "tool call '" + outstanding.front() +
-                    "' must be answered by a tool result immediately after the assistant "
-                    "message that made it";
+            error = {"tool call '" + outstanding.front() +
+                     "' must be answered by a tool result immediately after the assistant "
+                     "message that made it",
+                     kHistoryUnbalanced, outstanding.front()};
             return false;
         }
 
@@ -160,14 +188,16 @@ bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& 
         } else if (role == "tool") {
             if (!entry.contains("tool_call_id") || !entry["tool_call_id"].is_string() ||
                 entry["tool_call_id"].get<std::string>().empty()) {
-                error = "a 'tool' entry needs a non-empty 'tool_call_id': a result is only "
-                        "meaningful paired with the call it answers";
+                error = {"a 'tool' entry needs a non-empty 'tool_call_id': a result is "
+                         "only meaningful paired with the call it answers",
+                         kHistoryMalformed, ""};
                 return false;
             }
             const std::string id = entry["tool_call_id"].get<std::string>();
             auto waiting = std::find(outstanding.begin(), outstanding.end(), id);
             if (waiting == outstanding.end()) {
-                error = "tool result '" + id + "' answers no preceding tool call";
+                error = {"tool result '" + id + "' answers no preceding tool call",
+                         kHistoryUnbalanced, id};
                 return false;
             }
             outstanding.erase(waiting);
@@ -178,13 +208,14 @@ bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& 
             }
             out.push_back(ChatMessage{Role::Tool, content, name, id});
         } else {
-            error = "unknown role '" + role + "'";
+            error = {"unknown role '" + role + "'", kHistoryMalformed, ""};
             return false;
         }
     }
 
     if (!outstanding.empty()) {
-        error = "tool call '" + outstanding.front() + "' has no result in this window";
+        error = {"tool call '" + outstanding.front() + "' has no result in this window",
+                 kHistoryUnbalanced, outstanding.front()};
         return false;
     }
     return true;
@@ -443,9 +474,9 @@ WebhookResponse HttpChannel::handle_request(const WebhookRequest& req) {
 
     if (body.contains("history")) {
         std::vector<ChatMessage> window;
-        std::string error;
+        HistoryError error;
         if (!parse_history(body["history"], window, error)) {
-            return json_error(400, error);
+            return json_error(400, error.message, error.code, error.tool_call_id);
         }
         msg.history = std::move(window);
     }
