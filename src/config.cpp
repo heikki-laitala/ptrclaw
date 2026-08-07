@@ -159,9 +159,9 @@ Config Config::load() {
         cfg.base_url = j["base_url"].get<std::string>();
 
     if (j.contains("workers") && j["workers"].is_number_unsigned()) {
-        // Capped: each worker can hold a provider connection and a turn's worth of
-        // history, and a typo of 1000 would be a memory problem rather than a
-        // throughput win.
+        // Capped only to catch a typo — see kMaxWorkers, which is measured rather than
+        // guessed. A value under the cap is honoured exactly: silently running fewer
+        // workers than asked for reads as a ceiling in the software.
         uint32_t n = j["workers"].get<uint32_t>();
         cfg.workers = (n == 0) ? 1 : std::min(n, kMaxWorkers);
     }
