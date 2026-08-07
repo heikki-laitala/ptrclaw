@@ -215,6 +215,54 @@ TEST_CASE("Config::defaults_json: carries no persona", "[config][persona]") {
 
 // ── serving profile ─────────────────────────────────────────────
 
+// A pod's per-session store is write-only in practice: the session records facts, ends, and
+// nobody returns to that id — so it pays embedding calls, synthesis calls and three files on
+// disk for something never read again. Off by default there; an operator serving returning
+// conversations turns it back on.
+TEST_CASE("MemoryConfig: a serving build has no memory backend by default",
+          "[config][serving]") {
+    Config cfg;
+#ifdef PTRCLAW_HAS_SERVING
+    REQUIRE(cfg.memory.backend == "none");
+#else
+    REQUIRE(cfg.memory.backend != "none");
+#endif
+}
+
+// Through load(), which is the path a deployment takes: it merges defaults_json() into the
+// file and parses the result, so a hardcoded backend there would overwrite the build default
+// — the mistake caught in review on the isolation key.
+TEST_CASE("MemoryConfig: the backend default survives Config::load", "[config][serving]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config("{}");
+
+    Config cfg = Config::load();
+#ifdef PTRCLAW_HAS_SERVING
+    REQUIRE(cfg.memory.backend == "none");
+#else
+    REQUIRE(cfg.memory.backend != "none");
+#endif
+}
+
+TEST_CASE("MemoryConfig: defaults_json carries the build backend", "[config][serving]") {
+    auto defaults = Config::defaults_json();
+    REQUIRE(defaults["memory"].contains("backend"));
+#ifdef PTRCLAW_HAS_SERVING
+    REQUIRE(defaults["memory"]["backend"] == "none");
+#else
+    REQUIRE(defaults["memory"]["backend"] != "none");
+#endif
+}
+
+// A pod that serves returning conversations says so and gets a store, isolated per session.
+TEST_CASE("MemoryConfig: an explicit backend still wins", "[config][serving]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({"memory": {"backend": "json"}})");
+    REQUIRE(Config::load().memory.backend == "json");
+}
+
 // A serving build fences the filesystem per session; leaving memory shared would pair that
 // with one store every tenant reads and writes, so the default follows the build.
 TEST_CASE("MemoryConfig: a serving build isolates memory by default", "[config][serving]") {
@@ -459,7 +507,11 @@ TEST_CASE("Config::load: creates default config when missing", "[config]") {
     REQUIRE(j["agent"].contains("max_tool_iterations"));
     REQUIRE(j.contains("memory"));
     REQUIRE(j["memory"].contains("backend"));
-#ifdef PTRCLAW_HAS_SQLITE_MEMORY
+    // The serving build writes "none": a pod's per-session store is never read again, so
+    // the generated config must not hand it one.
+#ifdef PTRCLAW_HAS_SERVING
+    REQUIRE(j["memory"]["backend"] == "none");
+#elif defined(PTRCLAW_HAS_SQLITE_MEMORY)
     REQUIRE(j["memory"]["backend"] == "sqlite");
 #else
     REQUIRE(j["memory"]["backend"] == "json");
@@ -492,7 +544,11 @@ TEST_CASE("Config::load: migrates existing config with missing keys", "[config]"
     REQUIRE(j["providers"]["anthropic"]["api_key"] == "sk-test");
     REQUIRE(j["model"] == "gpt-4o");
     REQUIRE(j.contains("memory"));
-#ifdef PTRCLAW_HAS_SQLITE_MEMORY
+    // The serving build writes "none": a pod's per-session store is never read again, so
+    // the generated config must not hand it one.
+#ifdef PTRCLAW_HAS_SERVING
+    REQUIRE(j["memory"]["backend"] == "none");
+#elif defined(PTRCLAW_HAS_SQLITE_MEMORY)
     REQUIRE(j["memory"]["backend"] == "sqlite");
 #else
     REQUIRE(j["memory"]["backend"] == "json");

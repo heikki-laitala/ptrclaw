@@ -85,7 +85,17 @@ struct EmbeddingConfig {
 };
 
 struct MemoryConfig {
-#ifdef PTRCLAW_HAS_SQLITE_MEMORY
+    // A default, not a lock: an explicit "backend" in config always wins.
+    //
+    // Off in a serving build, because a pod's per-session store is write-only in practice —
+    // the session records facts, ends, and nobody returns to that id, so it pays an
+    // embedding call per turn, a synthesis call every few turns, and three files on disk for
+    // something never read again. "none" also removes the memory_* tools from the tool list
+    // (see ToolManager::publish_tool_specs), so the model is not offered a store it has no
+    // use for. A pod serving conversations a caller comes back to sets a backend explicitly.
+#ifdef PTRCLAW_HAS_SERVING
+    std::string backend = "none";
+#elif defined(PTRCLAW_HAS_SQLITE_MEMORY)
     std::string backend = "sqlite";
 #else
     std::string backend = "json";

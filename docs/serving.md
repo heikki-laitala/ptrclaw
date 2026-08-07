@@ -105,7 +105,6 @@ session reading mid-write. This is the same atomicity ptrclaw uses for its own s
 ```json
 {
   "workers": 8,
-  "memory": { "isolation": "session" },
   "channels": { "http": { "listen": "0.0.0.0:8080", "max_connections": 16 } },
   "agent": { "session_max_idle_seconds": 900, "max_sessions": 200 },
   "allow_channel_commands": false,
@@ -123,12 +122,32 @@ Two of these are easy to miss and change everything:
   process — simultaneous chats serialise. Raise it to run them in parallel. Turns are
   sharded by session id, so a session stays serialised with itself; it is not work-stealing,
   so uneven session load leaves workers idle.
+- **`memory.backend`** defaults to `"none"` in a serving build. A pod's per-session store is
+  write-only in practice: the session records facts, ends, and nobody returns to that id — so
+  it would pay an embedding call per turn, a synthesis call every few turns, and three files
+  on disk for something never read again. `"none"` also removes the `memory_*` tools from the
+  tool list, so the model is not offered a store it has no use for.
 - **`memory.isolation`** defaults to `"session"` in a serving build (and `"shared"`
-  everywhere else), so isolated tasks need no extra configuration.
+  everywhere else), so a pod that *does* enable a backend is isolated without extra
+  configuration.
 
 `max_connections` governs how many callers can be *waiting*, so keep it above `workers`.
 `allow_channel_commands` stays false: slash commands are the operator's surface, and `/auth`
 is refused on channels regardless.
+
+### Turning memory back on
+
+Both memory keys are defaults, not locks. A pod serving conversations a caller returns to
+says so, and gets a store isolated per session:
+
+```json
+{ "memory": { "backend": "sqlite", "isolation": "session" } }
+```
+
+Two things come with that, and neither is bounded today: `sessions/<key>/` is never deleted
+(eviction drops the instance, not the files), and enrichment runs on every turn — with
+`embeddings.provider` set that is an embedding call per turn, against a store that starts
+empty for every new session.
 
 `agent.max_sessions` (0 = unlimited) bounds how many sessions exist at once. It matters most
 with generated ids: a caller that never echoes the announced id back mints a session per

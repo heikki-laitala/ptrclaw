@@ -51,7 +51,12 @@ nlohmann::json Config::defaults_json() {
             {"whatsapp", {{"access_token", ""}, {"phone_number_id", ""}, {"verify_token", ""}, {"app_secret", ""}, {"allow_from", nlohmann::json::array()}, {"webhook_listen", ""}, {"webhook_secret", ""}, {"webhook_max_body", 65536}}}
         }},
         {"memory", {
-#ifdef PTRCLAW_HAS_SQLITE_MEMORY
+            // Build-dependent, like MemoryConfig::backend itself: load() merges this into
+            // the file and parses the result, so a hardcoded backend here would overwrite
+            // the build's default and hand a pod a store it never reads.
+#ifdef PTRCLAW_HAS_SERVING
+            {"backend", "none"},
+#elif defined(PTRCLAW_HAS_SQLITE_MEMORY)
             {"backend", "sqlite"},
 #else
             {"backend", "json"},
