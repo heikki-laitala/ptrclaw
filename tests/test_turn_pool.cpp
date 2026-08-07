@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "turn_pool.hpp"
+#include "config.hpp"
 #include "event.hpp"
 #include "event_bus.hpp"
 #include <atomic>
@@ -365,4 +366,20 @@ TEST_CASE("TurnPool: stop does not wait out a backlog", "[turn_pool]") {
     REQUIRE(ran.load() < 50);
     // 50 x 20ms would be a full second; one in-flight turn is ~20ms.
     REQUIRE(elapsed < std::chrono::milliseconds(500));
+}
+
+TEST_CASE("TurnPool: the configured ceiling is constructible and joins cleanly",
+          "[turn_pool]") {
+    // kMaxWorkers was raised from 64 to 1024, which is only meaningful if a pool that size
+    // starts and shuts down. Construction that throws part-way is handled by stopping and
+    // joining what exists — unwinding with joinable threads alive calls std::terminate —
+    // but that path needs a thread limit to trip and is not reachable from a unit test, so
+    // this pins the reachable half.
+    EventBus bus;
+    {
+        TurnPool pool(bus, kMaxWorkers);
+        REQUIRE(pool.workers() == kMaxWorkers);
+        REQUIRE(pool.idle());
+    }  // destructor joins every worker; a leak or a missed join hangs or crashes here
+    SUCCEED("pool of kMaxWorkers workers constructed and destroyed");
 }

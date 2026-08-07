@@ -1,6 +1,8 @@
 #include "http.hpp"
 
 #include <curl/curl.h>
+
+#include <csignal>
 #include <string>
 
 namespace ptrclaw {
@@ -8,6 +10,12 @@ namespace ptrclaw {
 static const std::atomic<bool>* g_http_abort_flag = nullptr;
 
 void http_init() {
+    // Before curl_global_init, and required by the CURLOPT_NOSIGNAL in setup_request().
+    // With that option libcurl no longer wraps each transfer in a SIGPIPE guard, so a
+    // provider closing a TLS connection mid-write raises SIGPIPE — whose default action is
+    // to terminate the process. A pod dying because one request's peer hung up is not a
+    // trade worth making; ignoring it turns the same event into an EPIPE the caller sees.
+    std::signal(SIGPIPE, SIG_IGN);
     curl_global_init(CURL_GLOBAL_ALL);
 }
 

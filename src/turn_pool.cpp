@@ -14,8 +14,18 @@ TurnPool::TurnPool(EventBus& bus, uint32_t workers) : bus_(bus) {
     }
 
     threads_.reserve(workers);
-    for (uint32_t i = 0; i < workers; ++i) {
-        threads_.emplace_back([this, i] { run(i); });
+    try {
+        for (uint32_t i = 0; i < workers; ++i) {
+            threads_.emplace_back([this, i] { run(i); });
+        }
+    } catch (...) {
+        // A thread that cannot be created throws, and unwinding here would destroy the
+        // joinable threads already started — which calls std::terminate and takes the
+        // process down before main can report anything. stop() signals them, drains the
+        // queues and joins, leaving an empty pool to destroy. Reachable in a container with
+        // a low pid limit, and more so now that workers may be configured in the hundreds.
+        stop();
+        throw;
     }
 }
 
