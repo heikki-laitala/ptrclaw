@@ -333,16 +333,20 @@ void SessionManager::dispatch_message(const MessageReceivedEvent& ev) {
     // that supplies the history has already said who this agent is, and there is
     // nobody at the far end of an onboarding interview to answer it.
     //
-    // Never under per-session memory either, and for the same reason one step further
-    // out. With a shared store "has this agent been hatched" is asked once for the whole
-    // process, and the first visitor is the operator often enough for the interview to be
-    // worth having. With a store per session it is asked again for every session, so a pod
-    // serving many callers would open each one with the ceremony — and start_hatch()
-    // replaces the entire system prompt with the interview, which carries no tools, so the
-    // session cannot do the work it was asked for until somebody answers questions about
-    // what to call the assistant. Nobody at the far end of an HTTP request is going to.
-    const bool memory_per_session = config_.memory.isolation == "session";
-    if (!ev.message.history && agent.memory() && !memory_per_session
+    // Never on a pod either, and for the same reason one step further out: start_hatch()
+    // replaces the entire system prompt with the interview, tools included, so the session
+    // cannot do the work it was asked for until somebody answers questions about what to
+    // call the assistant — and nobody at the far end of a served request is going to.
+    //
+    // Keyed on a configured workspace rather than on per-session memory, which was the
+    // obvious signal and the wrong one. Session isolation is a storage layout, and
+    // docs/memory.md documents one interview per chat under it; a Telegram user is a person
+    // who can answer, while /hatch sits behind allow_channel_commands, so suppressing it
+    // there would leave them no way to create an identity at all. A configured workspace or
+    // shared context is a deployment saying it serves callers instead of a person.
+    const bool serving_pod = !config_.serving.workspace_root.empty() ||
+                             !config_.serving.context_dir.empty();
+    if (!ev.message.history && agent.memory() && !serving_pod
         && !agent.is_hatched() && !agent.hatching()) {
         agent.start_hatch();
     }
