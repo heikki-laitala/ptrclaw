@@ -410,3 +410,29 @@ TEST_CASE("TurnPool: the configured ceiling is constructible and joins cleanly",
     }  // destructor joins every worker; a leak or a missed join hangs or crashes here
     SUCCEED("pool of kMaxWorkers workers constructed and destroyed");
 }
+
+TEST_CASE("TurnPool: destroying a pool the instant its turns finish is safe",
+          "[turn_pool]") {
+    // The workers are detached, so stop() waiting for in_flight_ to reach zero *is* the
+    // join. If a worker published that zero before its last touch of the pool, stop() could
+    // return and the pool be destroyed while that worker was still calling notify on its
+    // condition variables.
+    //
+    // Probabilistic by nature — it races destruction against worker exit rather than
+    // proving the ordering — so it runs the window many times and is worth far more under
+    // a sanitiser than on its own.
+    EventBus bus;
+    std::atomic<int> ran{0};
+    subscribe<MessageReceivedEvent>(bus, [&ran](const MessageReceivedEvent&) { ++ran; });
+
+    for (int round = 0; round < 300; ++round) {
+        TurnPool pool(bus, 4);
+        pool.submit(make_event("a"));
+        pool.submit(make_event("b"));
+        pool.submit(make_event("c"));
+        pool.submit(make_event("d"));
+        // No drain(): the destructor runs while those turns are finishing, which is the
+        // interleaving being tested.
+    }
+    SUCCEED("300 pools destroyed while their turns were completing");
+}
