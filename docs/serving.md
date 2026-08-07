@@ -17,9 +17,22 @@ make test-serving       # the profile's own assertions
 That is `-Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false -Dwith_http=true`,
 plus `-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false
 -Dwith_compatible=false` — **the pod talks to OpenAI and nothing else**, over chat
-completions and the ChatGPT-subscription OAuth flow. Re-enable any of them with
-`-Dwith_<name>=true` if a deployment needs it; nothing else in the profile depends on the
-choice.
+completions and the ChatGPT-subscription OAuth flow.
+
+To re-enable one, override the variable rather than reconfiguring the build directory by
+hand — the target re-applies these flags on every run, so a `meson configure` would be
+undone by the next `make build-serving`:
+
+```sh
+make build-serving SERVING_PROVIDERS="-Dwith_anthropic=true"
+```
+
+An OpenAI-compatible *gateway* needs no extra provider: point `providers.openai.base_url`
+at it and the `openai` provider posts to `<base_url>/chat/completions`. A custom base URL
+also wins over the Responses API, so a gateway keeps receiving chat completions even with
+`use_oauth` on. Note that the `compatible` and `openrouter` providers do **not** forward
+`providers.openai.user` — only the `openai` factory calls `set_user()` — so a gateway that
+requires a `user` field must be reached through the `openai` provider.
 
 `Config`'s default provider follows the build (`src/config.hpp`), so a pod config that omits
 `"provider"` still starts on OpenAI rather than failing with `Unknown provider: anthropic`.

@@ -681,6 +681,14 @@ TEST_CASE("Config: the default provider is compiled into this build", "[config]"
 
 TEST_CASE("Config: the default model belongs to the default provider", "[config]") {
     Config cfg;
+    // The compatible provider is the exception and deliberately so: the endpoint and its
+    // model names both belong to the operator, so there is nothing to guess.
+#if defined(PTRCLAW_HAS_COMPATIBLE) && !defined(PTRCLAW_HAS_ANTHROPIC) && \
+    !defined(PTRCLAW_HAS_OPENAI_PROVIDER) && !defined(PTRCLAW_HAS_OPENROUTER) && \
+    !defined(PTRCLAW_HAS_OLLAMA)
+    REQUIRE(cfg.model.empty());
+    return;
+#endif
     REQUIRE_FALSE(cfg.model.empty());
     // Pairing matters as much as the provider itself: an OpenAI-only build defaulting to a
     // Claude model would authenticate fine and then be refused by the API.
@@ -782,4 +790,34 @@ TEST_CASE("Config: explicit capacity settings beat the build defaults",
     REQUIRE(cfg.workers == 3);
     REQUIRE(cfg.agent.max_sessions == 7);
     REQUIRE(cfg.agent.session_max_idle_seconds == 42);
+}
+
+// The default provider must be one the build was *asked* for, not merely one whose code got
+// linked. `opt_openai` in meson.build is the OR of with_openai, with_openrouter and
+// with_compatible — because the latter two inherit OpenAIProvider — so an OpenRouter-only
+// build still compiles and registers "openai". A default keyed on that would pick a
+// provider the operator never enabled and fail with "No API key for openai".
+TEST_CASE("Config: the default provider is one this build was asked for", "[config]") {
+    Config cfg;
+#if defined(PTRCLAW_HAS_ANTHROPIC)
+    REQUIRE(cfg.provider == "anthropic");
+#elif defined(PTRCLAW_HAS_OPENAI_PROVIDER)
+    REQUIRE(cfg.provider == "openai");
+#elif defined(PTRCLAW_HAS_OPENROUTER)
+    REQUIRE(cfg.provider == "openrouter");
+#elif defined(PTRCLAW_HAS_OLLAMA)
+    REQUIRE(cfg.provider == "ollama");
+#elif defined(PTRCLAW_HAS_COMPATIBLE)
+    REQUIRE(cfg.provider == "compatible");
+#else
+    REQUIRE(cfg.provider.empty());  // nothing to talk to, and no default worth inventing
+#endif
+}
+
+// The macro-free half of the same invariant: whatever the default is, this binary must be
+// able to construct it.
+TEST_CASE("Config: the default provider is registered", "[config]") {
+    Config cfg;
+    if (cfg.provider.empty()) return;  // a build with no providers at all
+    REQUIRE(PluginRegistry::instance().has_provider(cfg.provider));
 }
