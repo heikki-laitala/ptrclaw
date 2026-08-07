@@ -9,6 +9,8 @@
 
 #include "http.hpp"
 
+#include <csignal>
+
 #ifdef PTRCLAW_USE_MBEDTLS
 #include <mbedtls/version.h>
 #include <mbedtls/ssl.h>
@@ -48,7 +50,12 @@ namespace ptrclaw {
 
 static const std::atomic<bool>* g_socket_abort_flag = nullptr;
 
-void http_init() {}
+void http_init() {
+    // The socket backend writes to sockets directly, so a peer that hangs up mid-write
+    // raises SIGPIPE here too and its default action is to terminate the process. Kept in
+    // step with the libcurl backend, which needs this because it sets CURLOPT_NOSIGNAL.
+    std::signal(SIGPIPE, SIG_IGN);
+}
 void http_cleanup() {}
 
 void http_set_abort_flag(const std::atomic<bool>* flag) {

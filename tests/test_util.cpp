@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "util.hpp"
+#include "http.hpp"
+#include <csignal>
 
 using namespace ptrclaw;
 
@@ -228,4 +230,19 @@ TEST_CASE("secure_random_hex: successive values differ", "[util]") {
 
 TEST_CASE("secure_random_hex: zero bytes is empty", "[util]") {
     REQUIRE(secure_random_hex(0).empty());
+}
+
+// ── SIGPIPE ─────────────────────────────────────────────────────
+
+TEST_CASE("http_init: SIGPIPE is ignored process-wide", "[http]") {
+    // Required by CURLOPT_NOSIGNAL, which stops libcurl suppressing SIGPIPE around each
+    // transfer. A provider closing an OpenSSL-backed connection mid-write would otherwise
+    // raise SIGPIPE, whose default action is to terminate — killing the whole pod over one
+    // failed request. The socket backend writes to sockets too, so both need it.
+    ptrclaw::http_init();
+
+    // signal() returns the previous disposition, so this reads it and puts it straight back.
+    auto previous = std::signal(SIGPIPE, SIG_IGN);
+    REQUIRE(previous == SIG_IGN);
+    std::signal(SIGPIPE, previous);
 }
