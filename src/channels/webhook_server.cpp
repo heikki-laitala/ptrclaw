@@ -1,6 +1,8 @@
 #include "channels/webhook_server.hpp"
 #include "util.hpp"
 
+#include <limits>
+
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -91,6 +93,19 @@ bool parse_listen_addr(const std::string& addr, std::string& host, uint16_t& por
 
 // ── WebhookServer ─────────────────────────────────────────────────────
 
+int listen_backlog(uint32_t max_connections) {
+    // A floor, because a single-connection server still wants somewhere for the next
+    // caller to wait rather than being reset while the current one is served.
+    constexpr uint32_t kMinBacklog = 16;
+    uint32_t depth = max_connections > kMinBacklog ? max_connections : kMinBacklog;
+    // int is what listen() takes; nothing here approaches the limit, but the clamp keeps a
+    // configured value from wrapping into a negative backlog.
+    if (depth > static_cast<uint32_t>(std::numeric_limits<int>::max())) {
+        return std::numeric_limits<int>::max();
+    }
+    return static_cast<int>(depth);
+}
+
 WebhookServer::WebhookServer(std::string listen_addr,
                                              uint32_t max_body,
                                              Handler handler,
@@ -150,7 +165,7 @@ bool WebhookServer::start(std::string& error) {
         return false;
     }
 
-    if (::listen(server_fd_, 16) != 0) {
+    if (::listen(server_fd_, listen_backlog(max_connections_)) != 0) {
         error = "listen failed";
         ::close(server_fd_); server_fd_ = -1;
         ::close(shutdown_pipe_[0]); ::close(shutdown_pipe_[1]);
