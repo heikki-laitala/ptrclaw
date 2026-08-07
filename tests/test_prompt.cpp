@@ -92,7 +92,7 @@ TEST_CASE("build_system_prompt: includes safety section", "[prompt]") {
 }
 
 TEST_CASE("build_system_prompt: includes runtime info", "[prompt]") {
-    RuntimeInfo runtime{"claude-sonnet-4", "anthropic", "telegram", "", ""};
+    RuntimeInfo runtime{"claude-sonnet-4", "anthropic", "telegram", "", "", "", ""};
     auto result = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr, runtime);
     REQUIRE(result.find("## Runtime") != std::string::npos);
     REQUIRE(result.find("claude-sonnet-4") != std::string::npos);
@@ -106,7 +106,7 @@ TEST_CASE("build_system_prompt: silent replies only with channel", "[prompt]") {
     REQUIRE(result.find("[SILENT]") == std::string::npos);
 
     // With channel — has silent replies
-    RuntimeInfo runtime{"", "", "telegram", "", ""};
+    RuntimeInfo runtime{"", "", "telegram", "", "", "", ""};
     auto result2 = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr, runtime);
     REQUIRE(result2.find("[SILENT]") != std::string::npos);
 }
@@ -119,7 +119,7 @@ TEST_CASE("build_system_prompt: workspace section present", "[prompt]") {
 // Unscoped — the personal agent — still gets the process cwd, unchanged.
 TEST_CASE("build_system_prompt: an unscoped session is told the working directory",
           "[prompt]") {
-    RuntimeInfo runtime{"model", "provider", "", "", "sess"};
+    RuntimeInfo runtime{"model", "provider", "", "", "sess", "", ""};
     auto result = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr,
                                       runtime);
     REQUIRE(result.find("Working directory:") != std::string::npos);
@@ -153,7 +153,7 @@ TEST_CASE("build_system_prompt: a scoped session with no shared context", "[prom
 
 TEST_CASE("build_system_prompt: includes binary path and session", "[prompt]") {
     RuntimeInfo runtime{"model", "provider", "telegram",
-                        "/usr/local/bin/ptrclaw", "123456789"};
+                        "/usr/local/bin/ptrclaw", "123456789", "", ""};
     auto result = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr, runtime);
     REQUIRE(result.find("Binary: /usr/local/bin/ptrclaw") != std::string::npos);
     REQUIRE(result.find("Session: 123456789") != std::string::npos);
@@ -172,7 +172,7 @@ TEST_CASE("build_system_prompt: scheduling hint with cron tool", "[prompt]") {
     std::vector<std::unique_ptr<Tool>> tools;
     tools.push_back(std::make_unique<MockCronTool>());
     RuntimeInfo runtime{"model", "provider", "telegram",
-                        "/usr/local/bin/ptrclaw", "123456789"};
+                        "/usr/local/bin/ptrclaw", "123456789", "", ""};
     auto result = build_system_prompt(specs_from(tools), false, false, nullptr, runtime);
     REQUIRE(result.find("## Scheduled Tasks") != std::string::npos);
     REQUIRE(result.find("/usr/local/bin/ptrclaw -m") != std::string::npos);
@@ -182,7 +182,7 @@ TEST_CASE("build_system_prompt: scheduling hint with cron tool", "[prompt]") {
 TEST_CASE("build_system_prompt: no scheduling hint without binary path", "[prompt]") {
     std::vector<std::unique_ptr<Tool>> tools;
     tools.push_back(std::make_unique<MockCronTool>());
-    RuntimeInfo runtime{"model", "provider", "telegram", "", ""};
+    RuntimeInfo runtime{"model", "provider", "telegram", "", "", "", ""};
     auto result = build_system_prompt(specs_from(tools), false, false, nullptr, runtime);
     REQUIRE(result.find("## Scheduled Tasks") == std::string::npos);
 }
