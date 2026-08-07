@@ -83,18 +83,25 @@ build-minimal:
 # compiled out. Config's default provider follows the build (src/config.hpp), so a pod
 # config that omits "provider" still starts.
 #
-# Overridable, and it has to be: these flags are re-applied on every reconfigure, so
-# `meson configure` by hand would be undone by the next `make build-serving`.
+# The baseline is not overridable. Replacing it wholesale is the trap: a partial override
+# would drop the remaining false flags, and those options default to true in meson, so
+# asking for one provider would quietly compile in every provider.
+SERVING_PROVIDER_BASE := -Dwith_anthropic=false -Dwith_ollama=false \
+	-Dwith_openrouter=false -Dwith_compatible=false
+
+# Appended after the baseline instead. meson takes the last value for a repeated option, so
+# this re-enables exactly what it names and leaves the rest off. Overriding is necessary
+# rather than optional: these flags are re-applied on every reconfigure, so a `meson
+# configure` by hand would be undone by the next `make build-serving`.
 #
 #   make build-serving SERVING_PROVIDERS="-Dwith_anthropic=true"
 #
-SERVING_PROVIDERS ?= -Dwith_anthropic=false -Dwith_ollama=false \
-	-Dwith_openrouter=false -Dwith_compatible=false
+SERVING_PROVIDERS ?=
 
 SERVING_OPTS := -Dcatch2:tests=false \
 	-Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false \
 	-Dwith_http=true -Dwith_telegram=false -Dwith_whatsapp=false \
-	$(SERVING_PROVIDERS) $(SIZE_FLAGS)
+	$(SERVING_PROVIDER_BASE) $(SERVING_PROVIDERS) $(SIZE_FLAGS)
 
 build-serving:
 	$(call setup_size,$(SERVEDIR),$(SERVING_OPTS))
@@ -104,7 +111,7 @@ build-serving:
 # The profile's own assertions — which tools are absent — only hold in this configuration,
 # so they need a build of their own rather than a filter on the default suite.
 SERVING_TEST_OPTS := -Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false \
-	-Dwith_http=true $(SERVING_PROVIDERS)
+	-Dwith_http=true $(SERVING_PROVIDER_BASE) $(SERVING_PROVIDERS)
 
 test-serving:
 	$(call setup_size,$(SERVEDIR)-test,$(SERVING_TEST_OPTS))
