@@ -496,31 +496,60 @@ being a correctness question and become purely a memory one.
 
 ### Pushed history and tool calls
 
-A pushed window carries `system`, `user` and `assistant` text. **`role: "tool"` is refused
-with a 400**, deliberately: a tool result is only meaningful paired with the `tool_call_id`
-of the call it answers, and the assistant turn carrying the original `tool_calls` cannot be
-expressed in this schema either. Accepting the role and dropping the association would send
-unassociated tool results to the provider, which fails in more confusing ways than a refusal.
+A turn that ran tools is not just text. Where the transcript is owned outside the pod — a
+caller that pushes `history` with every request rather than letting the session accumulate it
+— both halves of the exchange have to cross the boundary, or a replayed conversation
+reconstructs as though no tool had run and the model loses what the tool told it.
 
-Within a turn this changes nothing. The agent runs its whole tool loop internally, bounded by
-`agent.max_tool_iterations`, and the intermediate assistant and tool messages live in the
-pod for the duration. The caller sees the final reply.
+**Out**, on the same stream as the tokens and in order with them:
 
-Across turns it does. Replaying a window reconstructs the conversation as if the tools had
-never been called: the model sees the question and its own answer, not the file it read or
-the command's output. In practice that is usually enough, because the answer states what the
-tool found — but a fact the model learned only from raw tool output and never wrote into its
-reply is gone, and it may re-run a tool whose result it no longer has.
+```
+event: tool_call
+data: {"id":"call_1","name":"file_read","arguments":"{\"path\":\"notes.md\"}"}
 
-Two things follow, and the second is the useful one:
+event: tool_result
+data: {"id":"call_1","name":"file_read","success":true,"output":"Deadline: 30 April."}
+```
 
-- Prompt for it. A persona that tells the agent to state the facts its answer rests on makes
-  the reply carry what the next turn needs. The reply *is* the memory in this mode.
-- **Use the workspace for anything that must survive.** A session's directory is derived
-  from its id, so the same id gets the same directory even after the session has been
-  evicted and rebuilt — files outlive the conversation, unlike history, and are removed only
-  by `POST /session/end`. Writing a tool's output to a file and reading it back next turn is
-  durable where replayed history is not.
+`arguments` is the raw JSON string the model produced rather than a re-encoded object, so
+what a caller stores is exactly what was sent. New event types are additive for SSE — a
+client subscribes to the names it knows — so one reading only `token` and `done` is
+unaffected by these.
+
+**Back in**, as two entry shapes `history` accepts:
+
+```json
+{"role": "assistant", "content": "",
+ "tool_calls": [{"id": "call_1", "name": "file_read", "arguments": "{\"path\":\"notes.md\"}"}]}
+{"role": "tool", "content": "Deadline: 30 April.", "tool_call_id": "call_1", "name": "file_read"}
+```
+
+They map onto the representation the agent builds for its own history, so the providers
+replay them the way they replay a turn they ran themselves — Anthropic as `tool_use` and
+`tool_result` blocks, OpenAI as a `tool_calls` array with `role: "tool"` answers.
+
+**The pairing is checked, and an unbalanced window is a 400 naming the id.** A result whose
+call is absent, or a call with no result, is rejected by the provider outright, so it is
+caught here where the error can say which id is at fault:
+
+```
+{"error":"tool result 'call_1' answers no preceding tool call"}
+{"error":"tool call 'call_1' has no result in this window"}
+```
+
+Two things worth deciding deliberately:
+
+- **Size.** Tool output can be large, and replaying it costs the wire on every turn.
+  `agent.max_history_messages` bounds what the pod keeps; nothing bounds what a caller
+  chooses to send. Truncating an old tool result is reasonable — but truncate its *content*
+  and keep the message, or the window becomes unbalanced and is refused.
+- **What it is for.** A tool result is the only record of what the agent saw. Dropped from
+  the transcript, a later turn cannot tell what the file said — only what the assistant
+  claimed about it.
+
+The **workspace** is the other durable channel, and often the better one for bulk: a
+session's directory derives from its id, so it survives eviction and restart, and a tool can
+write there instead of returning everything through the conversation.
 
 One trap when pushing: **do not send a system message as `history[0]`**. `set_history()`
 then treats it as the whole prompt and ptrclaw's own is never injected — the session loses

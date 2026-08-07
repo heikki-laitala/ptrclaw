@@ -1,4 +1,6 @@
 #include "channels/http.hpp"
+
+#include <algorithm>
 #include "event.hpp"
 #include "event_bus.hpp"
 #include "plugin.hpp"
@@ -55,11 +57,59 @@ WebhookResponse json_error(int status, const std::string& message) {
 
 // Parse a pushed history window. Returns false on anything malformed: a caller that meant
 // to push context and got it wrong should be told, not silently answered without it.
+// Reads the tool_calls an assistant entry carries into the form Agent stores them in: a
+// JSON array in the message's `name` field, which is what the providers already read back
+// when they replay a turn (anthropic.cpp maps it to tool_use blocks, openai.cpp to a
+// tool_calls array). Nothing new is invented here — this is the same encoding agent.cpp
+// writes at the end of every tool-calling iteration.
+bool parse_tool_calls(const json& raw, std::string& encoded,
+                      std::vector<std::string>& ids, std::string& error) {
+    if (!raw.is_array()) {
+        error = "'tool_calls' must be an array";
+        return false;
+    }
+    json calls = json::array();
+    for (const auto& call : raw) {
+        if (!call.is_object() || !call.contains("id") || !call["id"].is_string() ||
+            !call.contains("name") || !call["name"].is_string()) {
+            error = "each tool call needs string 'id' and 'name'";
+            return false;
+        }
+        // Arguments travel as the raw JSON string the model produced, which is how
+        // ToolCall holds them — re-encoding an object here would not round-trip a model
+        // that emitted something unusual, and the stream hands them out the same way.
+        std::string arguments = "{}";
+        if (call.contains("arguments")) {
+            if (!call["arguments"].is_string()) {
+                error = "tool call 'arguments' must be a string of JSON";
+                return false;
+            }
+            arguments = call["arguments"].get<std::string>();
+        }
+        ids.push_back(call["id"].get<std::string>());
+        calls.push_back({{"id", call["id"]}, {"name", call["name"]},
+                         {"arguments", arguments}});
+    }
+    if (calls.empty()) {
+        error = "'tool_calls' must not be empty";
+        return false;
+    }
+    encoded = calls.dump();
+    return true;
+}
+
 bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& error) {
     if (!raw.is_array()) {
         error = "history must be an array";
         return false;
     }
+    // Every tool_call_id offered by an assistant entry, and every one answered by a tool
+    // entry. They have to match: a result answering nothing, or a call left unanswered, is
+    // rejected by the provider rather than tolerated — so it is caught here, where the
+    // error can name the id.
+    std::vector<std::string> offered;
+    std::vector<std::string> answered;
+
     for (const auto& entry : raw) {
         if (!entry.is_object() || !entry.contains("role") || !entry.contains("content") ||
             !entry["role"].is_string() || !entry["content"].is_string()) {
@@ -67,27 +117,52 @@ bool parse_history(const json& raw, std::vector<ChatMessage>& out, std::string& 
             return false;
         }
         const std::string role = entry["role"].get<std::string>();
-        Role parsed{};
-        if      (role == "system")    parsed = Role::System;
-        else if (role == "user")      parsed = Role::User;
-        else if (role == "assistant") parsed = Role::Assistant;
-        else if (role == "tool") {
-            // Refused rather than half-supported. A tool result is only meaningful paired
-            // with the tool_call_id of the call it answers — Anthropic emits tool_use_id
-            // from it (providers/anthropic.cpp:78) and OpenAI omits tool_call_id entirely
-            // when absent (providers/openai.cpp:81) — and the assistant turn carrying the
-            // original tool_calls is not expressible in this schema either. Accepting the
-            // role while dropping the association would send unassociated tool results to
-            // the provider, which is worse than saying no.
-            error = "role 'tool' is not supported: a pushed window cannot carry the "
-                    "tool_call_id a tool result needs";
-            return false;
-        }
-        else {
+        const std::string content = entry["content"].get<std::string>();
+
+        if (role == "system") {
+            out.push_back(ChatMessage{Role::System, content, {}, {}});
+        } else if (role == "user") {
+            out.push_back(ChatMessage{Role::User, content, {}, {}});
+        } else if (role == "assistant") {
+            std::optional<std::string> encoded;
+            if (entry.contains("tool_calls")) {
+                std::string calls;
+                if (!parse_tool_calls(entry["tool_calls"], calls, offered, error)) {
+                    return false;
+                }
+                encoded = calls;
+            }
+            out.push_back(ChatMessage{Role::Assistant, content, encoded, {}});
+        } else if (role == "tool") {
+            if (!entry.contains("tool_call_id") || !entry["tool_call_id"].is_string() ||
+                entry["tool_call_id"].get<std::string>().empty()) {
+                error = "a 'tool' entry needs a non-empty 'tool_call_id': a result is only "
+                        "meaningful paired with the call it answers";
+                return false;
+            }
+            const std::string id = entry["tool_call_id"].get<std::string>();
+            if (std::find(offered.begin(), offered.end(), id) == offered.end()) {
+                error = "tool result '" + id + "' answers no preceding tool call";
+                return false;
+            }
+            answered.push_back(id);
+            // `name` carries the tool name, matching format_tool_result_message().
+            std::optional<std::string> name;
+            if (entry.contains("name") && entry["name"].is_string()) {
+                name = entry["name"].get<std::string>();
+            }
+            out.push_back(ChatMessage{Role::Tool, content, name, id});
+        } else {
             error = "unknown role '" + role + "'";
             return false;
         }
-        out.push_back(ChatMessage{parsed, entry["content"].get<std::string>(), {}, {}});
+    }
+
+    for (const auto& id : offered) {
+        if (std::find(answered.begin(), answered.end(), id) == answered.end()) {
+            error = "tool call '" + id + "' has no result in this window";
+            return false;
+        }
     }
     return true;
 }
@@ -153,6 +228,34 @@ void HttpChannel::set_event_bus(EventBus* bus) {
     // Subscribed directly rather than through StreamRelay, which is gated on
     // supports_streaming_display() and throttles deltas into progressive edit_message()
     // calls — Telegram's edit-in-place model. SSE wants every token, unthrottled, in order.
+    // Tool activity goes out on the same stream as the tokens, in order.
+    //
+    // Without it a turn is only observable as text, so a caller that owns the transcript
+    // cannot record what the agent actually did — and a window pushed back reconstructs
+    // the conversation as though no tool had run. Both frames carry the tool_call_id,
+    // which is what makes the exchange pushable back through `history`.
+    //
+    // New event types are additive for SSE: a client subscribes to the names it knows, so
+    // one reading `token` and `done` is unaffected by these.
+    subscribe<ToolCallRequestEvent>(*bus_, [this](const ToolCallRequestEvent& ev) {
+        enqueue_frame(ev.session_id, sse_frame("tool_call", json{
+            {"id", ev.tool_call_id},
+            {"name", ev.tool_name},
+            // The raw JSON string the model produced, not a re-encoded object: a caller
+            // pushing it back must be able to hand over exactly what was sent.
+            {"arguments", ev.arguments_json},
+        }));
+    });
+
+    subscribe<ToolCallResultEvent>(*bus_, [this](const ToolCallResultEvent& ev) {
+        enqueue_frame(ev.session_id, sse_frame("tool_result", json{
+            {"id", ev.tool_call_id},
+            {"name", ev.tool_name},
+            {"success", ev.success},
+            {"output", ev.output},
+        }));
+    });
+
     subscribe<StreamChunkEvent>(*bus_, [this](const StreamChunkEvent& ev) {
         append_delta(ev.session_id, ev.delta);
     });
@@ -416,7 +519,7 @@ void HttpChannel::stream_turn(const std::string& session, const TurnRef& turn,
             // The turn is held by shared_ptr, so it stays alive even once erased from the
             // map — which is what makes `detached` readable rather than a dangling read.
             const bool ready = turn->cv.wait_until(lk, deadline, [&] {
-                return turn->detached || !turn->deltas.empty() || turn->done;
+                return turn->detached || !turn->pending.empty() || turn->done;
             });
 
             if (!ready) {
@@ -431,9 +534,9 @@ void HttpChannel::stream_turn(const std::string& session, const TurnRef& turn,
             // and anything now queued under that id belongs to a different client.
             if (turn->detached) return;
 
-            if (!turn->deltas.empty()) {
-                frame = sse_frame("token", json{{"delta", turn->deltas.front()}});
-                turn->deltas.pop_front();
+            if (!turn->pending.empty()) {
+                frame = turn->pending.front();
+                turn->pending.pop_front();
             } else if (!turn->error.empty()) {
                 frame = sse_frame("error", json{{"message", turn->error}});
                 last = true;
@@ -460,12 +563,16 @@ void HttpChannel::stream_turn(const std::string& session, const TurnRef& turn,
 }
 
 void HttpChannel::append_delta(const std::string& session, const std::string& delta) {
+    enqueue_frame(session, sse_frame("token", json{{"delta", delta}}));
+}
+
+void HttpChannel::enqueue_frame(const std::string& session, const std::string& frame) {
     TurnRef turn;
     {
         std::lock_guard<std::mutex> lk(turn_mutex_);
         auto it = turns_.find(session);
         if (it == turns_.end()) return;  // not ours, or already finished
-        it->second->deltas.push_back(delta);
+        it->second->pending.push_back(frame);
         turn = it->second;
     }
     // One waiter, not every connection in the process. Outside the lock so the woken

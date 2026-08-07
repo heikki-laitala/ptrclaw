@@ -92,7 +92,11 @@ private:
     // One in-flight turn. `deltas` is a queue rather than a string because the connection
     // thread must be able to emit each token as it arrives.
     struct Turn {
-        std::deque<std::string> deltas;
+        // Pre-rendered SSE frames waiting to go out, in the order they were produced.
+        // Rendered at enqueue rather than at write so tokens and tool events can share one
+        // queue: their relative order is what tells a caller which tool a sentence came
+        // from, and two queues could not preserve it.
+        std::deque<std::string> pending;
         std::string             final_content;
         std::string             error;
         bool                    done = false;
@@ -134,6 +138,8 @@ private:
     // Ends every in-flight turn with an error and wakes the threads writing them.
     void release_pending_turns(const std::string& reason);
     void append_delta(const std::string& session, const std::string& delta);
+    // Queues an already-rendered frame on the session's turn, if one is in flight.
+    void enqueue_frame(const std::string& session, const std::string& frame);
     void fail_turn(const std::string& session, const std::string& error);
 
     HttpChannelConfig              config_;

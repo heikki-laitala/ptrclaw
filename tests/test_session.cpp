@@ -1128,3 +1128,50 @@ TEST_CASE("SessionManager: a session that is ending frees its slot on reap", "[s
     mgr.reap_ended();
     REQUIRE_NOTHROW(mgr.get_session("task-43"));
 }
+
+TEST_CASE("SessionManager: a pushed tool exchange reaches the provider intact",
+          "[session]") {
+    // The round trip that makes an externally-owned transcript possible: what the stream
+    // hands out as tool_call/tool_result frames has to come back through `history` and
+    // reach the provider as the tool blocks it understands. Anthropic's shape is asserted
+    // because it is the one this build speaks; the encoding is the same for both.
+    MockHttpClient http;
+    http.next_response = {200, kStubReply};
+    REQUIRE_TEST_PROVIDER("anthropic");
+    auto cfg = make_pushed_history_config();
+
+    EventBus bus;
+    SessionManager mgr(cfg, http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    // Exactly the representation parse_history() builds from a pushed window: the calls
+    // encoded as JSON in the assistant message's name field, the result carrying the id.
+    const std::string calls =
+        R"([{"id":"call_1","name":"file_read","arguments":"{\"path\":\"notes.md\"}"}])";
+
+    MessageReceivedEvent ev;
+    ev.session_id = "toolpush";
+    ev.message.content = "and the second file?";
+    ev.message.history = std::vector<ChatMessage>{
+        {Role::User,      "read notes.md",  std::nullopt, std::nullopt},
+        {Role::Assistant, "",               calls,        std::nullopt},
+        {Role::Tool,      "the file body",  "file_read",  "call_1"},
+        {Role::Assistant, "The deadline is April.", std::nullopt, std::nullopt},
+    };
+    bus.publish(ev);
+
+    REQUIRE(http.call_count == 1);
+    auto body = json::parse(http.last_body);
+    const std::string wire = body["messages"].dump();
+
+    // The call survives as a tool_use block carrying its id...
+    REQUIRE(wire.find("tool_use") != std::string::npos);
+    REQUIRE(wire.find("call_1") != std::string::npos);
+    REQUIRE(wire.find("file_read") != std::string::npos);
+    // ...and the result as a tool_result pointing back at it. Without the pairing the
+    // provider rejects the request outright, so this is the assertion that matters.
+    REQUIRE(wire.find("tool_result") != std::string::npos);
+    REQUIRE(wire.find("tool_use_id") != std::string::npos);
+    REQUIRE(wire.find("the file body") != std::string::npos);
+}

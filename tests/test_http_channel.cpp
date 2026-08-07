@@ -834,3 +834,127 @@ TEST_CASE("listen_backlog: keeps a floor for small servers", "[http_channel]") {
     REQUIRE(listen_backlog(0) == 16);
     REQUIRE(listen_backlog(16) == 16);
 }
+
+// ── Tool calls: out through the stream, back in as history ──────
+//
+// A pod whose transcript is owned outside it has to be able to hand over a full turn and
+// take it back. Text alone is not a full turn: a conversation that ran tools replays as
+// though it never did, and the model loses what the tool told it.
+
+TEST_CASE("HttpChannel: tool calls and results reach the stream", "[http_channel]") {
+    auto cfg = test_config();
+    cfg.turn_timeout_seconds = 5;
+    EventBus bus;
+    HttpChannel ch(cfg);
+    ch.set_event_bus(&bus);
+
+    auto resp = ch.handle_request(chat_request({{"session", "s1"}, {"message", "read it"}}));
+    REQUIRE(resp.status == 200);
+
+    ToolCallRequestEvent call;
+    call.session_id = "s1";
+    call.tool_call_id = "call_1";
+    call.tool_name = "file_read";
+    call.arguments_json = R"({"path":"notes.md"})";
+    bus.publish(call);
+
+    ToolCallResultEvent result;
+    result.session_id = "s1";
+    result.tool_call_id = "call_1";
+    result.tool_name = "file_read";
+    result.success = true;
+    result.output = "the file body";
+    bus.publish(result);
+
+    std::string seen;
+    std::thread consumer([&] {
+        resp.stream([&](std::string_view chunk) {
+            seen.append(chunk);
+            return true;
+        });
+    });
+    ch.send_message("s1", "done reading");
+    consumer.join();
+
+    REQUIRE(seen.find("event: tool_call") != std::string::npos);
+    REQUIRE(seen.find("event: tool_result") != std::string::npos);
+    // The id is what makes the pair reconstructable; without it the caller cannot push
+    // either message back.
+    REQUIRE(seen.find("call_1") != std::string::npos);
+    REQUIRE(seen.find("file_read") != std::string::npos);
+    REQUIRE(seen.find("the file body") != std::string::npos);
+    // Ordering matters as much as presence: the call has to precede its result.
+    REQUIRE(seen.find("event: tool_call") < seen.find("event: tool_result"));
+}
+
+TEST_CASE("HttpChannel: a tool exchange is accepted back as history", "[http_channel]") {
+    HttpChannel ch(test_config());
+
+    auto req = chat_request({
+        {"session", "s1"},
+        {"message", "and the second file?"},
+        {"history", {
+            {{"role", "user"}, {"content", "read notes.md"}},
+            {{"role", "assistant"}, {"content", ""}, {"tool_calls", {
+                {{"id", "call_1"}, {"name", "file_read"},
+                 {"arguments", R"({"path":"notes.md"})"}}}}},
+            {{"role", "tool"}, {"content", "the file body"},
+             {"tool_call_id", "call_1"}, {"name", "file_read"}},
+            {{"role", "assistant"}, {"content", "It says the deadline is April."}},
+        }},
+    });
+    REQUIRE(ch.handle_request(req).status == 200);
+}
+
+TEST_CASE("HttpChannel: an unpaired tool result is refused", "[http_channel]") {
+    // A result whose call is not in the window is what providers reject outright — OpenAI
+    // refuses a 'tool' message that answers nothing. Better a 400 naming the id than a
+    // provider error the caller cannot act on.
+    HttpChannel ch(test_config());
+
+    auto req = chat_request({
+        {"session", "s1"},
+        {"message", "hi"},
+        {"history", {
+            {{"role", "user"}, {"content", "read notes.md"}},
+            {{"role", "tool"}, {"content", "the file body"},
+             {"tool_call_id", "call_missing"}, {"name", "file_read"}},
+        }},
+    });
+    auto resp = ch.handle_request(req);
+    REQUIRE(resp.status == 400);
+    REQUIRE(resp.body.find("call_missing") != std::string::npos);
+}
+
+TEST_CASE("HttpChannel: a tool call with no result is refused", "[http_channel]") {
+    // The other half of the pairing. An assistant turn that called a tool and no result to
+    // go with it leaves the provider waiting for an answer that never comes.
+    HttpChannel ch(test_config());
+
+    auto req = chat_request({
+        {"session", "s1"},
+        {"message", "hi"},
+        {"history", {
+            {{"role", "assistant"}, {"content", ""}, {"tool_calls", {
+                {{"id", "call_1"}, {"name", "file_read"}, {"arguments", "{}"}}}}},
+            {{"role", "assistant"}, {"content", "done"}},
+        }},
+    });
+    auto resp = ch.handle_request(req);
+    REQUIRE(resp.status == 400);
+    REQUIRE(resp.body.find("call_1") != std::string::npos);
+}
+
+TEST_CASE("HttpChannel: a tool entry without an id is refused", "[http_channel]") {
+    HttpChannel ch(test_config());
+    auto req = chat_request({
+        {"session", "s1"},
+        {"message", "hi"},
+        {"history", {
+            {{"role", "tool"}, {"content", "output"}},
+        }},
+    });
+    auto resp = ch.handle_request(req);
+    REQUIRE(resp.status == 400);
+    REQUIRE(resp.body.find("tool_call_id") != std::string::npos);
+}
