@@ -170,6 +170,45 @@ TEST_CASE("SessionManager: a shared context also marks a pod", "[session][hatch]
     });
 }
 
+// An operator who wrote the persona has already answered every question the interview asks,
+// so there is nothing to hatch — whatever the deployment or storage layout.
+TEST_CASE("SessionManager: a configured persona does not hatch", "[session][hatch]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    cfg.memory.isolation = "shared";          // the case that would otherwise hatch
+    cfg.agent.persona.identity = "You are Atlas.";
+    send_channel_message(cfg, test_http, "visitor", [](SessionManager& mgr) {
+        REQUIRE_FALSE(mgr.get_session("visitor").hatching());
+    });
+}
+
+// /start is a first-interaction shortcut, not a considered request for a new identity, so a
+// configured persona wins there too. Explicit /hatch still runs — an operator asking for the
+// interview by name gets it.
+TEST_CASE("SessionManager: /start does not re-hatch over a persona", "[session][hatch]") {
+    HomeGuard home;
+    home.write_default_config();
+
+    auto cfg = make_test_config();
+    cfg.allow_channel_commands = true;
+    cfg.agent.persona.identity = "You are Atlas.";
+
+    EventBus bus;
+    SessionManager mgr(cfg, test_http);
+    mgr.set_event_bus(&bus);
+    mgr.subscribe_events();
+
+    MessageReceivedEvent ev;
+    ev.session_id = "visitor";
+    ev.from_cli = true;
+    ev.message.content = "/start";
+    bus.publish(ev);
+
+    REQUIRE_FALSE(mgr.get_session("visitor").hatching());
+}
+
 // ── session cap ─────────────────────────────────────────────────
 
 // Generated session ids make the count caller-driven: a front end that never echoes the

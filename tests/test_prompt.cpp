@@ -111,6 +111,65 @@ TEST_CASE("build_system_prompt: silent replies only with channel", "[prompt]") {
     REQUIRE(result2.find("[SILENT]") != std::string::npos);
 }
 
+// ── configured persona ──────────────────────────────────────────
+
+// Rendered in the same shape build_soul_block() produces from memory, so a pod given its
+// identity by config and an agent that was hatched describe themselves identically.
+TEST_CASE("build_system_prompt: a configured persona becomes the identity block",
+          "[prompt][persona]") {
+    PersonaConfig persona;
+    persona.identity = "You are Atlas, a terse research assistant.";
+    persona.user = "Heikki, in Helsinki.";
+    persona.philosophy = "Say the useful thing first.";
+
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr,
+                                      RuntimeInfo{}, &persona);
+
+    REQUIRE(result.find("## Your Identity") != std::string::npos);
+    REQUIRE(result.find("About you (the AI):\nYou are Atlas, a terse research assistant.")
+            != std::string::npos);
+    REQUIRE(result.find("About your human:\nHeikki, in Helsinki.") != std::string::npos);
+    REQUIRE(result.find("Your philosophy:\nSay the useful thing first.")
+            != std::string::npos);
+}
+
+TEST_CASE("build_system_prompt: an identity-only persona renders", "[prompt][persona]") {
+    PersonaConfig persona;
+    persona.identity = "You are Atlas.";
+
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr,
+                                      RuntimeInfo{}, &persona);
+    REQUIRE(result.find("## Your Identity") != std::string::npos);
+    REQUIRE(result.find("You are Atlas.") != std::string::npos);
+    // Absent parts leave no headings behind.
+    REQUIRE(result.find("About your human:") == std::string::npos);
+    REQUIRE(result.find("Your philosophy:") == std::string::npos);
+}
+
+TEST_CASE("build_system_prompt: no persona and no memory means no identity block",
+          "[prompt][persona]") {
+    PersonaConfig persona;   // empty
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr,
+                                      RuntimeInfo{}, &persona);
+    REQUIRE(result.find("## Your Identity") == std::string::npos);
+}
+
+// The identity block composes with the rest of the prompt rather than replacing it, which
+// is the whole reason to configure a persona instead of pushing a system message: a served
+// session still learns where it may read and write.
+TEST_CASE("build_system_prompt: a persona keeps the workspace section", "[prompt][persona]") {
+    PersonaConfig persona;
+    persona.identity = "You are Atlas.";
+    RuntimeInfo runtime{"model", "provider", "http", "", "sess",
+                        "/work/sessions/abc-sess", "/work/context"};
+
+    auto result = build_system_prompt(std::vector<ToolSpec>{}, false, false, nullptr,
+                                      runtime, &persona);
+    REQUIRE(result.find("## Your Identity") != std::string::npos);
+    REQUIRE(result.find("/work/sessions/abc-sess") != std::string::npos);
+    REQUIRE(result.find("/work/context") != std::string::npos);
+}
+
 TEST_CASE("build_system_prompt: workspace section present", "[prompt]") {
     auto result = build_system_prompt(std::vector<ToolSpec>{}, false);
     REQUIRE(result.find("## Workspace") != std::string::npos);

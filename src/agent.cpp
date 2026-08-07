@@ -121,7 +121,8 @@ void Agent::inject_system_prompt() {
                            scope.workspace, scope.context_dir};
         const auto* active = find_skill(active_skill_name_);
         prompt = build_system_prompt(cached_tool_specs_, include_tool_desc,
-                                     has_active_memory(), memory_.get(), runtime);
+                                     has_active_memory(), memory_.get(), runtime,
+                                     &config_.agent.persona);
 
         // Inject available skills list
         if (!available_skills_.empty()) {
