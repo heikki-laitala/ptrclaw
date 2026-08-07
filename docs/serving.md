@@ -28,8 +28,47 @@ What the profile leaves out, and why:
 | `cron` | Replaces the entire crontab on every write, so concurrent sessions clobber each other; `list` returns other tenants' entries; the scheduled command is never validated and outlives the process. |
 | `file_edit` | No scoped counterpart yet. Read and write cover the cases the profile is for. |
 
-`nm builddir-serving/ptrclaw | grep ShellTool` returns nothing: the code is absent, not
-merely unregistered.
+The code is absent rather than merely unregistered, and `tests/test_serving_profile.cpp`
+asserts it by inspecting the registry in a build of this profile. Note that `nm` cannot
+show you this: `make build-serving` strips the binary, so every symbol name is gone and
+`nm | grep ShellTool` is empty whether or not the tool was compiled in. The behavioural
+check is to ask the pod — a serving binary answers `CANNOT-EXECUTE` when told to run a
+command, and lists exactly `file_read` and `file_write` when asked what tools it has.
+
+## Binary and memory footprint
+
+Measured on macOS arm64, stripped:
+
+| | pod binary | idle RSS | 200 sessions |
+| --- | --- | --- | --- |
+| before size flags (`-O3`) | 948 KB | ~5.8 MB | ~10.7 MB |
+| as shipped (`-Os`, `NDEBUG`) | **565 KB** | ~5.6 MB | ~10.2 MB |
+
+The binary is the part that moves: `-O3` inlines for speed and costs ~40% of the image
+here. Resident memory barely does, and it is worth being precise about why. Idle RSS drops
+by ~0.2 MB — smaller text, fewer resident pages — and that difference held across every
+repeat. Per-session cost did **not** change: ~19 KB either way, across three runs each,
+with the run-to-run spread (16–22 KB) wider than any difference between the two builds.
+Session state is heap, and an optimization level does not touch it.
+
+So a pod holding 200 live conversations sits around 10 MB, of which ~5.6 MB is fixed
+(libcurl, TLS, the worker stacks) and ~4 MB is the sessions themselves. `agent.max_sessions`
+is the knob that bounds it.
+
+### Trimming further
+
+`-Os` is applied for you. Beyond it, what is left costs capability rather than dead weight,
+so the profile does not choose for you — the prices, each measured against the 565 KB build:
+
+| Also disabled | Binary | Gives up |
+| --- | --- | --- |
+| `-Dwith_openai_oauth=false` | 549 KB | ChatGPT-subscription auth; API keys only |
+| `-Dwith_anthropic/ollama/openrouter/compatible=false` | 548 KB | every provider but OpenAI |
+| `-Dwith_sqlite_memory=false` | 547 KB | the FTS5 backend, if you turn memory on |
+| all of the above | 514 KB | |
+
+Roughly 9% for a pod that can only ever talk to one provider with one auth method. Worth it
+for a fixed deployment, not worth baking into the profile.
 
 ## The two roots
 
