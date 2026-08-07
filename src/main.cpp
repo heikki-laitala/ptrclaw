@@ -394,8 +394,11 @@ int main(int argc, char* argv[]) try {
               << " | Model: " << agent.model() << "\n"
               << "Type /help for commands, /exit to exit.\n\n";
 
-    // Auto-hatch on first run
-    if (agent.memory() && !agent.is_hatched()) {
+    // Auto-hatch on first run — unless the identity came from config. is_hatched() only
+    // reads memory, so a configured persona looks unhatched here and the REPL would open the
+    // interview and replace that persona with questions about one. /hatch still works for an
+    // operator who wants the interview anyway.
+    if (agent.memory() && !agent.is_hatched() && config.agent.persona.empty()) {
         bool do_hatch = false;
         if (onboard_ran) {
             if (onboard_hatch) {

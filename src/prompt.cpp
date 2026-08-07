@@ -11,13 +11,18 @@ std::string build_system_prompt(const std::vector<ToolSpec>& tool_specs,
                                 bool include_tool_descriptions,
                                 bool has_memory,
                                 Memory* memory,
-                                const RuntimeInfo& runtime) {
+                                const RuntimeInfo& runtime,
+                                const PersonaConfig* persona) {
     std::ostringstream ss;
 
     ss << "You are PtrClaw, an autonomous AI assistant.\n\n";
 
-    // Inject soul identity if available
-    std::string soul = build_soul_block(memory);
+    // Inject soul identity if available. A configured persona wins: it is the deployment
+    // saying who this agent is, which does not depend on a store that may be empty — and in
+    // a pod with per-session memory, every store starts empty.
+    std::string soul = (persona && !persona->empty())
+        ? build_soul_block(*persona)
+        : build_soul_block(memory);
     if (!soul.empty()) {
         ss << soul << "\n";
     }
@@ -251,6 +256,21 @@ std::string build_hatch_prompt() {
         "- Always include rich behavioral defaults in soul:philosophy "
         "(be genuine, have opinions, be resourceful, earn trust, respect boundaries) "
         "even if the user didn't explicitly ask for them\n";
+}
+
+std::string build_soul_block(const PersonaConfig& persona) {
+    if (persona.empty()) return "";
+
+    std::ostringstream ss;
+    ss << "## Your Identity\n\n";
+    ss << "About you (the AI):\n" << persona.identity << "\n\n";
+    if (!persona.user.empty()) {
+        ss << "About your human:\n" << persona.user << "\n\n";
+    }
+    if (!persona.philosophy.empty()) {
+        ss << "Your philosophy:\n" << persona.philosophy << "\n\n";
+    }
+    return ss.str();
 }
 
 std::string build_soul_block(Memory* memory) {

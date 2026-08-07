@@ -35,6 +35,22 @@ struct ProviderEntry {
     std::string oauth_token_url;
 };
 
+// An identity supplied by configuration rather than earned through the hatching interview.
+//
+// The same three parts hatching writes into memory (soul:identity, soul:user,
+// soul:philosophy), so a pod told who it is by config and an agent that was hatched render
+// the same "## Your Identity" block. Configuring one is what a deployment does when there is
+// no operator at the far end to answer an interview — a pod serving many callers.
+struct PersonaConfig {
+    std::string identity;    // about the assistant
+    std::string user;        // about the human it serves
+    std::string philosophy;  // how it should approach the work
+
+    // Identity is what introduces the block; without it the other two would render under a
+    // heading for someone unnamed, which is why memory keys on soul:identity too.
+    bool empty() const { return identity.empty(); }
+};
+
 struct AgentConfig {
     uint32_t max_tool_iterations = 50;
     uint32_t max_history_messages = 50;
@@ -55,6 +71,8 @@ struct AgentConfig {
     // rather than evicted — freeing one while another worker may be mid-dispatch is the
     // use-after-free that eviction drains the turn pool to avoid.
     uint32_t max_sessions = 0;
+    // Empty means the identity comes from memory, as it always has.
+    PersonaConfig persona;
 };
 
 struct EmbeddingConfig {

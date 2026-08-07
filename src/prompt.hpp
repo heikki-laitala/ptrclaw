@@ -1,4 +1,5 @@
 #pragma once
+#include "config.hpp"
 #include "memory.hpp"
 #include "provider.hpp"
 #include "tool.hpp"
@@ -24,11 +25,15 @@ struct RuntimeInfo {
 // Tool specs are pre-filtered (e.g. memory tools omitted when inactive).
 // When has_memory is true, includes instructions about memory tools and context format.
 // When memory is non-null, injects soul identity block if soul entries exist.
+// `persona`, when set, supplies the identity block instead of memory. One source of truth:
+// a deployment that states who the agent is should not also depend on what a per-session
+// store happens to contain.
 std::string build_system_prompt(const std::vector<ToolSpec>& tool_specs,
                                 bool include_tool_descriptions,
                                 bool has_memory = false,
                                 Memory* memory = nullptr,
-                                const RuntimeInfo& runtime = {});
+                                const RuntimeInfo& runtime = {},
+                                const PersonaConfig* persona = nullptr);
 
 // Build the hatching bootstrap system prompt for soul creation.
 std::string build_hatch_prompt();
@@ -36,6 +41,10 @@ std::string build_hatch_prompt();
 // Build a soul injection block from core memory entries for the system prompt.
 // Returns empty string if no soul entries exist.
 std::string build_soul_block(Memory* memory);
+
+// The same block from a configured persona. Kept byte-identical in shape to the memory
+// version so the two are indistinguishable downstream.
+std::string build_soul_block(const PersonaConfig& persona);
 
 // Format soul data for user-facing display (e.g. /soul command).
 // Returns empty string if no soul entries exist.

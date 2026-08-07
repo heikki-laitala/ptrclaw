@@ -162,6 +162,33 @@ and `docs/memory.md` documents one interview per chat under it. A Telegram user 
 who can answer one, and `/hatch` sits behind `allow_channel_commands`, so keying on isolation
 would leave those chats no way to create an identity at all.
 
+### Giving the pod an identity instead
+
+A served session that never hatches has no soul, so it answers as the default assistant.
+Configure the identity rather than interviewing for it:
+
+```json
+{ "agent": { "persona": {
+    "identity": "You are Atlas, a terse task runner for a document pipeline.",
+    "user": "An automated context manager, not a person. It cannot answer questions.",
+    "philosophy": "Do the task, answer in one line."
+} } }
+```
+
+The three parts are the ones hatching writes into memory, and they render the same
+`## Your Identity` block — so a configured pod and a hatched personal agent describe
+themselves identically. A configured persona also suppresses hatching on its own, shared
+store or not, and at every automatic entry point — the channel message, `/start`, and the
+REPL's first-run prompt. `is_hatched()` only reads memory, so each of those would otherwise
+look at a configured pod and see an agent with no identity. Explicit `/hatch` still runs the
+interview: an operator who asks for it by name gets it.
+
+Note the alternative and why it is not this. A caller *can* push a system message as
+`history[0]`, but `Agent::set_history` then treats it as the whole prompt and ptrclaw's own
+is never injected — so the session loses the Workspace section naming its roots, and the
+model starts guessing at paths its tools will refuse. A configured persona is added to the
+built-in prompt instead of replacing it.
+
 ## Session ids
 
 ```

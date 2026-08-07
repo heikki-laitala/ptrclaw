@@ -344,9 +344,14 @@ void SessionManager::dispatch_message(const MessageReceivedEvent& ev) {
     // who can answer, while /hatch sits behind allow_channel_commands, so suppressing it
     // there would leave them no way to create an identity at all. A configured workspace or
     // shared context is a deployment saying it serves callers instead of a person.
+    //
+    // A configured persona ends the question from the other direction, whatever the
+    // deployment: whoever wrote it has already answered everything the interview asks, so
+    // running it would replace a stated identity with questions about one.
     const bool serving_pod = !config_.serving.workspace_root.empty() ||
                              !config_.serving.context_dir.empty();
-    if (!ev.message.history && agent.memory() && !serving_pod
+    const bool persona_configured = !config_.agent.persona.empty();
+    if (!ev.message.history && agent.memory() && !serving_pod && !persona_configured
         && !agent.is_hatched() && !agent.hatching()) {
         agent.start_hatch();
     }
@@ -362,7 +367,12 @@ bool SessionManager::handle_command(
 
     // Handle /start command
     if (ev.message.content == "/start") {
-        if (agent.memory() && !agent.is_hatched()) {
+        // A configured persona counts as hatched here. /start is a first-interaction
+        // shortcut rather than a considered request for a new identity, and is_hatched()
+        // only reads memory — so without this check it would replace a stated persona with
+        // questions about one. Explicit /hatch still runs the interview: an operator asking
+        // for it by name gets it.
+        if (agent.memory() && !agent.is_hatched() && config_.agent.persona.empty()) {
             begin_hatch();
         } else {
             std::string greeting = "Hello";

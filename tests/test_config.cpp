@@ -151,6 +151,68 @@ TEST_CASE("Config::load: reads config file", "[config]") {
     REQUIRE(cfg.agent.token_limit == 64000);
 }
 
+// ── configured persona ──────────────────────────────────────────
+
+// Three parts, matching what hatching writes into memory, so a configured pod and a hatched
+// personal agent describe themselves identically.
+TEST_CASE("PersonaConfig: absent by default", "[config][persona]") {
+    Config cfg;
+    REQUIRE(cfg.agent.persona.identity.empty());
+    REQUIRE(cfg.agent.persona.user.empty());
+    REQUIRE(cfg.agent.persona.philosophy.empty());
+    REQUIRE(cfg.agent.persona.empty());
+}
+
+TEST_CASE("Config::load: reads all three persona parts", "[config][persona]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({
+        "agent": { "persona": {
+            "identity": "You are Atlas, a terse research assistant.",
+            "user": "Heikki, in Helsinki, prefers short answers.",
+            "philosophy": "Say the useful thing first."
+        } }
+    })");
+
+    Config cfg = Config::load();
+    REQUIRE(cfg.agent.persona.identity == "You are Atlas, a terse research assistant.");
+    REQUIRE(cfg.agent.persona.user == "Heikki, in Helsinki, prefers short answers.");
+    REQUIRE(cfg.agent.persona.philosophy == "Say the useful thing first.");
+    REQUIRE_FALSE(cfg.agent.persona.empty());
+}
+
+// Identity alone is enough — the other two are optional in memory too.
+TEST_CASE("Config::load: an identity-only persona counts", "[config][persona]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({"agent": {"persona": {"identity": "You are Atlas."}}})");
+
+    Config cfg = Config::load();
+    REQUIRE(cfg.agent.persona.identity == "You are Atlas.");
+    REQUIRE_FALSE(cfg.agent.persona.empty());
+}
+
+// Without an identity there is nothing to introduce, so the block would render headless.
+TEST_CASE("Config::load: user or philosophy alone is not a persona", "[config][persona]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({"agent": {"persona": {"user": "Heikki", "philosophy": "Be brief"}}})");
+    REQUIRE(Config::load().agent.persona.empty());
+}
+
+TEST_CASE("Config::load: wrong persona types keep the defaults", "[config][persona]") {
+    ConfigTestGuard g;
+    REQUIRE_FALSE(g.dir.empty());
+    g.write_config(R"({"agent": {"persona": {"identity": 42, "user": null}}})");
+    REQUIRE(Config::load().agent.persona.empty());
+}
+
+TEST_CASE("Config::defaults_json: carries no persona", "[config][persona]") {
+    // A personal install must not be migrated into having one.
+    auto defaults = Config::defaults_json();
+    REQUIRE_FALSE(defaults["agent"].contains("persona"));
+}
+
 // ── serving profile ─────────────────────────────────────────────
 
 // A serving build fences the filesystem per session; leaving memory shared would pair that
