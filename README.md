@@ -4,7 +4,7 @@ An AI assistant you can actually deploy anywhere. Single binary with dependencie
 
 Built in C++17 because infrastructure should be small, fast, and boring to operate.
 
-**~879 KB stripped binary (macOS arm64), ~1.2 MB (Linux x86_64, statically linked). 5 LLM providers. 10 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph and vector search. Compile-time feature flags to strip what you don't need.**
+**~581 KB stripped static binary (macOS arm64). 5 LLM providers. 10 built-in tools. Telegram channel (+ WhatsApp opt-in). Persistent memory with knowledge graph and vector search. Compile-time feature flags to strip what you don't need.**
 
 ## Why PtrClaw?
 
@@ -14,7 +14,7 @@ Most AI agent frameworks are Python packages with deep dependency trees, virtual
 - **Swap providers freely** — Anthropic, OpenAI, OpenRouter, Ollama, or any OpenAI-compatible endpoint. Switch with a config change, no code modifications
 - **Real tool use** — file I/O, shell execution (with stdin piping), cron scheduling, and a persistent knowledge graph memory system. Providers with native function calling use it directly; others fall back to XML-based parsing
 - **Extend without forking** — providers, channels, tools, and memory backends self-register via a plugin system. Add a new one by implementing an interface and dropping in a `.cpp` file
-- **Build only what you need** — 15 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~764 KB)
+- **Build only what you need** — 15 compile-time feature flags let you strip unused providers, channels, and tools for smaller binaries (down to ~514 KB)
 
 ## Features
 
@@ -569,14 +569,19 @@ ninja -C builddir
 
 ### Binary size
 
-| Configuration | macOS arm64 | Linux x86_64 |
-| ------------- | ----------- | ------------ |
-| Default (`make build`) | ~1.1 MB | ~1.3 MB |
-| Static (`make build-static`, stripped) | ~879 KB | ~1.2 MB |
-| Minimal (`make build-minimal`, stripped) | ~764 KB | ~1.1 MB |
-| SDK shared lib (`make build-sdk`, stripped) | ~884 KB | ~433 KB |
+| Configuration | macOS arm64 |
+| ------------- | ----------- |
+| Default (`make build`) | ~1.3 MB |
+| Static (`make build-static`, stripped) | ~581 KB |
+| Minimal (`make build-minimal`, stripped) | ~514 KB |
+| Serving pod (`make build-serving`, stripped) | ~565 KB |
+| SDK shared lib (`make build-sdk`, stripped) | ~630 KB |
 
-Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). LTO is enabled by default. Distribution builds are stripped and size-optimized with dead-code elimination (`--gc-sections`, `--icf=all`).
+Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). LTO is enabled by default.
+
+Distribution builds are compiled for size (`-Doptimization=s -Db_ndebug=true`), stripped, and on Linux linked with dead-code elimination (`--gc-sections`, `--icf=all`). The optimization level is the large one: meson's `release` buildtype is `-O3`, which inlines for speed, and switching those targets to `-Os` is worth ~40% of the binary on its own. `make build` stays at `-O3` — it is the build you develop and run tests against.
+
+The table is measured on macOS arm64. Linux binaries differ — the linker there also does section GC and identical-code folding — and were not re-measured for this table rather than carried over from before the size flags changed.
 
 ## Contributing
 
@@ -658,4 +663,4 @@ meson_options.txt       Compile-time feature flags
 
 ## Acknowledgements
 
-PtrClaw started as a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw) and has since diverged into its own architecture with an event bus, plugin system, and streaming pipeline. Nullclaw is a far more feature-rich project — if you need a battle-tested assistant with a broader tool ecosystem, check it out. PtrClaw trades breadth for a smaller footprint: our dynamically linked binary is ~1.1 MB vs nullclaw's ~1.9 MB, with the goal of staying minimal and easy to embed or deploy on constrained environments.
+PtrClaw started as a C++ port of [nullclaw](https://github.com/nullclaw/nullclaw) and has since diverged into its own architecture with an event bus, plugin system, and streaming pipeline. Nullclaw is a far more feature-rich project — if you need a battle-tested assistant with a broader tool ecosystem, check it out. PtrClaw trades breadth for a smaller footprint: our size-optimized binary is ~565 KB vs nullclaw's ~1.9 MB, with the goal of staying minimal and easy to embed or deploy on constrained environments.

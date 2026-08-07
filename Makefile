@@ -24,6 +24,19 @@ else
   endif
 endif
 
+# Distribution builds optimize for size, on every platform. meson's `release` buildtype
+# means -O3, which inlines for speed and is worth ~40% of this binary; b_ndebug drops
+# assert() bodies from libc++ and the subprojects (src/ has none of its own). The flags
+# above are the per-platform half — section GC and stripping, which Darwin's linker
+# spells differently.
+SIZE_FLAGS += -Doptimization=s -Db_ndebug=true
+
+# Reconfigure a build directory that already exists instead of reusing it as-is. These
+# targets carry option flags, and a directory created before a flag changed would keep the
+# old ones silently — a smaller binary that is only smaller on a clean checkout.
+setup_size = @if [ -d $(1) ]; then meson setup --reconfigure $(1) $(NATIVE_ARGS) $(2); \
+	else meson setup $(1) $(NATIVE_ARGS) $(2); fi
+
 STATICDIR := builddir-static
 MINDIR := builddir-minimal
 SERVEDIR := builddir-serving
@@ -53,20 +66,24 @@ build-emb:
 	@if [ ! -d $(EMBDIR) ]; then meson setup $(EMBDIR) $(NATIVE_ARGS) -Dcatch2:tests=false -Dwith_embeddings=true; fi
 	meson compile -C $(EMBDIR)
 
+MINIMAL_OPTS := -Dcatch2:tests=false \
+	-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false -Dwith_compatible=false \
+	-Dwith_whatsapp=false -Dwith_sqlite_memory=false -Dwith_embeddings=false $(SIZE_FLAGS)
+
 build-minimal:
-	@if [ ! -d $(MINDIR) ]; then meson setup $(MINDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
-		-Dwith_anthropic=false -Dwith_ollama=false -Dwith_openrouter=false -Dwith_compatible=false \
-		-Dwith_whatsapp=false -Dwith_sqlite_memory=false -Dwith_embeddings=false $(SIZE_FLAGS); fi
+	$(call setup_size,$(MINDIR),$(MINIMAL_OPTS))
 	meson compile -C $(MINDIR) ptrclaw
 	$(call STRIP_CMD,$(MINDIR)/ptrclaw) 2>/dev/null || true
 
 # Multi-session serving pod: workspace-scoped file tools, no shell and no cron. The tool
 # flags are not optional decoration — meson refuses with_serving alongside them, because
 # both register a tool named file_read.
+SERVING_OPTS := -Dcatch2:tests=false \
+	-Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false \
+	-Dwith_http=true -Dwith_telegram=false -Dwith_whatsapp=false $(SIZE_FLAGS)
+
 build-serving:
-	@if [ ! -d $(SERVEDIR) ]; then meson setup $(SERVEDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
-		-Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false \
-		-Dwith_http=true -Dwith_telegram=false -Dwith_whatsapp=false $(SIZE_FLAGS); fi
+	$(call setup_size,$(SERVEDIR),$(SERVING_OPTS))
 	meson compile -C $(SERVEDIR) ptrclaw
 	$(call STRIP_CMD,$(SERVEDIR)/ptrclaw) 2>/dev/null || true
 
@@ -77,15 +94,20 @@ test-serving:
 		-Dwith_serving=true -Dwith_tools=false -Dwith_file_read=false -Dwith_http=true; fi
 	meson test -C $(SERVEDIR)-test --print-errorlogs
 
+STATIC_OPTS := -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false \
+	-Dwith_mbedtls=true $(SIZE_FLAGS)
+
 build-static:
-	@if [ ! -d $(STATICDIR) ]; then meson setup $(STATICDIR) $(NATIVE_ARGS) -Ddefault_library=static -Dprefer_static=true -Dcatch2:tests=false -Dwith_mbedtls=true $(SIZE_FLAGS); fi
+	$(call setup_size,$(STATICDIR),$(STATIC_OPTS))
 	meson compile -C $(STATICDIR) ptrclaw
 	$(call STRIP_CMD,$(STATICDIR)/ptrclaw) 2>/dev/null || true
 
+SDK_OPTS := -Dcatch2:tests=false \
+	-Dwith_embed=true -Dwith_telegram=false -Dwith_whatsapp=false \
+	-Dwith_ollama=false -Dwith_tools=false $(SIZE_FLAGS)
+
 build-sdk:
-	@if [ ! -d $(SDKDIR) ]; then meson setup $(SDKDIR) $(NATIVE_ARGS) -Dcatch2:tests=false \
-		-Dwith_embed=true -Dwith_telegram=false -Dwith_whatsapp=false \
-		-Dwith_ollama=false -Dwith_tools=false $(SIZE_FLAGS); fi
+	$(call setup_size,$(SDKDIR),$(SDK_OPTS))
 	meson compile -C $(SDKDIR) ptrclaw_shared
 	@for f in $(SDKDIR)/libptrclaw_shared.dylib $(SDKDIR)/libptrclaw_shared.so; do \
 		[ -f "$$f" ] && $(call STRIP_CMD,$$f) 2>/dev/null || true; \
