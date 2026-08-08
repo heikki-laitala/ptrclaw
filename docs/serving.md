@@ -297,20 +297,19 @@ is set by `workers`, and by how evenly the session ids hash across them:
 Perfect parallelism is 3 s, and the pod is within a rounding error of it at every level: a
 burst of N turns takes about as long as one turn, up to the ceiling `workers` sets.
 
-⚠ **These numbers are native. A containerised build dies before reaching the top of that
-table.** Built into an Alpine image and driven at 1000 concurrent with `workers: 1024`, the
-process is killed by SIGTRAP (exit 133) within a fraction of a second; a Debian/glibc build
-of the same source segfaults (exit 139) under the same load, so it is not the allocator or
-the libc. 500 concurrent is clean in the same containers. What is ruled out by measurement:
-it is the turn threads rather than the connection threads (`workers: 8` survives the same
-1000 connections), it is not memory pressure, not thread-creation failure, and not the
-default thread stack size. It does not reproduce natively on macOS, which is why the table
-above reads as it does.
+These held natively long before they held in a container. Until ptrclaw#133 an Alpine or
+Debian image died under this load — SIGTRAP on musl, SIGSEGV on glibc, within a fraction of
+a second — because `connect_tcp()` waited on `select()`: `fd_set` is a fixed 1024-bit bitmap
+on the stack, and a pod holding a descriptor per inbound connection and another per outbound
+provider call crosses that under load, so `FD_SET` wrote off the end of it. macOS never saw
+it because those builds use libcurl and do not compile `src/http_socket.cpp` at all.
 
-Until that is understood — ptrclaw#131 tracks it — a containerised deployment should keep
-`workers` and `max_connections` at or below the 500 that measures clean. The native numbers
-stay in the table because they are what the pod does when nothing kills it, and because the
-gap between them is the shape of the bug.
+It is worth knowing two things about that even now it is fixed. The fault needed a raised
+`RLIMIT_NOFILE` to be reachable — at the default 1024 the socket call fails first and the
+request errors cleanly — so it only ever threatened deployments tuned for concurrency. And a
+containerised measurement was the only thing that would have caught it: the suite passes, the
+native numbers above were honest, and nothing short of building a deployment image and
+driving it exposed the gap.
 
 **Threads exist only while turns do.** A pod configured for 1024 concurrent turns holds four
 threads and ~5 MB while nothing is happening — idle cost does not track the ceiling, so
