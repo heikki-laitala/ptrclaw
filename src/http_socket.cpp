@@ -38,6 +38,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <netdb.h>
+#include <poll.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -130,11 +131,20 @@ static bool connect_tcp(int& fd, const ParsedUrl& url, long timeout_secs) {
             fcntl(fd, F_SETFL, flags);
             connected = true;
         } else if (errno == EINPROGRESS) {
-            fd_set wset;
-            FD_ZERO(&wset);
-            FD_SET(fd, &wset);
-            struct timeval tv{timeout_secs, 0};
-            rc = select(fd + 1, nullptr, &wset, nullptr, &tv);
+            // poll(), not select(): fd_set is a fixed FD_SETSIZE bitmap — 1024 bits, on the
+            // stack — and FD_SET() past that writes off the end of it. A pod serving many
+            // sessions at once holds a descriptor per inbound connection and another per
+            // outbound provider call, so the numbers cross 1024 under load and the write
+            // corrupts the caller's frame. The crash then surfaces further up with garbage
+            // arguments, which is why it read as memory corruption rather than as a limit.
+            //
+            // It needs a raised RLIMIT_NOFILE to be reachable at all: at the default 1024
+            // socket() fails first and the request errors cleanly, so this only bites the
+            // deployments that tuned for concurrency.
+            struct pollfd pfd{};
+            pfd.fd = fd;
+            pfd.events = POLLOUT;
+            rc = ::poll(&pfd, 1, timeout_secs > 0 ? static_cast<int>(timeout_secs * 1000) : -1);
             if (rc > 0) {
                 int err = 0;
                 socklen_t elen = sizeof(err);
