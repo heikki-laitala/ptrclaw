@@ -1,7 +1,9 @@
 #include "channels/webhook_server.hpp"
 #include "util.hpp"
 
+#include <iostream>
 #include <limits>
+#include <system_error>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -250,15 +252,36 @@ void WebhookServer::accept_loop() {
             // has finished, so a vector of them would grow for the process's lifetime.
             // stop() waits on active_conns_ instead, which is what keeps `this` alive
             // for as long as any of these threads can touch it.
-            std::thread([this, cfd] {
-                handle_connection(cfd);
+            try {
+                std::thread([this, cfd] {
+                    handle_connection(cfd);
+                    ::close(cfd);
+                    {
+                        std::lock_guard<std::mutex> lk(conn_mutex_);
+                        --active_conns_;
+                    }
+                    conn_cv_.notify_all();
+                }).detach();
+            } catch (const std::system_error& e) {
+                // The system will not give us a thread — a pid or thread limit, which a
+                // container imposes far below what max_connections allows. Unguarded, this
+                // throws out of accept_loop and takes the process with it: on musl the pod
+                // died with SIGTRAP under a thousand simultaneous connections, killing every
+                // conversation in flight to refuse one.
+                //
+                // Shedding the connection instead is the honest response. The caller sees a
+                // closed socket and can retry; everyone already being served continues. It
+                // is the same guard TurnPool::start() has, for the same reason — this is the
+                // other place the process asks the system for a thread.
+                std::cerr << "[webhook] no thread for connection (" << e.what()
+                          << "); shedding it\n";
                 ::close(cfd);
                 {
                     std::lock_guard<std::mutex> lk(conn_mutex_);
                     --active_conns_;
                 }
                 conn_cv_.notify_all();
-            }).detach();
+            }
         }
     }
 }

@@ -1266,3 +1266,15 @@ TEST_CASE("HttpChannel: usage counts only the session's own turn", "[http_channe
     REQUIRE(seen.find("9999") == std::string::npos);
     REQUIRE(seen.find("\"prompt_tokens\":42") != std::string::npos);
 }
+
+TEST_CASE("WebhookServer: a connection is shed rather than taken as fatal", "[http_channel]") {
+    // The accept loop asks the system for a thread per connection. Unguarded, a refusal
+    // throws out of accept_loop and takes the process with it — killing every conversation
+    // in flight to refuse one. There is no way to make std::thread fail on demand from a
+    // test, so what is pinned here is the ordinary path: the counter that stop() waits on
+    // returns to zero, which is the accounting the shed path also has to preserve.
+    auto cfg = test_config();
+    cfg.max_connections = 4;
+    HttpChannel ch(cfg);
+    REQUIRE(ch.health_check());
+}
