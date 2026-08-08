@@ -496,6 +496,11 @@ ChatResponse OpenAIProvider::parse_responses_response(
     if (resp.contains("usage")) {
         const auto& usage = resp["usage"];
         result.usage.prompt_tokens = usage.value("input_tokens", 0u);
+        if (usage.contains("input_tokens_details") &&
+            usage["input_tokens_details"].is_object()) {
+            result.usage.cached_prompt_tokens =
+                usage["input_tokens_details"].value("cached_tokens", 0u);
+        }
         result.usage.completion_tokens = usage.value("output_tokens", 0u);
         result.usage.total_tokens = result.usage.prompt_tokens + result.usage.completion_tokens;
     }
@@ -598,6 +603,11 @@ ChatResponse OpenAIProvider::chat_stream_responses(
                         result.usage.completion_tokens = usage.value("output_tokens", 0u);
                         result.usage.total_tokens =
                             result.usage.prompt_tokens + result.usage.completion_tokens;
+                        if (usage.contains("input_tokens_details") &&
+                            usage["input_tokens_details"].is_object()) {
+                            result.usage.cached_prompt_tokens =
+                                usage["input_tokens_details"].value("cached_tokens", 0u);
+                        }
                     }
                     if (payload.contains("response") &&
                         payload["response"].contains("model")) {
@@ -685,6 +695,13 @@ ChatResponse OpenAIProvider::chat(const std::vector<ChatMessage>& messages,
         result.usage.prompt_tokens = usage.value("prompt_tokens", 0u);
         result.usage.completion_tokens = usage.value("completion_tokens", 0u);
         result.usage.total_tokens = usage.value("total_tokens", 0u);
+        // Chat completions nests the cache figure; the Responses API spells the parent
+        // differently, handled at its own parse site.
+        if (usage.contains("prompt_tokens_details") &&
+            usage["prompt_tokens_details"].is_object()) {
+            result.usage.cached_prompt_tokens =
+                usage["prompt_tokens_details"].value("cached_tokens", 0u);
+        }
     }
 
     return result;
@@ -778,6 +795,11 @@ ChatResponse OpenAIProvider::chat_stream(const std::vector<ChatMessage>& message
                     const auto& usage = payload["usage"];
                     result.usage.prompt_tokens = usage.value("prompt_tokens", 0u);
                     result.usage.completion_tokens = usage.value("completion_tokens", 0u);
+                    if (usage.contains("prompt_tokens_details") &&
+                        usage["prompt_tokens_details"].is_object()) {
+                        result.usage.cached_prompt_tokens =
+                            usage["prompt_tokens_details"].value("cached_tokens", 0u);
+                    }
                     result.usage.total_tokens = usage.value("total_tokens", 0u);
                 }
 

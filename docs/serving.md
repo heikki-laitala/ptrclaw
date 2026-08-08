@@ -76,8 +76,8 @@ Measured on macOS arm64, stripped:
 | | pod binary | idle RSS | 200 sessions |
 | --- | --- | --- | --- |
 | before (`-O3`, every provider) | 948 KB | ~5.8 MB | ~10.7 MB |
-| size flags only (`-Os`, `NDEBUG`) | 565 KB | ~5.6 MB | ~10.2 MB |
-| as shipped (also OpenAI-only) | **548 KB** | ~5.6 MB | ~10.2 MB |
+| after the size flags and the OpenAI-only set | 548 KB | ~5.6 MB | ~10.2 MB |
+| **as shipped today** | **565 KB** | ~5.0 MB | ~10.2 MB |
 
 The binary is the part that moves: `-O3` inlines for speed and costs ~40% of the image
 here. Resident memory barely does, and it is worth being precise about why. Idle RSS drops
@@ -86,28 +86,29 @@ repeat. Per-session cost did **not** change: ~19 KB either way, across three run
 with the run-to-run spread (16–22 KB) wider than any difference between the two builds.
 Session state is heap, and an optimization level does not touch it.
 
-So a pod holding 200 live conversations sits around 10 MB, of which ~5.6 MB is fixed
-(libcurl, TLS, the worker stacks) and ~4 MB is the sessions themselves. `agent.max_sessions`
-is the knob that bounds it.
+So a pod holding 200 live conversations sits around 10 MB, of which ~5 MB is fixed (libcurl,
+TLS) and the rest is the sessions themselves. `agent.max_sessions` is the knob that bounds
+it. Idle RSS no longer includes worker threads at all — they are created per turn, so the
+fixed cost does not track the concurrency ceiling.
+
+The 548 KB row is kept because it is where the size work landed; the binary has grown ~17 KB
+since, from on-demand workers and the tool-call round trip. Features cost bytes, and the
+table says which.
 
 ### Trimming further
 
 `-Os` and the OpenAI-only provider set are applied for you. What is left costs capability
 rather than dead weight, so the profile stops here — the prices, measured against the
-548 KB build:
+565 KB build as it ships today:
 
 | Also disabled | Binary | Gives up |
 | --- | --- | --- |
-| `-Dwith_openai_oauth=false` | 532 KB | ChatGPT-subscription auth; API keys only |
-| `-Dwith_sqlite_memory=false` | 514 KB | the FTS5 backend, if you turn memory on |
-| both | 514 KB | |
+| `-Dwith_openai_oauth=false` | 548 KB | ChatGPT-subscription auth; API keys only |
+| `-Dwith_sqlite_memory=false` | 547 KB | the FTS5 backend, if you turn memory on |
+| both | 531 KB | |
 
 Roughly 6% for a pod that cannot use a subscription and cannot ever turn memory on. The
 OAuth flow is what this deployment authenticates with, so it stays.
-
-The two do not add up, and the table says what was measured rather than the sum: dropping
-SQLite alone already reaches 514 KB. Under LTO the OAuth code and the SQLite backend pull
-in overlapping machinery, so removing either one collects most of the same dead weight.
 
 ## The two roots
 
@@ -457,6 +458,31 @@ and must not be predictable from other ids the pod has handed out.
 
 The channel still refuses a second concurrent turn for one session with 409: two turns
 interleaving over one history is not a conversation.
+
+## What a turn cost
+
+The `done` frame reports the turn's token usage, summed across its provider calls — a tool
+round is another call, so reporting only the last would understate a turn that used tools:
+
+```
+event: done
+data: {"content":"SILVER-LARK.",
+       "usage":{"prompt_tokens":2027,"completion_tokens":5,"total_tokens":2032,
+                "cached_prompt_tokens":1536}}
+```
+
+`cached_prompt_tokens` is the part of the prompt the provider served from its cache, billed
+at a fraction of a fresh prefix. It is the only outside signal that the pod's prompt prefix
+is still byte-stable, which is why it is worth watching: a change that breaks the prefix does
+not fail anything, it just quietly costs more. Measured on a replayed window of about 2,000
+tokens, 1,536 of them came back cached — **76% of the prompt** — on every turn.
+
+Zero means no evidence of caching rather than proof of none: a provider that does not report
+the figure reports nothing, and the first turn of a conversation has nothing to hit yet. What
+matters is the trend across a conversation, not any single turn.
+
+Usage counts only that session's own turn. Every session shares the event bus, so a figure
+that leaked across sessions would be worse than none.
 
 ## History: who owns it
 

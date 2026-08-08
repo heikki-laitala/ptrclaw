@@ -1,5 +1,6 @@
 #pragma once
 #include "../channel.hpp"
+#include "../provider.hpp"
 #include "webhook_server.hpp"
 #include <chrono>
 #include <condition_variable>
@@ -130,6 +131,9 @@ private:
         // Calls already reported to the caller, so a late result for a cancelled tool
         // cannot contradict the one the agent recorded.
         std::unordered_set<std::string>       reported_results;
+        // Accumulated across the turn's provider calls: a tool round is another call, and
+        // reporting only the last would understate a turn that used tools.
+        TokenUsage                            usage;
     };
 
     using TurnRef = std::shared_ptr<Turn>;

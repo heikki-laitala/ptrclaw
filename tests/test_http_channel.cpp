@@ -252,7 +252,10 @@ TEST_CASE("HttpChannel: tokens stream in order and the turn ends with done",
     REQUIRE(written.find(R"({"delta":"Hel"})") != std::string::npos);
     REQUIRE(written.find(R"({"delta":"lo"})") != std::string::npos);
     REQUIRE(written.find(R"(event: done)") != std::string::npos);
-    REQUIRE(written.find(R"({"content":"Hello"})") != std::string::npos);
+    // The field, not the whole object: the done frame also carries the turn's token usage,
+    // and this test is about what arrives and in what order rather than the frame's exact
+    // shape.
+    REQUIRE(written.find(R"("content":"Hello")") != std::string::npos);
 
     // Order is the property, not mere presence: a done frame ahead of a token would end
     // the stream early and the tokens would never be seen.
@@ -1189,4 +1192,77 @@ TEST_CASE("HttpChannel: a schema fault is not reported as unbalanced", "[http_ch
         {"history", {{{"role", "tool"}, {"content", "x"}}}},
     }));
     REQUIRE(json::parse(no_id.body)["code"] == "history_malformed");
+}
+
+TEST_CASE("HttpChannel: the done frame reports token usage for the turn", "[http_channel]") {
+    // The pod keeps its prompt prefix byte-stable so a provider can cache it. Whether that
+    // is working is otherwise invisible from outside — a change that quietly breaks the
+    // prefix shows up as a bill, not a signal.
+    EventBus bus;
+    HttpChannel ch(test_config());
+    ch.set_event_bus(&bus);
+    auto resp = ch.handle_request(chat_request({{"session", "s1"}, {"message", "hi"}}));
+
+    // A turn can call the provider several times — each tool round is another call — so the
+    // figures accumulate rather than reporting only the last.
+    ProviderResponseEvent first;
+    first.session_id = "s1";
+    first.usage.prompt_tokens = 1200;
+    first.usage.completion_tokens = 10;
+    first.usage.cached_prompt_tokens = 1024;
+    bus.publish(first);
+
+    ProviderResponseEvent second;
+    second.session_id = "s1";
+    second.usage.prompt_tokens = 1300;
+    second.usage.completion_tokens = 20;
+    second.usage.cached_prompt_tokens = 1200;
+    bus.publish(second);
+
+    std::string seen;
+    std::thread consumer([&] {
+        resp.stream([&](std::string_view c) { seen.append(c); return true; });
+    });
+    ch.send_message("s1", "answer");
+    consumer.join();
+
+    auto pos = seen.find("event: done");
+    REQUIRE(pos != std::string::npos);
+    auto data = seen.find("data: ", pos);
+    auto end = seen.find('\n', data);
+    auto frame = json::parse(seen.substr(data + 6, end - data - 6));
+
+    REQUIRE(frame["content"] == "answer");
+    REQUIRE(frame["usage"]["prompt_tokens"] == 2500);
+    REQUIRE(frame["usage"]["completion_tokens"] == 30);
+    REQUIRE(frame["usage"]["cached_prompt_tokens"] == 2224);
+}
+
+TEST_CASE("HttpChannel: usage counts only the session's own turn", "[http_channel]") {
+    // Every session shares the bus, so a figure that leaked across sessions would be worse
+    // than none at all.
+    EventBus bus;
+    HttpChannel ch(test_config());
+    ch.set_event_bus(&bus);
+    auto resp = ch.handle_request(chat_request({{"session", "s1"}, {"message", "hi"}}));
+
+    ProviderResponseEvent other;
+    other.session_id = "s2";
+    other.usage.prompt_tokens = 9999;
+    bus.publish(other);
+
+    ProviderResponseEvent mine;
+    mine.session_id = "s1";
+    mine.usage.prompt_tokens = 42;
+    bus.publish(mine);
+
+    std::string seen;
+    std::thread consumer([&] {
+        resp.stream([&](std::string_view c) { seen.append(c); return true; });
+    });
+    ch.send_message("s1", "answer");
+    consumer.join();
+
+    REQUIRE(seen.find("9999") == std::string::npos);
+    REQUIRE(seen.find("\"prompt_tokens\":42") != std::string::npos);
 }
