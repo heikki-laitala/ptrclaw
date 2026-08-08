@@ -297,6 +297,21 @@ is set by `workers`, and by how evenly the session ids hash across them:
 Perfect parallelism is 3 s, and the pod is within a rounding error of it at every level: a
 burst of N turns takes about as long as one turn, up to the ceiling `workers` sets.
 
+⚠ **These numbers are native. A containerised build dies before reaching the top of that
+table.** Built into an Alpine image and driven at 1000 concurrent with `workers: 1024`, the
+process is killed by SIGTRAP (exit 133) within a fraction of a second; a Debian/glibc build
+of the same source segfaults (exit 139) under the same load, so it is not the allocator or
+the libc. 500 concurrent is clean in the same containers. What is ruled out by measurement:
+it is the turn threads rather than the connection threads (`workers: 8` survives the same
+1000 connections), it is not memory pressure, not thread-creation failure, and not the
+default thread stack size. It does not reproduce natively on macOS, which is why the table
+above reads as it does.
+
+Until that is understood — ptrclaw#131 tracks it — a containerised deployment should keep
+`workers` and `max_connections` at or below the 500 that measures clean. The native numbers
+stay in the table because they are what the pod does when nothing kills it, and because the
+gap between them is the shape of the bug.
+
 **Threads exist only while turns do.** A pod configured for 1024 concurrent turns holds four
 threads and ~5 MB while nothing is happening — idle cost does not track the ceiling, so
 there is no reason to keep it tight. What costs is turns actually in flight: ~57 KB for a
