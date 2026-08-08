@@ -1267,14 +1267,33 @@ TEST_CASE("HttpChannel: usage counts only the session's own turn", "[http_channe
     REQUIRE(seen.find("\"prompt_tokens\":42") != std::string::npos);
 }
 
-TEST_CASE("WebhookServer: a connection is shed rather than taken as fatal", "[http_channel]") {
-    // The accept loop asks the system for a thread per connection. Unguarded, a refusal
-    // throws out of accept_loop and takes the process with it — killing every conversation
-    // in flight to refuse one. There is no way to make std::thread fail on demand from a
-    // test, so what is pinned here is the ordinary path: the counter that stop() waits on
-    // returns to zero, which is the accounting the shed path also has to preserve.
+TEST_CASE("WebhookServer: connection slots are returned, not leaked", "[http_channel]") {
+    // The accept loop asks the system for a thread per connection, and the shed path taken
+    // when it cannot get one has to release the slot it already claimed. Nothing here can
+    // make std::thread fail on demand — that half stays uncovered, and the PR says so —
+    // but the accounting it must preserve is testable, and a leak shows up as a server
+    // that stops accepting.
+    //
+    // A real server and real sockets: the counter is internal, so the observable is
+    // whether a connection beyond the limit is still served after earlier ones close.
     auto cfg = test_config();
-    cfg.max_connections = 4;
-    HttpChannel ch(cfg);
-    REQUIRE(ch.health_check());
+    cfg.max_connections = 2;
+    cfg.turn_timeout_seconds = 2;
+    uint16_t port = 0;
+    auto ch = start_on_free_port(cfg, port);
+
+    // Three times the limit, one after another. If a slot were lost per connection the
+    // server would stop accepting after two and this would hang on connect or on recv.
+    for (int i = 0; i < 6; ++i) {
+        int fd = connect_to(port);
+        const std::string req =
+            "GET /healthz HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+        REQUIRE(::send(fd, req.data(), req.size(), 0) > 0);
+        const std::string resp = recv_until(fd, "ok");
+        REQUIRE(resp.find("200") != std::string::npos);
+        ::close(fd);
+    }
+
+    // Destruction stops the server and joins its connection threads.
+    ch.reset();
 }
