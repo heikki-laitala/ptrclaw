@@ -1424,3 +1424,92 @@ TEST_CASE("create_provider: no configured user sends no user field", "[providers
 
     REQUIRE_FALSE(json::parse(mock.last_body).contains("user"));
 }
+
+// ── Cached prompt tokens ────────────────────────────────────────
+//
+// A provider bills a cached prefix at a fraction of a fresh one, and the pod goes to some
+// trouble to keep that prefix byte-stable. Unparsed, whether any of it works is invisible:
+// a change that quietly breaks the prefix shows up as a bill rather than a signal.
+
+TEST_CASE("OpenAIProvider: reads cached tokens from chat completions usage",
+          "[providers][openai]") {
+    // gpt-4 on purpose: use_responses_api() dispatches on the *model*, and a subscription
+    // model would take the Responses path, which spells the usage block differently. That
+    // path is covered below — both matter, since a pod pointed at a gateway takes chat
+    // completions while a subscription login takes Responses.
+    REQUIRE_TEST_PROVIDER("openai");
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-4",
+        "choices": [{"message": {"content": "hi"}}],
+        "usage": {"prompt_tokens": 1200, "completion_tokens": 5, "total_tokens": 1205,
+                  "prompt_tokens_details": {"cached_tokens": 1024}}
+    })"};
+
+    OpenAIProvider provider("sk-test", mock, "http://localhost:8080/v1");
+    auto result = provider.chat({{Role::User, "hi", std::nullopt, std::nullopt}}, {},
+                                "gpt-4", 0.7);
+
+    REQUIRE(result.usage.prompt_tokens == 1200);
+    REQUIRE(result.usage.cached_prompt_tokens == 1024);
+}
+
+TEST_CASE("OpenAIProvider: reads cached tokens from the Responses API usage",
+          "[providers][openai]") {
+    // The subscription path, where the parent key is input_tokens_details.
+    REQUIRE_TEST_PROVIDER("openai");
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-5.6-sol",
+        "output": [{"type": "message", "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hi"}]}],
+        "usage": {"input_tokens": 1200, "output_tokens": 5,
+                  "input_tokens_details": {"cached_tokens": 1024}}
+    })"};
+
+    OpenAIProvider provider("sk-test", mock, "https://chatgpt.com/backend-api/codex");
+    auto result = provider.chat({{Role::User, "hi", std::nullopt, std::nullopt}}, {},
+                                "gpt-5.6-sol", 0.7);
+
+    REQUIRE(result.usage.prompt_tokens == 1200);
+    REQUIRE(result.usage.cached_prompt_tokens == 1024);
+}
+
+TEST_CASE("OpenAIProvider: absent cache details read as zero, not as an error",
+          "[providers][openai]") {
+    // An endpoint that does not report caching is not an endpoint that failed.
+    REQUIRE_TEST_PROVIDER("openai");
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "gpt-4",
+        "choices": [{"message": {"content": "hi"}}],
+        "usage": {"prompt_tokens": 40, "completion_tokens": 5, "total_tokens": 45}
+    })"};
+
+    OpenAIProvider provider("sk-test", mock, "http://localhost:8080/v1");
+    auto result = provider.chat({{Role::User, "hi", std::nullopt, std::nullopt}}, {},
+                                "gpt-4", 0.7);
+
+    REQUIRE(result.usage.prompt_tokens == 40);
+    REQUIRE(result.usage.cached_prompt_tokens == 0);
+}
+
+TEST_CASE("AnthropicProvider: reads cache_read_input_tokens", "[providers][anthropic]") {
+    // Anthropic spells it differently and splits reads from writes; only the read is a
+    // saving, so only the read is reported.
+    REQUIRE_TEST_PROVIDER("anthropic");
+    MockHttpClient mock;
+    mock.next_response = {200, R"({
+        "model": "claude-sonnet-4-6",
+        "content": [{"type": "text", "text": "hi"}],
+        "usage": {"input_tokens": 30, "output_tokens": 5,
+                  "cache_creation_input_tokens": 900,
+                  "cache_read_input_tokens": 1024}
+    })"};
+
+    AnthropicProvider provider("sk-test", mock, "");
+    auto result = provider.chat({{Role::User, "hi", std::nullopt, std::nullopt}}, {},
+                                "claude-sonnet-4-6", 0.7);
+
+    REQUIRE(result.usage.cached_prompt_tokens == 1024);
+}

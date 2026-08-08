@@ -175,6 +175,11 @@ ChatResponse AnthropicProvider::chat(const std::vector<ChatMessage>& messages,
             if (resp.contains("usage")) {
                 const auto& usage = resp["usage"];
                 result.usage.prompt_tokens = usage.value("input_tokens", 0u);
+                // The read, not the creation: writing a cache entry costs more than a
+                // fresh prefix, so counting it as a saving would report the opposite of
+                // what happened.
+                result.usage.cached_prompt_tokens =
+                    usage.value("cache_read_input_tokens", 0u);
                 result.usage.completion_tokens = usage.value("output_tokens", 0u);
                 result.usage.total_tokens = result.usage.prompt_tokens + result.usage.completion_tokens;
             }

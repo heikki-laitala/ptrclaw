@@ -40,6 +40,11 @@ struct TokenUsage {
     uint32_t prompt_tokens = 0;
     uint32_t completion_tokens = 0;
     uint32_t total_tokens = 0;
+    // How much of prompt_tokens the provider served from its cache, billed at a fraction of
+    // a fresh prefix. Zero from a provider that does not report it, which is not the same
+    // as a cache that missed — but it is the only distinction available, so treat zero as
+    // "no evidence of caching" rather than as proof of none.
+    uint32_t cached_prompt_tokens = 0;
 };
 
 struct ChatResponse {

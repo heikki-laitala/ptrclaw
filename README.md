@@ -574,7 +574,7 @@ ninja -C builddir
 | Default (`make build`) | ~1.3 MB |
 | Static (`make build-static`, stripped) | ~581 KB |
 | Minimal (`make build-minimal`, stripped) | ~514 KB |
-| Serving pod (`make build-serving`, stripped) | ~548 KB |
+| Serving pod (`make build-serving`, stripped) | ~565 KB |
 | SDK shared lib (`make build-sdk`, stripped) | ~630 KB |
 
 Default builds exclude WhatsApp (enable with `-Dwith_whatsapp=true`). LTO is enabled by default.

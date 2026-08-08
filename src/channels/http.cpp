@@ -325,6 +325,19 @@ void HttpChannel::set_event_bus(EventBus* bus) {
         }));
     });
 
+    // What the turn cost, and how much of it the provider served from cache. The pod goes
+    // to some trouble to keep its prompt prefix byte-stable so that cache can hit; without
+    // this the effect is invisible from outside and a regression shows up as a bill.
+    subscribe<ProviderResponseEvent>(*bus_, [this](const ProviderResponseEvent& ev) {
+        std::lock_guard<std::mutex> lk(turn_mutex_);
+        auto it = turns_.find(ev.session_id);
+        if (it == turns_.end()) return;  // no turn of ours to attribute it to
+        it->second->usage.prompt_tokens += ev.usage.prompt_tokens;
+        it->second->usage.completion_tokens += ev.usage.completion_tokens;
+        it->second->usage.total_tokens += ev.usage.total_tokens;
+        it->second->usage.cached_prompt_tokens += ev.usage.cached_prompt_tokens;
+    });
+
     subscribe<StreamChunkEvent>(*bus_, [this](const StreamChunkEvent& ev) {
         append_delta(ev.session_id, ev.delta);
     });
@@ -611,7 +624,16 @@ void HttpChannel::stream_turn(const std::string& session, const TurnRef& turn,
                 last = true;
                 erase_turn(session, turn->seq);
             } else {
-                frame = sse_frame("done", json{{"content", turn->final_content}});
+                frame = sse_frame("done", json{
+                    {"content", turn->final_content},
+                    // Summed over the turn's provider calls, this session's only.
+                    {"usage", {
+                        {"prompt_tokens", turn->usage.prompt_tokens},
+                        {"completion_tokens", turn->usage.completion_tokens},
+                        {"total_tokens", turn->usage.total_tokens},
+                        {"cached_prompt_tokens", turn->usage.cached_prompt_tokens},
+                    }},
+                });
                 last = true;
                 erase_turn(session, turn->seq);
             }
