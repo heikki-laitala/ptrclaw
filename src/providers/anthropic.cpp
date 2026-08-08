@@ -19,6 +19,31 @@ using json = nlohmann::json;
 
 namespace ptrclaw {
 
+namespace {
+
+// Anthropic's usage block, read the same way on both the streaming and non-streaming paths.
+//
+// `input_tokens` counts only what was *not* served from or written to the cache — unlike
+// OpenAI, where the cached figure is a subset of prompt_tokens. Reported as-is it
+// understates a cached turn badly: a prompt of 1,954 tokens arrives as 30, and the cached
+// count then exceeds the prompt it is supposedly part of. So the categories are summed back
+// into prompt_tokens, and cached_prompt_tokens is the read alone — writing an entry costs
+// more than a fresh prefix, so counting the write as a saving would report the opposite of
+// what happened.
+void read_usage(const nlohmann::json& usage, TokenUsage& out) {
+    const uint32_t fresh    = usage.value("input_tokens", 0u);
+    const uint32_t read     = usage.value("cache_read_input_tokens", 0u);
+    const uint32_t written  = usage.value("cache_creation_input_tokens", 0u);
+
+    out.prompt_tokens = fresh + read + written;
+    out.cached_prompt_tokens = read;
+    out.completion_tokens = usage.value("output_tokens", out.completion_tokens);
+    out.total_tokens = out.prompt_tokens + out.completion_tokens;
+}
+
+} // namespace
+
+
 AnthropicProvider::AnthropicProvider(const std::string& api_key, HttpClient& http,
                                      const std::string& base_url,
                                      bool prompt_caching)
@@ -174,14 +199,7 @@ ChatResponse AnthropicProvider::chat(const std::vector<ChatMessage>& messages,
 
             if (resp.contains("usage")) {
                 const auto& usage = resp["usage"];
-                result.usage.prompt_tokens = usage.value("input_tokens", 0u);
-                // The read, not the creation: writing a cache entry costs more than a
-                // fresh prefix, so counting it as a saving would report the opposite of
-                // what happened.
-                result.usage.cached_prompt_tokens =
-                    usage.value("cache_read_input_tokens", 0u);
-                result.usage.completion_tokens = usage.value("output_tokens", 0u);
-                result.usage.total_tokens = result.usage.prompt_tokens + result.usage.completion_tokens;
+                read_usage(usage, result.usage);
             }
 
             return result;
@@ -263,7 +281,7 @@ ChatResponse AnthropicProvider::chat_stream(const std::vector<ChatMessage>& mess
                             const auto& msg = payload["message"];
                             result.model = msg.value("model", model);
                             if (msg.contains("usage")) {
-                                result.usage.prompt_tokens = msg["usage"].value("input_tokens", 0u);
+                                read_usage(msg["usage"], result.usage);
                             }
                         }
                     } else if (sse.event == "content_block_start") {

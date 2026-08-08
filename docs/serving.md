@@ -477,6 +477,12 @@ is still byte-stable, which is why it is worth watching: a change that breaks th
 not fail anything, it just quietly costs more. Measured on a replayed window of about 2,000
 tokens, 1,536 of them came back cached — **76% of the prompt** — on every turn.
 
+Providers count it differently, and the figures here are normalised to OpenAI's meaning —
+`cached_prompt_tokens` is part of `prompt_tokens`, never additional to it. Anthropic reports
+`input_tokens` excluding whatever it read from or wrote to the cache, so those categories are
+summed back in; left as reported, a 1,954-token prompt would appear as 30 with 1,024 of it
+cached, which is not a coherent pair of numbers.
+
 Zero means no evidence of caching rather than proof of none: a provider that does not report
 the figure reports nothing, and the first turn of a conversation has nothing to hit yet. What
 matters is the trend across a conversation, not any single turn.

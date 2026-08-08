@@ -1494,9 +1494,12 @@ TEST_CASE("OpenAIProvider: absent cache details read as zero, not as an error",
     REQUIRE(result.usage.cached_prompt_tokens == 0);
 }
 
-TEST_CASE("AnthropicProvider: reads cache_read_input_tokens", "[providers][anthropic]") {
-    // Anthropic spells it differently and splits reads from writes; only the read is a
-    // saving, so only the read is reported.
+TEST_CASE("AnthropicProvider: cache tokens count toward the prompt total",
+          "[providers][anthropic]") {
+    // Anthropic's input_tokens counts only what was neither read from nor written to the
+    // cache — unlike OpenAI, where the cached figure is a subset of prompt_tokens. Reported
+    // as-is, a 1,954-token prompt arrives as 30 and the cached count exceeds the prompt it
+    // is supposedly part of.
     REQUIRE_TEST_PROVIDER("anthropic");
     MockHttpClient mock;
     mock.next_response = {200, R"({
@@ -1511,5 +1514,35 @@ TEST_CASE("AnthropicProvider: reads cache_read_input_tokens", "[providers][anthr
     auto result = provider.chat({{Role::User, "hi", std::nullopt, std::nullopt}}, {},
                                 "claude-sonnet-4-6", 0.7);
 
+    REQUIRE(result.usage.prompt_tokens == 1954);   // 30 fresh + 900 written + 1024 read
+    REQUIRE(result.usage.cached_prompt_tokens == 1024);  // the read alone is the saving
+    REQUIRE(result.usage.total_tokens == 1959);
+}
+
+TEST_CASE("AnthropicProvider: streaming reports cache usage too",
+          "[providers][anthropic]") {
+    // The path an agent actually takes, since this provider streams. Parsing only the
+    // non-streaming site left ordinary turns reporting no caching at all.
+    REQUIRE_TEST_PROVIDER("anthropic");
+    MockHttpClient mock;
+    mock.next_stream_body =
+        "event: message_start\n"
+        "data: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-4-6\","
+        "\"usage\":{\"input_tokens\":30,\"cache_creation_input_tokens\":900,"
+        "\"cache_read_input_tokens\":1024}}}\n\n"
+        "event: content_block_delta\n"
+        "data: {\"type\":\"content_block_delta\",\"index\":0,"
+        "\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n"
+        "event: message_delta\n"
+        "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":5}}\n\n"
+        "event: message_stop\n"
+        "data: {\"type\":\"message_stop\"}\n\n";
+
+    AnthropicProvider provider("sk-test", mock, "");
+    auto result = provider.chat_stream({{Role::User, "hi", std::nullopt, std::nullopt}}, {},
+                                       "claude-sonnet-4-6", 0.7,
+                                       [](const std::string&) { return true; });
+
+    REQUIRE(result.usage.prompt_tokens == 1954);
     REQUIRE(result.usage.cached_prompt_tokens == 1024);
 }
