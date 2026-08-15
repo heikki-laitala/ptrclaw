@@ -233,3 +233,74 @@ TEST_CASE("ptrclaw lifecycle: EmbedChannel destroyed after thread stops", "[embe
     ptrclaw_destroy(h);
     // If we get here without crashing, the destruction order is correct.
 }
+
+// ── Config override tests ────────────────────────────────────────
+
+TEST_CASE("ptrclaw_create: config_json overrides applied", "[embed]") {
+    const char* cfg = R"({
+        "provider": "openai",
+        "model": "gpt-4o",
+        "temperature": 0.5,
+        "api_key": "test-key",
+        "max_history_messages": 20,
+        "disable_streaming": true,
+        "tool_timeout": 30
+    })";
+    PtrClawHandle h = ptrclaw_create(cfg);
+    REQUIRE(h != nullptr);
+    ptrclaw_destroy(h);
+}
+
+TEST_CASE("ptrclaw_create: invalid config_json falls back to base config", "[embed]") {
+    // Malformed JSON — create must still succeed with base config
+    PtrClawHandle h = ptrclaw_create("{not valid json}");
+    REQUIRE(h != nullptr);
+    // Last error should mention parse failure but handle is still valid
+    REQUIRE(std::string(ptrclaw_last_error(h)).find("config parse error") != std::string::npos);
+    ptrclaw_destroy(h);
+}
+
+// ── ptrclaw_reset_session tests ──────────────────────────────────
+
+TEST_CASE("ptrclaw_reset_session: null args return errors", "[embed]") {
+    REQUIRE(ptrclaw_reset_session(nullptr, "s") == PTRCLAW_ERR_INVALID);
+    REQUIRE(ptrclaw_reset_session(nullptr, nullptr) == PTRCLAW_ERR_INVALID);
+
+    PtrClawHandle h = ptrclaw_create(nullptr);
+    REQUIRE(h != nullptr);
+    REQUIRE(ptrclaw_reset_session(h, nullptr) == PTRCLAW_ERR_INVALID);
+    ptrclaw_destroy(h);
+}
+
+TEST_CASE("ptrclaw_reset_session: resets non-existent session safely", "[embed]") {
+    PtrClawHandle h = ptrclaw_create(nullptr);
+    REQUIRE(h != nullptr);
+    // Resetting a session that was never used must not crash
+    REQUIRE(ptrclaw_reset_session(h, "ghost-session") == PTRCLAW_OK);
+    ptrclaw_destroy(h);
+}
+
+TEST_CASE("ptrclaw_reset_session: clears cached response", "[embed]") {
+    PtrClawHandle h = ptrclaw_create(nullptr);
+    REQUIRE(h != nullptr);
+
+    // last_response starts empty
+    REQUIRE(std::string(ptrclaw_last_response(h, "sess")).empty());
+
+    // Reset a session that has no prior response — still returns OK
+    REQUIRE(ptrclaw_reset_session(h, "sess") == PTRCLAW_OK);
+
+    // Response is still empty after reset
+    REQUIRE(std::string(ptrclaw_last_response(h, "sess")).empty());
+
+    ptrclaw_destroy(h);
+}
+
+TEST_CASE("ptrclaw_reset_session: repeated resets are safe", "[embed]") {
+    PtrClawHandle h = ptrclaw_create(nullptr);
+    REQUIRE(h != nullptr);
+    for (int i = 0; i < 5; ++i) {
+        REQUIRE(ptrclaw_reset_session(h, "repeat-sess") == PTRCLAW_OK);
+    }
+    ptrclaw_destroy(h);
+}

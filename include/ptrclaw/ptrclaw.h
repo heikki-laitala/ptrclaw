@@ -54,7 +54,14 @@ typedef struct PtrClawHandle_ *PtrClawHandle;
  *
  * config_json  Optional JSON string to override config values.
  *              Pass NULL to use ~/.ptrclaw/config.json as-is.
- *              Recognised keys: "provider", "model", "temperature".
+ *              Recognised keys:
+ *                "provider"             — LLM provider name (e.g. "anthropic")
+ *                "model"                — model identifier
+ *                "temperature"          — sampling temperature (number)
+ *                "api_key"              — API key for the active provider
+ *                "max_history_messages" — max messages to keep in context (int)
+ *                "disable_streaming"    — disable SSE streaming (bool)
+ *                "tool_timeout"         — per-tool timeout in seconds (int)
  *
  * Returns a non-null handle on success.
  */
@@ -62,6 +69,19 @@ PtrClawHandle ptrclaw_create(const char *config_json);
 
 /* Stop the background loop and free all resources. */
 void ptrclaw_destroy(PtrClawHandle handle);
+
+/*
+ * ptrclaw_reset_session — clear a session's conversation history.
+ *
+ * Drops the existing session (history, in-flight state) so the next
+ * ptrclaw_send() on that session_id starts a fresh conversation.
+ * Safe to call between turns; do not call while a send is in progress
+ * on the same session_id.
+ *
+ * Returns PTRCLAW_OK on success, PTRCLAW_ERR_INVALID if handle or
+ * session_id is NULL.
+ */
+int ptrclaw_reset_session(PtrClawHandle handle, const char *session_id);
 
 /* Returns the last error message, or an empty string. Never NULL. */
 const char *ptrclaw_last_error(PtrClawHandle handle);
