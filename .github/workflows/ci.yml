@@ -32,12 +32,24 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install meson sqlite3
 
+      - name: Record the toolchain version
+        id: toolchain
+        # ⚠ THE CACHE KEY MUST CARRY THIS. A builddir is configured BY a specific meson, and
+        # meson refuses one configured by a different version ("references functions or
+        # classes that don't exist"). The runner images upgrade meson on their own schedule,
+        # so without this a toolchain bump does not invalidate the cache — it poisons it, and
+        # every later PR fails to build for a reason that has nothing to do with its diff.
+        run: echo "meson=$(meson --version)" >> "$GITHUB_OUTPUT"
+
       - name: Cache build
         uses: actions/cache@v4
         with:
           path: builddir
-          key: meson-${{ matrix.os }}-${{ hashFiles('meson.build', 'meson-native-*.ini', 'src/**/*.cpp', 'src/**/*.hpp') }}
-          restore-keys: meson-${{ matrix.os }}-
+          key: meson-${{ matrix.os }}-${{ steps.toolchain.outputs.meson }}-${{ hashFiles('meson.build', 'meson-native-*.ini', 'src/**/*.cpp', 'src/**/*.hpp') }}
+          # ⚠ The version belongs in the PREFIX too, not only in the full key. A restore-key
+          # is a prefix match, so a bare `meson-<os>-` fallback happily restores a builddir
+          # from any older meson — which is the exact failure this is fixing.
+          restore-keys: meson-${{ matrix.os }}-${{ steps.toolchain.outputs.meson }}-
 
       - name: Build
         run: make build
@@ -113,12 +125,21 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install meson sqlite3 mbedtls
 
+      - name: Record the toolchain version
+        id: toolchain
+        # ⚠ THE CACHE KEY MUST CARRY THIS. A builddir is configured BY a specific meson, and
+        # meson refuses one configured by a different version ("references functions or
+        # classes that don't exist"). The runner images upgrade meson on their own schedule,
+        # so without this a toolchain bump does not invalidate the cache — it poisons it, and
+        # every later PR fails to build for a reason that has nothing to do with its diff.
+        run: echo "meson=$(meson --version)" >> "$GITHUB_OUTPUT"
+
       - name: Cache build
         uses: actions/cache@v4
         with:
           path: builddir-emb
-          key: meson-sdk-${{ matrix.os }}-${{ hashFiles('meson.build', 'meson-native-*.ini', 'src/**/*.cpp', 'src/**/*.hpp') }}
-          restore-keys: meson-sdk-${{ matrix.os }}-
+          key: meson-sdk-${{ matrix.os }}-${{ steps.toolchain.outputs.meson }}-${{ hashFiles('meson.build', 'meson-native-*.ini', 'src/**/*.cpp', 'src/**/*.hpp') }}
+          restore-keys: meson-sdk-${{ matrix.os }}-${{ steps.toolchain.outputs.meson }}-
 
       - name: Build SDK
         run: make build-sdk
@@ -199,12 +220,21 @@ jobs:
           brew install meson llvm sqlite3
           echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
 
+      - name: Record the toolchain version
+        id: toolchain
+        # ⚠ THE CACHE KEY MUST CARRY THIS. A builddir is configured BY a specific meson, and
+        # meson refuses one configured by a different version ("references functions or
+        # classes that don't exist"). The runner images upgrade meson on their own schedule,
+        # so without this a toolchain bump does not invalidate the cache — it poisons it, and
+        # every later PR fails to build for a reason that has nothing to do with its diff.
+        run: echo "meson=$(meson --version)" >> "$GITHUB_OUTPUT"
+
       - name: Cache build
         uses: actions/cache@v4
         with:
           path: builddir
-          key: meson-${{ matrix.os }}-${{ hashFiles('meson.build', 'meson-native-*.ini', 'src/**/*.cpp', 'src/**/*.hpp') }}
-          restore-keys: meson-${{ matrix.os }}-
+          key: meson-${{ matrix.os }}-${{ steps.toolchain.outputs.meson }}-${{ hashFiles('meson.build', 'meson-native-*.ini', 'src/**/*.cpp', 'src/**/*.hpp') }}
+          restore-keys: meson-${{ matrix.os }}-${{ steps.toolchain.outputs.meson }}-
 
       - name: Build
         # with_http on purpose: the lint database only contains what the build compiles, so
