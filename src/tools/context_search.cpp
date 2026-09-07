@@ -33,9 +33,12 @@ std::string url_encode(const std::string& in) {
         if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
             out.push_back(static_cast<char>(c));
         } else {
+            // Widened explicitly: `c` promotes to a SIGNED int before the shift and the mask,
+            // which clang-tidy's bugprone-signed-bitwise rejects (warnings are errors in CI).
+            const unsigned v = c;
             out.push_back('%');
-            out.push_back(hex[c >> 4]);
-            out.push_back(hex[c & 0x0F]);
+            out.push_back(hex[v >> 4U]);
+            out.push_back(hex[v & 0x0FU]);
         }
     }
     return out;
