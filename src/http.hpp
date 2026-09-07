@@ -43,6 +43,15 @@ public:
                                          const std::vector<Header>& headers,
                                          RawChunkCallback callback,
                                          long timeout_seconds = 300);
+
+    // GET, for the same reason stream_post_raw is here: so a caller can be handed a client
+    // and tested without a socket. There was a free http_get() and no way to inject it, which
+    // meant anything reading over HTTP had to reach the network to be exercised at all.
+    //
+    // Non-pure, delegating to the free function, so the platform clients inherit it unchanged.
+    virtual HttpResponse get(const std::string& url,
+                             const std::vector<Header>& headers,
+                             long timeout_seconds = 30);
 };
 
 // Platform-specific concrete implementations.

@@ -177,7 +177,7 @@ core_sources = files(
   'src/prompt.cpp', 'src/provider.cpp',
   'src/session.cpp', 'src/skill.cpp', 'src/stream_relay.cpp', 'src/tool.cpp',
   'src/tool_manager.cpp', 'src/turn_pool.cpp', 'src/util.cpp',
-  'src/workspace.cpp', 'src/tools/serving_file.cpp',
+  'src/workspace.cpp', 'src/tools/serving_file.cpp', 'src/tools/context_search.cpp',
 ) + http_impl_source
 
 # ── Optional sources (gated by feature flags) ──────────────────
@@ -317,6 +317,7 @@ core_test_sources = files(
   'tests/test_tool_manager.cpp',
   'tests/test_workspace.cpp',
   'tests/test_serving_tools.cpp',
+  'tests/test_context_search.cpp',
 )
 
 optional_test_sources = []

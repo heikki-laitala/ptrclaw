@@ -306,6 +306,9 @@ Config Config::load() {
             cfg.serving.workspace_root = expand_home(s["workspace_root"].get<std::string>());
         if (s.contains("generate_session_ids") && s["generate_session_ids"].is_boolean())
             cfg.serving.generate_session_ids = s["generate_session_ids"].get<bool>();
+        // Not expand_home'd: a URL is not a path, and "~" in one is a host or a query.
+        if (s.contains("recall_url") && s["recall_url"].is_string())
+            cfg.serving.recall_url = s["recall_url"].get<std::string>();
     }
 
     // Environment variables always override config file

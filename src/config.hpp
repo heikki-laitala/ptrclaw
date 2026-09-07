@@ -163,6 +163,19 @@ struct ServingConfig {
     // an id is a routing key the caller has always had to supply, and a channel that
     // silently invents one hides a client bug.
     bool generate_session_ids = false;
+
+    // An HTTP endpoint this pod may search for material it was not given up front. Empty
+    // means there is none and the tool is not offered.
+    //
+    // ⚠ NO CREDENTIAL HERE, ON PURPOSE. A deployment that needs one puts it on the proxy the
+    // pod's egress already passes through, which is where the model-provider key is injected
+    // — the agent process never holds it and cannot read it out of its own config. A field
+    // here would undo that for the sake of convenience.
+    //
+    // ⚠ AND NO PRODUCT NAME. The query is appended as `?q=`, the answer is JSON; what serves
+    // it is the deployment's business, exactly as the model provider is. See
+    // tools/context_search.cpp for the shapes it accepts.
+    std::string recall_url;
 };
 
 // Upper bound on Config::workers.
