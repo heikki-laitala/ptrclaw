@@ -49,6 +49,12 @@ public:
     // meant anything reading over HTTP had to reach the network to be exercised at all.
     //
     // Non-pure, delegating to the free function, so the platform clients inherit it unchanged.
+    //
+    // ⚠ A NON-PURE METHOD HERE NEEDS A BODY IN **BOTH** src/http.cpp AND src/http_socket.cpp.
+    // meson compiles exactly one of them per target — libcurl on macOS, sockets on Linux and
+    // for embed/SDK builds — so defining it once links on whichever platform you happen to be
+    // on and fails on the other. This one shipped in http.cpp alone: macOS went green, the
+    // whole Linux matrix failed to link, and Linux is what actually deploys.
     virtual HttpResponse get(const std::string& url,
                              const std::vector<Header>& headers,
                              long timeout_seconds = 30);
