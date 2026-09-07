@@ -378,3 +378,76 @@ TEST_CASE("ToolManager: no serving config means no workspace", "[tool_manager]")
 
     REQUIRE(manager.tools().front()->execute("{}").output == "|");
 }
+
+// ── The recall endpoint reaches the tool that needs it ──────────
+
+// A stand-in for ContextSearchTool: the manager wires by interface, so the real tool is not
+// needed here and this file stays independent of the serving build.
+class RecallProbeTool : public RecallAwareTool {
+public:
+    ToolResult execute(const std::string&) override { return {true, recall_url_}; }
+    std::string tool_name() const override { return "recall_probe"; }
+    std::string description() const override { return "recall probe"; }
+    std::string parameters_json() const override { return R"({"type":"object"})"; }
+};
+
+// ⚠ THE ONE LINE THAT MAKES THE TOOL WORK IN PRODUCTION. `serving.recall_url` is parsed by
+// config.cpp and the tool has a setter, and for the first version of this branch NOTHING
+// JOINED THEM — every real call answered "No knowledge service is configured" while every
+// test passed, because the tests called set_endpoint themselves. Found by review, not by the
+// suite. This asserts the manager does the wiring, which is the only place it happens.
+TEST_CASE("ToolManager: the configured recall URL reaches the tool", "[tool_manager]") {
+    EventBus bus;
+    Config config = make_config();
+    config.serving.recall_url = "http://knowledge.internal/search";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<RecallProbeTool>());
+    ToolManager manager(std::move(tools), config, bus);
+
+    REQUIRE(manager.tools().front()->execute("{}").output == "http://knowledge.internal/search");
+}
+
+// ⚠ AND AN UNCONFIGURED DEPLOYMENT MUST NOT BE OFFERED IT. Publishing a tool whose every call
+// can only fail spends a name out of the model's tool budget and invites it to burn a
+// tool-iteration on a guaranteed error instead of answering. `recall_url` is empty by default,
+// so this is the ordinary case, not the edge one.
+TEST_CASE("ToolManager: an unconfigured recall tool is not offered to the model", "[tool_manager]") {
+    EventBus bus;
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<MockTool>());
+    tools.push_back(std::make_unique<RecallProbeTool>());
+    ToolManager manager(std::move(tools), make_config(), bus);
+
+    std::vector<ToolSpec> specs;
+    auto sub = subscribe<ToolsAvailableEvent>(bus,
+        std::function<void(const ToolsAvailableEvent&)>(
+            [&specs](const ToolsAvailableEvent& ev) { specs = ev.specs; }));
+    manager.publish_tool_specs("test-session");
+    bus.unsubscribe(sub);
+
+    REQUIRE(specs.size() == 1);
+    REQUIRE(specs[0].name == "mock_tool");
+}
+
+// The control: configured, and it IS offered. Without this the assertion above passes just as
+// well against a manager that never publishes the tool at all.
+TEST_CASE("ToolManager: a configured recall tool IS offered to the model", "[tool_manager]") {
+    EventBus bus;
+    Config config = make_config();
+    config.serving.recall_url = "http://knowledge.internal/search";
+
+    std::vector<std::unique_ptr<Tool>> tools;
+    tools.push_back(std::make_unique<RecallProbeTool>());
+    ToolManager manager(std::move(tools), config, bus);
+
+    std::vector<ToolSpec> specs;
+    auto sub = subscribe<ToolsAvailableEvent>(bus,
+        std::function<void(const ToolsAvailableEvent&)>(
+            [&specs](const ToolsAvailableEvent& ev) { specs = ev.specs; }));
+    manager.publish_tool_specs("test-session");
+    bus.unsubscribe(sub);
+
+    REQUIRE(specs.size() == 1);
+    REQUIRE(specs[0].name == "recall_probe");
+}

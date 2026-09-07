@@ -88,4 +88,24 @@ protected:
     SessionWorkspace workspace_;
 };
 
+// A tool that reaches a shared knowledge service, and is told where it lives.
+//
+// Separate from WorkspaceAwareTool because the two answer different questions: that one is
+// scoped to what a context manager staged on disk before the session began, this one asks a
+// service something the model only worked out mid-turn.
+//
+// ⚠ AN ENDPOINT, NEVER A CREDENTIAL. Authentication belongs on the proxy the pod's egress
+// already passes through, the same way a model-provider key is injected — so the agent
+// process holds nothing a prompt injection could read back out of its own configuration.
+class RecallAwareTool : public Tool {
+public:
+    void set_endpoint(const std::string& url) { recall_url_ = url; }
+    // Read by ToolManager to decide whether the tool is worth offering at all: unconfigured,
+    // every call it could make can only fail.
+    bool has_endpoint() const { return !recall_url_.empty(); }
+
+protected:
+    std::string recall_url_;
+};
+
 } // namespace ptrclaw

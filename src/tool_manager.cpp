@@ -75,6 +75,14 @@ ToolManager::ToolManager(std::vector<std::unique_ptr<Tool>> tools,
         if (wat) {
             wat->set_workspace(scope);
         }
+        // ⚠ WITHOUT THIS THE RECALL TOOL IS INERT IN PRODUCTION. config.cpp parses
+        // `serving.recall_url` and the tool has a setter; nothing joined them for the first
+        // version of this branch, so every real call answered "no knowledge service is
+        // configured" while the suite stayed green — the tests set the endpoint themselves.
+        auto* rat = dynamic_cast<RecallAwareTool*>(tool.get());
+        if (rat) {
+            rat->set_endpoint(config_.serving.recall_url);
+        }
     }
 }
 
@@ -83,6 +91,14 @@ void ToolManager::publish_tool_specs(const std::string& session_id) {
     ev.session_id = session_id;
     for (const auto& tool : tools_) {
         if (is_memory_tool(tool->tool_name()) && !memory_active_) {
+            continue;
+        }
+        // An unconfigured recall tool is not offered at all, for the same reason a memory
+        // tool is not offered without a backend: a name the model can call but that can only
+        // fail spends its tool budget and invites a wasted iteration. Empty is the default,
+        // so this is the ordinary case rather than the edge one.
+        auto* rat = dynamic_cast<const RecallAwareTool*>(tool.get());
+        if (rat && !rat->has_endpoint()) {
             continue;
         }
         ev.specs.push_back(tool->spec());

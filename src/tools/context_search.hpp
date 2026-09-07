@@ -19,7 +19,7 @@ namespace ptrclaw {
 // so a prompt injection cannot read one out of its own configuration.
 //
 // ⚠ AND IT NAMES NO PRODUCT. `?q=` in, JSON out. What serves it is the deployment's business.
-class ContextSearchTool : public Tool {
+class ContextSearchTool : public RecallAwareTool {
 public:
     ContextSearchTool() = default;
     // Injectable so this is testable without a socket; null means the platform client.
@@ -30,11 +30,8 @@ public:
     std::string description() const override;
     std::string parameters_json() const override;
 
-    void set_endpoint(const std::string& url) { url_ = url; }
-
 private:
     HttpClient* client_ = nullptr;
-    std::string url_;
 };
 
 } // namespace ptrclaw

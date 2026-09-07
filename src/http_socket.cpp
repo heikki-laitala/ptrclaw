@@ -692,6 +692,20 @@ HttpResponse http_stream_post(const std::string& url,
     return http_stream_post_raw(url, body, headers, std::move(raw_cb), timeout_seconds);
 }
 
+// Default base-class implementation delegates to http_get.
+//
+// ⚠ THIS FILE AND src/http.cpp BOTH HAVE TO CARRY IT. meson picks exactly one of them per
+// target — sockets on Linux and for embed/SDK builds, libcurl on macOS — so a method added
+// to only one links fine on the author's machine and fails on the platform that ships. This
+// one arrived in http.cpp alone and took the whole Linux matrix down while macOS stayed
+// green; the agent pod is a static Linux build, so the half that was missing is the half
+// that actually runs.
+HttpResponse HttpClient::get(const std::string& url,
+                             const std::vector<Header>& headers,
+                             long timeout_seconds) {
+    return http_get(url, headers, timeout_seconds);
+}
+
 // Default base-class implementation delegates to http_stream_post_raw.
 HttpResponse HttpClient::stream_post_raw(const std::string& url,
                                           const std::string& body,

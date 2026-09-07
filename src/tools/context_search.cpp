@@ -102,7 +102,7 @@ std::string ContextSearchTool::parameters_json() const {
 }
 
 ToolResult ContextSearchTool::execute(const std::string& args_json) {
-    if (url_.empty()) {
+    if (recall_url_.empty()) {
         // Reached only if a build registers the tool without configuring it. Say which,
         // because "no results" would read to the model as "the business has no such note".
         return ToolResult{false, "No knowledge service is configured for this agent."};
@@ -116,7 +116,7 @@ ToolResult ContextSearchTool::execute(const std::string& args_json) {
         return ToolResult{false, "context_search needs a non-empty \"query\"."};
     }
 
-    std::string url = url_ + (url_.find('?') == std::string::npos ? "?" : "&") +
+    std::string url = recall_url_ + (recall_url_.find('?') == std::string::npos ? "?" : "&") +
                       "q=" + url_encode(query);
     if (args.contains("limit") && args["limit"].is_number_integer()) {
         long long limit = args["limit"].get<long long>();
