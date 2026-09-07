@@ -232,6 +232,12 @@ HttpResponse HttpClient::stream_post_raw(const std::string& url,
     return http_stream_post_raw(url, body, headers, std::move(callback), timeout_seconds);
 }
 
+HttpResponse HttpClient::get(const std::string& url,
+                             const std::vector<Header>& headers,
+                             long timeout_seconds) {
+    return http_get(url, headers, timeout_seconds);
+}
+
 HttpResponse http_stream_post_raw(const std::string& url,
                                    const std::string& body,
                                    const std::vector<Header>& headers,

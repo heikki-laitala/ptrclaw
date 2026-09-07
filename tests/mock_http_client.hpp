@@ -14,6 +14,25 @@ public:
     std::vector<long> timeouts;
     int call_count = 0;
 
+    // Mirrors post(): records the call and answers from the same queue, so a GET-based
+    // caller is testable without a socket.
+    HttpResponse get(const std::string& url,
+                     const std::vector<Header>& headers,
+                     long timeout_seconds) override {
+        call_count++;
+        last_url = url;
+        last_body.clear();
+        last_headers = headers;
+        last_timeout = timeout_seconds;
+        timeouts.push_back(timeout_seconds);
+        if (!response_queue.empty()) {
+            auto resp = response_queue.front();
+            response_queue.erase(response_queue.begin());
+            return resp;
+        }
+        return next_response;
+    }
+
     HttpResponse post(const std::string& url,
                       const std::string& body,
                       const std::vector<Header>& headers,
